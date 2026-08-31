@@ -54,6 +54,10 @@ type Terminal struct {
 	closed bool
 }
 
+// placeholderCommand keeps the session alive while the options are applied. It
+// must not exit and must not draw anything.
+const placeholderCommand = "sh -c 'while :; do sleep 3600; done'"
+
 const (
 	// settleQuiet is how long the screen must stay unchanged before a frame is
 	// considered finished rendering.
@@ -100,6 +104,11 @@ func Start(t *testing.T, command string, opts Options) *Terminal {
 	env = append(env, opts.Env...)
 	tm.env = env
 
+	// The session is created running a placeholder that simply waits, so that
+	// the options can be applied before the command under test starts. Setting
+	// them afterwards is a race: a command that exits immediately takes the
+	// window with it and remain-on-exit is never applied, which is exactly the
+	// case the exit-status assertions need.
 	args := []string{"new-session", "-d", "-s", "main",
 		"-x", strconv.Itoa(opts.Width), "-y", strconv.Itoa(opts.Height)}
 	if opts.Dir != "" {
@@ -108,13 +117,13 @@ func Start(t *testing.T, command string, opts Options) *Terminal {
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
-	args = append(args, command)
+	args = append(args, placeholderCommand)
 	if out, err := tm.tmux(args...); err != nil {
 		t.Fatalf("starting tmux session: %v\n%s", err, out)
 	}
 
-	// The status line steals a row and confuses size assertions, and a smaller
-	// history keeps captures cheap.
+	// The status line steals a row and confuses size assertions; keeping a dead
+	// pane is what lets a program's exit status be read.
 	for _, set := range [][]string{
 		{"set-option", "-g", "status", "off"},
 		{"set-option", "-g", "remain-on-exit", "on"},
@@ -123,8 +132,21 @@ func Start(t *testing.T, command string, opts Options) *Terminal {
 			t.Fatalf("configuring tmux: %v\n%s", err, out)
 		}
 	}
-	// Applying status off changes the usable height, so restate the size.
+	// Applying status off changes the usable height, so restate the size before
+	// the program starts and sees it.
 	tm.Resize(opts.Width, opts.Height)
+
+	respawn := []string{"respawn-pane", "-k", "-t", "main"}
+	if opts.Dir != "" {
+		respawn = append(respawn, "-c", opts.Dir)
+	}
+	for _, e := range env {
+		respawn = append(respawn, "-e", e)
+	}
+	respawn = append(respawn, command)
+	if out, err := tm.tmux(respawn...); err != nil {
+		t.Fatalf("starting the command under test: %v\n%s", err, out)
+	}
 
 	t.Cleanup(tm.Close)
 	return tm

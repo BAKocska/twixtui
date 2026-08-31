@@ -131,53 +131,109 @@ func TestSearchMatchesMinimax(t *testing.T) {
 // deeper. A tier that has already proven a win stops deepening, which is
 // correct and is not counted against it.
 func TestDepthCeilingsSeparateTiers(t *testing.T) {
-	src := rand.New(rand.NewPCG(61, 62))
-	compared, decided := 0, 0
-	for _, size := range []int{10, 24} {
-		for _, plies := range []int{4, 12, 20} {
-			g := randomGame(t, tournamentRules(size), plies, src)
-			if g.Result().Over() {
-				continue
-			}
-			depths := map[Tier]int{}
-			settled := false
-			for _, tier := range testTiers {
-				s := newSearcher(func() params {
-					p := tierParams(tier)
-					p.budget = quickBudgets[tier]
-					return p
-				}())
-				out, err := s.root(context.Background(), g)
-				if err != nil {
-					t.Fatalf("%v root: %v", tier, err)
-				}
-				depths[tier] = out.depth
-				if out.immediate || out.score >= decidedScore || out.score <= -decidedScore {
-					settled = true
-				}
-			}
-			t.Logf("%dx%d ply=%2d depths: beginner=%d intermediate=%d pro=%d decided=%v",
-				size, size, plies, depths[Beginner], depths[Intermediate], depths[Pro], settled)
-			if settled {
-				decided++
-				continue
-			}
-			if depths[Beginner] != tierParams(Beginner).maxDepth {
-				t.Errorf("%dx%d ply=%d: beginner reached depth %d, want its ceiling %d",
-					size, size, plies, depths[Beginner], tierParams(Beginner).maxDepth)
-			}
-			if depths[Intermediate] != tierParams(Intermediate).maxDepth {
-				t.Errorf("%dx%d ply=%d: intermediate reached depth %d, want its ceiling %d",
-					size, size, plies, depths[Intermediate], tierParams(Intermediate).maxDepth)
-			}
-			if depths[Pro] <= depths[Intermediate] {
-				t.Errorf("%dx%d ply=%d: pro reached depth %d, no deeper than intermediate's %d",
-					size, size, plies, depths[Pro], depths[Intermediate])
-			}
-			compared++
-		}
+	// The ceilings themselves must differ. This is a property of the tier
+	// configuration and holds on any machine.
+	if a, b := tierParams(Beginner).maxDepth, tierParams(Intermediate).maxDepth; a >= b {
+		t.Fatalf("beginner's ceiling %d is not below intermediate's %d", a, b)
 	}
-	if compared < 3 {
+	if a, b := tierParams(Intermediate).maxDepth, tierParams(Pro).maxDepth; a >= b {
+		t.Fatalf("intermediate's ceiling %d is not below pro's %d", a, b)
+	}
+
+	src := rand.New(rand.NewPCG(61, 62))
+
+	// The exact ceilings are checked on a small board with a budget generous
+	// enough that reaching them does not depend on how fast the machine is.
+	// Asserting an exact depth under a short wall-clock budget measures the
+	// machine rather than the search, and fails on a slow continuous-integration
+	// runner for no useful reason.
+	const generous = 20 * time.Second
+	compared, decided := 0, 0
+	for _, plies := range []int{4, 12, 20} {
+		g := randomGame(t, tournamentRules(10), plies, src)
+		if g.Result().Over() {
+			continue
+		}
+		depths, settled := depthsReached(t, g, generous)
+		t.Logf("10x10 ply=%2d depths: beginner=%d intermediate=%d pro=%d decided=%v",
+			plies, depths[Beginner], depths[Intermediate], depths[Pro], settled)
+		if settled {
+			// A tier that has already proven a win stops deepening, which is
+			// correct and is not counted against it.
+			decided++
+			continue
+		}
+		for _, tier := range []Tier{Beginner, Intermediate} {
+			if want := tierParams(tier).maxDepth; depths[tier] != want {
+				t.Errorf("10x10 ply=%d: %v reached depth %d, want its ceiling %d",
+					plies, tier, depths[tier], want)
+			}
+		}
+		if depths[Pro] <= depths[Intermediate] {
+			t.Errorf("10x10 ply=%d: pro reached depth %d, no deeper than intermediate's %d",
+				plies, depths[Pro], depths[Intermediate])
+		}
+		compared++
+	}
+	if compared < 2 {
 		t.Fatalf("only %d undecided positions were compared (%d were already decided)", compared, decided)
 	}
+
+	// On the shipped board size the assertion is the ordering rather than the
+	// exact depth, since a slow machine may legitimately be cut off part way
+	// through an iteration. No tier may exceed its own ceiling, and a stronger
+	// tier must never search shallower than a weaker one.
+	for _, plies := range []int{4, 12, 20} {
+		g := randomGame(t, tournamentRules(24), plies, src)
+		if g.Result().Over() {
+			continue
+		}
+		depths, settled := depthsReached(t, g, quickBudgets)
+		t.Logf("24x24 ply=%2d depths: beginner=%d intermediate=%d pro=%d decided=%v",
+			plies, depths[Beginner], depths[Intermediate], depths[Pro], settled)
+		for _, tier := range testTiers {
+			if got, ceiling := depths[tier], tierParams(tier).maxDepth; got > ceiling {
+				t.Errorf("24x24 ply=%d: %v reached depth %d, beyond its ceiling %d",
+					plies, tier, got, ceiling)
+			}
+		}
+		if depths[Intermediate] < depths[Beginner] {
+			t.Errorf("24x24 ply=%d: intermediate searched shallower than beginner (%d < %d)",
+				plies, depths[Intermediate], depths[Beginner])
+		}
+		if depths[Pro] < depths[Intermediate] {
+			t.Errorf("24x24 ply=%d: pro searched shallower than intermediate (%d < %d)",
+				plies, depths[Pro], depths[Intermediate])
+		}
+	}
+}
+
+// depthsReached runs each tier's search once on a position and reports the depth
+// it finished, together with whether any tier had already settled the game.
+// budgets is either one duration applied to every tier, or the per-tier table.
+func depthsReached(t *testing.T, g *game.Game, budgets any) (map[Tier]int, bool) {
+	t.Helper()
+	depths := map[Tier]int{}
+	settled := false
+	for _, tier := range testTiers {
+		s := newSearcher(func() params {
+			p := tierParams(tier)
+			switch b := budgets.(type) {
+			case time.Duration:
+				p.budget = b
+			case [3]time.Duration:
+				p.budget = b[tier]
+			}
+			return p
+		}())
+		out, err := s.root(context.Background(), g)
+		if err != nil {
+			t.Fatalf("%v root: %v", tier, err)
+		}
+		depths[tier] = out.depth
+		if out.immediate || out.score >= decidedScore || out.score <= -decidedScore {
+			settled = true
+		}
+	}
+	return depths, settled
 }

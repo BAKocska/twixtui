@@ -228,19 +228,30 @@ func TestCursorNeverRestsOnACorner(t *testing.T) {
 // teatest, resizing mid-run exactly as SIGWINCH would, and requires the
 // re-rendered output to show the detail scheme that only a 200-cell terminal
 // produces.
+//
+// The waits are generous rather than tight. What is being asserted is that the
+// resize reaches the program and changes what it draws, which is a property of
+// the program; how long a shared continuous-integration runner takes to get
+// there is not, and a short deadline turns this into a test of the machine.
 func TestProgramResizeEndToEnd(t *testing.T) {
+	const wait = 30 * time.Second
+
 	d := newDemo(t, 24)
 	tm := teatest.NewTestModel(t, d, teatest.WithInitialTermSize(80, 24))
 
+	// The compact scheme puts one space between column labels.
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		return strings.Contains(string(b), "A B C")
-	}, teatest.WithDuration(3*time.Second))
+	}, teatest.WithDuration(wait))
 
 	tm.Send(tea.WindowSizeMsg{Width: 200, Height: 60})
+
+	// The detail scheme puts three, which only the larger size can produce, so
+	// this fails if the resize is dropped rather than merely being slow.
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		return strings.Contains(string(b), "A   B   C")
-	}, teatest.WithDuration(3*time.Second))
+	}, teatest.WithDuration(wait))
 
 	tm.Send(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
-	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
+	tm.WaitFinished(t, teatest.WithFinalTimeout(wait))
 }

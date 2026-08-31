@@ -323,23 +323,49 @@ func TestTutorialResizes(t *testing.T) {
 	}
 }
 
-// TestQuitLeavesTheTerminalUsable checks the program restores the terminal on
-// the way out, which a program using the alternate screen must do explicitly.
-func TestQuitLeavesTheTerminalUsable(t *testing.T) {
+// TestQuitEndsTheProgramCleanly checks the program leaves on request with a
+// success status. Started with "play local" the game is the first screen, so
+// there is nothing behind it and leaving ends the run; a program using the
+// alternate screen has to restore the terminal on the way out, and a non-zero
+// status here would mean it fell over instead of exiting.
+func TestQuitEndsTheProgramCleanly(t *testing.T) {
 	tm := session(t, "play local --size 12 --side vertical", 80, 24)
 	tm.MustWaitFor("A", 20*time.Second)
 	tm.WaitSettled(10 * time.Second)
-	tm.SendKeys("q")
+	if !tm.Alive() {
+		t.Fatal("the program was not running before quit was sent")
+	}
 
-	deadline := time.Now().Add(15 * time.Second)
+	tm.SendKeys("q")
+	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) && tm.Alive() {
 		time.Sleep(pollInterval)
 	}
-	// Leaving the game returns to the menu rather than ending the program, so
-	// assert the menu is back rather than that the process died.
-	screen := tm.WaitSettled(10 * time.Second)
-	if strings.TrimSpace(screen) == "" {
-		t.Fatal("leaving the game left a blank screen")
+	if tm.Alive() {
+		t.Fatalf("the program is still running after quit\n%s", tm.Capture())
 	}
-	tm.AssertFits()
+	code, exited := tm.ExitStatus()
+	if !exited {
+		t.Fatal("the program stopped without reporting an exit status")
+	}
+	if code != 0 {
+		t.Errorf("exit status = %d, want 0\n%s", code, tm.Capture())
+	}
+}
+
+// TestCtrlCEndsTheProgramCleanly covers the other way out, which must also
+// restore the terminal rather than leaving it in the alternate screen.
+func TestCtrlCEndsTheProgramCleanly(t *testing.T) {
+	tm := session(t, "play local --size 12 --side vertical", 80, 24)
+	tm.MustWaitFor("A", 20*time.Second)
+	tm.WaitSettled(10 * time.Second)
+
+	tm.SendKeys("C-c")
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) && tm.Alive() {
+		time.Sleep(pollInterval)
+	}
+	if tm.Alive() {
+		t.Fatalf("the program ignored ctrl+c\n%s", tm.Capture())
+	}
 }
