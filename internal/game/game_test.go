@@ -1100,3 +1100,92 @@ func TestUndoAfterOfferDuringOpponentsStagedTurn(t *testing.T) {
 		t.Errorf("the position should still be playable: %v", err)
 	}
 }
+
+// TestCloneHistoryDoesNotAlias checks a cloned game's record shares no storage
+// with the original. Copying the slice of entries is not enough: each entry
+// carries its own link and peg lists, and a caller that rewrites a cloned record
+// would otherwise edit the game it came from.
+func TestCloneHistoryDoesNotAlias(t *testing.T) {
+	rs := Std
+	rs.PegRemoval = true
+	g := MustNew(rs)
+	play(t, g, "D4", "A6", "E6", "A7")
+
+	// Build a turn that populates every per-entry list.
+	if err := g.RemoveLink(at("D4"), at("E6")); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.RemovePeg(at("E6")); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.PlacePeg(at("G4")); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.AddLink(at("G4"), at("F6")); err == nil {
+		t.Fatal("expected the hand-added link to be refused: F6 holds no peg")
+	}
+	if _, err := g.CommitTurn(); err != nil {
+		t.Fatal(err)
+	}
+
+	last := len(g.History()) - 1
+	before := g.History()[last]
+	if len(before.Removed) == 0 || len(before.RemovedPegs) == 0 {
+		t.Fatalf("the fixture did not populate the record entry: %+v", before)
+	}
+
+	c := g.Clone()
+	entry := c.History()[last]
+	// Write an impossible value through the clone's entry.
+	corner := Point{Col: 0, Row: 0}
+	if len(entry.Removed) > 0 {
+		entry.Removed[0] = Link{From: corner, Dir: NNE}
+	}
+	if len(entry.RemovedPegs) > 0 {
+		entry.RemovedPegs[0] = corner
+	}
+	if len(entry.PegLinks) > 0 {
+		entry.PegLinks[0] = Link{From: corner, Dir: NNE}
+	}
+	if len(entry.Added) > 0 {
+		entry.Added[0] = Link{From: corner, Dir: NNE}
+	}
+
+	after := g.History()[last]
+	if len(after.Removed) > 0 && after.Removed[0] == (Link{From: corner, Dir: NNE}) {
+		t.Error("writing the clone's Removed changed the original")
+	}
+	if len(after.RemovedPegs) > 0 && after.RemovedPegs[0] == corner {
+		t.Error("writing the clone's RemovedPegs changed the original")
+	}
+	if len(after.PegLinks) > 0 && after.PegLinks[0] == (Link{From: corner, Dir: NNE}) {
+		t.Error("writing the clone's PegLinks changed the original")
+	}
+	if len(after.Added) > 0 && after.Added[0] == (Link{From: corner, Dir: NNE}) {
+		t.Error("writing the clone's Added changed the original")
+	}
+}
+
+// TestPositionDigestCoversTheDrawOffer pins the state a networked pair must
+// agree about. Two positions identical on the board but differing over a pending
+// draw offer must not share a digest, or one side accepts a draw the other
+// believes was never offered.
+func TestPositionDigestCoversTheDrawOffer(t *testing.T) {
+	build := func(offer bool) *Game {
+		g := MustNew(Std)
+		play(t, g, "D4", "D6")
+		if offer {
+			if err := g.OfferDraw(Vertical); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return g
+	}
+	withOffer, without := build(true), build(false)
+	if snapshot(withOffer) != snapshot(without) {
+		t.Fatal("the fixture positions should be identical on the board")
+	}
+	if PositionDigest(withOffer) == PositionDigest(without) {
+		t.Error("a pending draw offer does not change the position digest")
+	}
+}

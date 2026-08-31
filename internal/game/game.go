@@ -1108,7 +1108,7 @@ func (g *Game) Clone() *Game {
 		swapped:       g.swapped,
 		result:        g.result,
 		drawOfferedBy: g.drawOfferedBy,
-		history:       append([]Move(nil), g.history...),
+		history:       cloneHistory(g.history),
 		ufGen:         g.ufGen,
 		turnMark:      g.turnMark,
 		moveMarks:     append([]ufSnapshot(nil), g.moveMarks...),
@@ -1160,4 +1160,22 @@ func dirFrom(p Point, l Link) (Dir, bool) {
 		return l.Dir.Opposite(), true
 	}
 	return 0, false
+}
+
+// cloneHistory copies the game record deeply. Copying the slice of entries alone
+// leaves each entry's link and peg lists pointing at the original's arrays, so a
+// caller that rewrites a cloned record would edit the game it was cloned from.
+func cloneHistory(in []Move) []Move {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]Move, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].Added = cloneLinks(out[i].Added)
+		out[i].Removed = cloneLinks(out[i].Removed)
+		out[i].PegLinks = cloneLinks(out[i].PegLinks)
+		out[i].RemovedPegs = clonePoints(out[i].RemovedPegs)
+	}
+	return out
 }
