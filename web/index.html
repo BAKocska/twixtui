@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>twixtui — TwixT in the terminal</title>
+    <meta
+      name="description"
+      content="twixtui is a terminal UI and CLI for TwixT, Alex Randolph's connection game. Play a bot at three strengths, a friend at the same keyboard, or someone on another machine."
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="wrap">
+        <h1><span class="tw">twixt</span><span class="ui">ui</span></h1>
+        <p class="pitch">
+          TwixT in the terminal: play Alex Randolph's connection game against a
+          bot, against someone at the same keyboard, or against someone on
+          another machine.
+        </p>
+        <p class="actions">
+          <a class="primary" href="#install">Install</a>
+          <a href="https://github.com/BAKocska/twixtui">Source on GitHub</a>
+          <a href="https://github.com/BAKocska/twixtui/blob/main/docs/rules.md"
+            >The rules</a
+          >
+        </p>
+      </div>
+    </header>
+
+    <main>
+      <section id="board">
+        <div class="wrap">
+          <h2>A game in progress</h2>
+          <pre class="board">
+    A B C D E F G H I J K L
+ 1    · · · · ● · · · · ·
+ 2  · · · · ·╱· · · · · · ·
+ 3  · · · · ●⎼· · · · · · ·
+ 4  · · · · · ·⎻● · · · · ·
+ 5  · · · · · ·╱· · · · · ·
+ 6  · · · · · ● · · · · · ·
+ 7  · ○⎼· · · · · · · · · ·
+ 8  · · ·⎻○⎼· · ·⎼○ · · · ·
+ 9  · · · · ·⎻○⎻· · · · · ·
+10  · · · · · ·[·]· · · · ·
+11  · · · · · · · · · · · ·
+12    · · · · · · · · · ·</pre>
+          <p class="caption">
+            <code>●</code> connects top to bottom, <code>○</code> connects left
+            to right, <code>·</code> is an empty hole, the strokes between pegs
+            are links and <code>[·]</code> is the cursor. This board is 12×12;
+            the standard size is 24×24, and anything from 6×6 to 48×48 works.
+          </p>
+        </div>
+      </section>
+
+      <section id="what">
+        <div class="wrap">
+          <h2>What it does</h2>
+          <ul class="features">
+            <li>
+              <h3>A bot with three real strengths</h3>
+              <p>
+                Beginner, intermediate and pro differ in how hard the bot
+                actually searches, not in how they are labelled: over 60 games
+                on a 10×10 board, pro beat intermediate 43–13. Ask for a hint on
+                your own turn and it explains the move it would play, on the
+                board.
+              </p>
+            </li>
+            <li>
+              <h3>Hotseat and remote play</h3>
+              <p>
+                Two players at one keyboard, a direct connection between two
+                machines, a relay you can run yourself when neither side can
+                accept an inbound connection, or move codes pasted into chat
+                when there is no live connection at all.
+              </p>
+            </li>
+            <li>
+              <h3>A tutorial you play</h3>
+              <p>
+                Seven lessons put a real position on a real board and ask you to
+                move into it. In the blocking lesson you have to find the single
+                peg whose link cuts your opponent off from their border, and it
+                tells you what went wrong when you do not.
+              </p>
+            </li>
+            <li>
+              <h3>Profiles, standings and honest rulesets</h3>
+              <p>
+                Usernames with no passwords, a leaderboard of every finished
+                game, and the three historical rulesets kept apart as explicit
+                options: the printed box rules, the paper-and-pencil rules
+                played online, and the original 1962 edition without swap.
+              </p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="install" class="install">
+        <div class="wrap">
+          <h2>Install</h2>
+
+          <h3>With Go 1.26 or newer</h3>
+          <pre class="cmd">go install github.com/BAKocska/twixtui/cmd/twixtui@latest</pre>
+
+          <h3>Or download a binary</h3>
+          <p class="note">
+            Static, dependency-free builds for macOS and Linux, on arm64 and
+            x86-64, are attached to every
+            <a href="https://github.com/BAKocska/twixtui/releases/latest"
+              >release</a
+            >, together with a checksums file.
+          </p>
+          <pre class="cmd">
+tar xzf twixtui_&lt;version&gt;_darwin_arm64.tar.gz
+sudo install -m 755 twixtui /usr/local/bin/twixtui
+twixtui version</pre
+          >
+          <p class="note">
+            On macOS, a file downloaded through a browser is quarantined and
+            Gatekeeper will refuse to run it. These binaries are not notarised,
+            so clear the attribute yourself — or download with
+            <code>curl -LO</code>, which never sets it.
+          </p>
+          <pre class="cmd">xattr -d com.apple.quarantine ./twixtui</pre>
+
+          <h3>Then</h3>
+          <ul class="cmdlist">
+            <li>
+              <code>twixtui</code>
+              <span>interactive: a profile, then a menu</span>
+            </li>
+            <li>
+              <code>twixtui play bot --tier intermediate</code>
+              <span>one game against the bot</span>
+            </li>
+            <li>
+              <code>twixtui play local</code>
+              <span>two players, one keyboard</span>
+            </li>
+            <li>
+              <code>twixtui learn</code>
+              <span>the interactive tutorial</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <ul>
+          <li>
+            <a href="https://github.com/BAKocska/twixtui">Repository</a>
+          </li>
+          <li>
+            <a
+              href="https://github.com/BAKocska/twixtui/blob/main/docs/rules.md"
+              >Rules</a
+            >
+          </li>
+          <li>
+            <a
+              href="https://github.com/BAKocska/twixtui/blob/main/docs/RULES-PROVENANCE.md"
+              >Where the rules come from</a
+            >
+          </li>
+          <li>
+            <a href="https://github.com/BAKocska/twixtui/blob/main/LICENSE"
+              >MIT licence</a
+            >
+          </li>
+        </ul>
+        <p>
+          TwixT was designed by Alex Randolph. twixtui is an independent
+          implementation, not affiliated with, endorsed by, or licensed from any
+          publisher of the board game.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

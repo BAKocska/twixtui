@@ -1,0 +1,293 @@
+/* No build step, no framework, no external requests, no web fonts. The page is
+   two files and works with JavaScript disabled. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #fbfaf8;
+  --surface: #ffffff;
+  --text: #14171a;
+  --muted: #55606d;
+  --border: #ddd9d2;
+  --vertical: #a8241c;
+  --horizontal: #1b4a72;
+  --link: #14171a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216;
+    --surface: #171b21;
+    --text: #e9e6e2;
+    --muted: #9aa5b2;
+    --border: #2a303a;
+    --vertical: #ff7d6f;
+    --horizontal: #85b9ec;
+    --link: #e9e6e2;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+}
+
+code,
+pre,
+kbd {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+a {
+  color: var(--link);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--vertical);
+  outline-offset: 2px;
+}
+
+.wrap {
+  width: 100%;
+  max-width: 60rem;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+
+/* Hero */
+
+.hero {
+  padding-block: 3.5rem 2.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2.5rem, 9vw, 4rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+
+.hero h1 .tw {
+  color: var(--vertical);
+}
+
+.hero h1 .ui {
+  color: var(--horizontal);
+}
+
+.pitch {
+  margin: 0.75rem 0 0;
+  font-size: clamp(1.05rem, 3.4vw, 1.35rem);
+  color: var(--muted);
+  max-width: 34em;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.75rem;
+}
+
+.actions a {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.actions a.primary {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+/* Sections */
+
+section {
+  padding-block: 2.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+section h2 {
+  margin: 0 0 1rem;
+  font-size: clamp(1.3rem, 4vw, 1.6rem);
+  letter-spacing: -0.01em;
+}
+
+section p {
+  max-width: 44em;
+}
+
+/* Board. A board must not reflow — a wrapped board is not a board — so it
+   scrolls sideways if it ever has to. The size is chosen so the 12x12 sample
+   fits a 360px screen without scrolling and still reads at desk width. */
+
+.board {
+  margin: 0;
+  width: max-content;
+  max-width: 100%;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  font-size: clamp(0.9rem, 4vw, 1.05rem);
+  line-height: 1.25;
+  white-space: pre;
+}
+
+.caption {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Feature list */
+
+.features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+  /* Four cards: one column when narrow, a balanced 2x2 when there is room.
+     auto-fit would give an odd 3+1 at the container's full width. */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 42rem) {
+  .features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.features li {
+  padding: 1rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.features h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.features p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* Install blocks: one command per line, no shell prompt characters, so
+   select-and-copy picks up something runnable. Long commands wrap rather than
+   scroll sideways — a wrapped line still copies as one line, an off-screen one
+   is just lost on a phone. */
+
+.cmd {
+  margin: 0.5rem 0 1.5rem;
+  padding: 0.85rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  font-size: clamp(0.74rem, 2.5vw, 0.9rem);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.install h3 {
+  margin: 1.5rem 0 0;
+  font-size: 1.05rem;
+}
+
+.install h3:first-of-type {
+  margin-top: 0;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* Command list: a command and what it does, side by side where there is room,
+   stacked where there is not. */
+
+.cmdlist {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.cmdlist li {
+  display: grid;
+  gap: 0.15rem 1.25rem;
+  align-items: baseline;
+}
+
+@media (min-width: 40rem) {
+  .cmdlist li {
+    grid-template-columns: minmax(0, 22rem) 1fr;
+  }
+}
+
+.cmdlist code {
+  font-size: clamp(0.78rem, 2.5vw, 0.9rem);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.cmdlist span {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* Footer */
+
+footer {
+  padding-block: 2rem 3rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+footer ul {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin: 0 0 0.85rem;
+  padding: 0;
+}
+
+footer p {
+  margin: 0;
+  max-width: 44em;
+}

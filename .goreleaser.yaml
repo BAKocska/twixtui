@@ -1,0 +1,130 @@
+# Release configuration for GoReleaser v2. Validate with `goreleaser check`.
+version: 2
+
+project_name: twixtui
+
+before:
+  hooks:
+    # Download, do not tidy: a release must build exactly the dependency graph
+    # that was committed and reviewed, never a freshly resolved one.
+    - go mod download
+
+builds:
+  - id: twixtui
+    main: ./cmd/twixtui
+    binary: twixtui
+    env:
+      # A player downloading a binary must not need a C library on their box.
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      # The commit date rather than the build date, so rebuilding the same tag
+      # produces the same bytes.
+      - -X main.date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    targets:
+      - darwin_arm64
+      - darwin_amd64
+      - linux_arm64
+      - linux_amd64
+
+archives:
+  - id: twixtui
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - CHANGELOG.md
+      - LICENSE
+      - docs/rules.md
+      - docs/RULES-PROVENANCE.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+source:
+  enabled: true
+  format: tar.gz
+  name_template: "{{ .ProjectName }}_{{ .Version }}_source"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+report_sizes: true
+
+changelog:
+  # Read the log locally: no API token needed to work out what changed, and the
+  # result is identical whether the release runs in CI or on a laptop.
+  use: git
+  sort: asc
+  abbrev: 7
+  filters:
+    exclude:
+      - "^Merge "
+      - "^chore\\(release\\)"
+  # The group regexps are matched against the commit subject alone, even though
+  # the rendered entry is prefixed with the abbreviated hash, so they must not
+  # anchor on that hash.
+  groups:
+    - title: Features
+      regexp: '^feat(\([^)]*\))?!?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\([^)]*\))?!?:'
+      order: 1
+    - title: Performance
+      regexp: '^perf(\([^)]*\))?!?:'
+      order: 2
+    - title: Refactors
+      regexp: '^refactor(\([^)]*\))?!?:'
+      order: 3
+    - title: Documentation
+      regexp: '^docs(\([^)]*\))?!?:'
+      order: 4
+    - title: Tests
+      regexp: '^test(\([^)]*\))?!?:'
+      order: 5
+    - title: Build and tooling
+      regexp: '^(build|ci|chore)(\([^)]*\))?!?:'
+      order: 6
+    - title: Other
+      order: 999
+
+release:
+  draft: false
+  prerelease: auto
+  mode: replace
+  footer: |
+    ## Install
+
+    macOS and Linux, from source:
+
+        go install github.com/BAKocska/twixtui/cmd/twixtui@{{ .Tag }}
+
+    Or download the archive for your platform below, unpack it, and put the
+    `twixtui` binary on your `PATH`. On macOS, clear the download quarantine
+    flag first: `xattr -d com.apple.quarantine ./twixtui`.
+
+# A Homebrew tap would be the nicest install path, but publishing to a tap that
+# does not exist fails the release job and takes the downloadable binaries down
+# with it. Uncomment this once github.com/BAKocska/homebrew-tap exists and a
+# token with write access to it is available as HOMEBREW_TAP_TOKEN.
+#
+# brews:
+#   - name: twixtui
+#     repository:
+#       owner: BAKocska
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     homepage: https://github.com/BAKocska/twixtui
+#     description: Terminal UI and CLI for the board game TwixT
+#     license: MIT
+#     install: |
+#       bin.install "twixtui"
+#     test: |
+#       system "#{bin}/twixtui", "version"
