@@ -1,0 +1,18 @@
+# Local working area: research notes, planning artifacts, captured evidence, scratch harnesses.
+# Never pushed.
+.work/
+
+# Build output
+/dist/
+/twixtui
+*.test
+*.out
+
+# Local state written by the app during development
+*.db
+*.db-shm
+*.db-wal
+
+# OS / editor noise
+.DS_Store
+*.swp
