@@ -33,6 +33,13 @@ func ParseColumn(s string) (int, error) {
 	if s == "" {
 		return 0, errors.New("empty column name")
 	}
+	// The widest board is MaxSize columns, which never needs more than two
+	// letters. Without a bound, a long run of letters overflows and silently
+	// aliases onto a valid column.
+	const maxLetters = 2
+	if len(s) > maxLetters {
+		return 0, fmt.Errorf("column name %q is too long: at most %d letters", s, maxLetters)
+	}
 	col := 0
 	for _, r := range s {
 		if r < 'A' || r > 'Z' {
@@ -110,11 +117,22 @@ func ParseLink(s string) (Link, error) {
 //	D6              place a peg at D6, taking every link offered
 //	D6 ~D6:E8       place at D6 but decline the link to E8
 //	D6 +C4:E5       place at D6 and also link C4 to E5
-//	D6 -C4:E5       place at D6 and take the existing link C4-E5 off
-//	D6 xC4          place at D6 and lift your peg at C4
+//	D6 -C4:E5       take the existing link C4-E5 off, then place at D6
+//	D6 xC4          lift your peg at C4, then place at D6
 //
-// The other entries a game record can hold are the single words swap, resign,
-// draw? for an offer and draw! for an acceptance.
+// Removals are written after the hole for readability but happen before the peg
+// is placed, which is the order the printed rules give and the order the engine
+// enforces.
+//
+// A game record can also hold swap, and the entries that are not turns. Those
+// name the side that made them, because a player may resign or offer a draw
+// while the opponent is thinking, so the side cannot be inferred from the move
+// order:
+//
+//	swap            the second player takes the swap option
+//	v:resign        the vertical player resigns
+//	h:draw?         the horizontal player offers a draw
+//	v:draw!         the vertical player accepts a draw
 const (
 	tokenSwap        = "swap"
 	tokenResign      = "resign"
@@ -126,20 +144,29 @@ const (
 	removePegPrefix  = 'x'
 )
 
-// Notation renders a committed move. declined lists the links that were offered
-// on placement but withdrawn, which the Move itself does not store because it
-// records what happened rather than what did not; use Game.MoveNotation for a
-// move taken from a game's history.
+// sideTag returns the one-letter side marker used by the record entries that are
+// not turns.
+func sideTag(pl Player) string {
+	if pl == Horizontal {
+		return "h"
+	}
+	return "v"
+}
+
+// Notation renders a record entry. declined lists the links that were offered on
+// placement but withdrawn, which the Move itself does not store because it
+// records what happened rather than what did not; use Game.MoveNotation for an
+// entry taken from a game's history.
 func (m Move) Notation(declined []Link) string {
 	switch m.Kind {
 	case SwapMove:
 		return tokenSwap
 	case ResignMove:
-		return tokenResign
+		return sideTag(m.Player) + ":" + tokenResign
 	case DrawOfferMove:
-		return tokenDrawOffer
+		return sideTag(m.Player) + ":" + tokenDrawOffer
 	case DrawAcceptMove:
-		return tokenDrawAccept
+		return sideTag(m.Player) + ":" + tokenDrawAccept
 	}
 	var b strings.Builder
 	b.WriteString(m.Peg.String())
@@ -255,7 +282,25 @@ func (g *Game) PlayNotation(s string) error {
 	if s == "" {
 		return errors.New("empty move")
 	}
-	switch strings.ToLower(s) {
+	lower := strings.ToLower(s)
+	// A side-tagged entry names who made it, which matters because these are not
+	// turns and can be made while the opponent is thinking. The bare forms stay
+	// accepted so a player can type "resign" at a prompt.
+	if side, token, ok := strings.Cut(lower, ":"); ok && (side == "v" || side == "h") {
+		pl, err := ParsePlayer(side)
+		if err != nil {
+			return err
+		}
+		switch token {
+		case tokenResign:
+			return g.Resign(pl)
+		case tokenDrawOffer:
+			return g.OfferDraw(pl)
+		case tokenDrawAccept:
+			return g.AcceptDraw(pl)
+		}
+	}
+	switch lower {
 	case tokenSwap:
 		return g.Swap()
 	case tokenResign:

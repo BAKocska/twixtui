@@ -41,6 +41,17 @@ func (p Player) String() string {
 	return "none"
 }
 
+// ParsePlayer reads a side name, accepting the full axis name or its initial.
+func ParsePlayer(s string) (Player, error) {
+	switch s {
+	case "v", "V", "vertical", "Vertical":
+		return Vertical, nil
+	case "h", "H", "horizontal", "Horizontal":
+		return Horizontal, nil
+	}
+	return NoPlayer, fmt.Errorf("unknown side %q (want vertical or horizontal)", s)
+}
+
 // Outcome is the state of a finished or unfinished game.
 type Outcome uint8
 
@@ -105,28 +116,37 @@ const (
 	DrawAcceptMove
 )
 
-// Move is one committed turn, recorded in full so that a game can be replayed
-// and so that a networked opponent can verify it applied the same thing.
+// ConsumesTurn reports whether an entry of this kind is a turn. A resignation or
+// a draw offer is made whenever a player likes, including while the opponent is
+// thinking, so it does not advance the move order and does not count as a ply.
+func (k MoveKind) ConsumesTurn() bool { return k == PlaceMove || k == SwapMove }
+
+// Move is one entry in the game record, holding enough to replay and to reverse
+// it exactly.
 type Move struct {
 	Kind   MoveKind
 	Player Player
 
-	// Peg is the hole a peg was placed in, for PlaceMove.
+	// Peg is the hole a peg was placed in, for PlaceMove and SwapMove.
 	Peg Point
 	// AutoLinks is the set of directions from Peg that were linked when the peg
-	// was placed, as a bitmask over Dir.
+	// was placed and still stood at the end of the turn, as a bitmask over Dir.
 	AutoLinks uint8
 	// Added lists links the player added by hand, beyond AutoLinks.
 	Added []Link
-	// Removed lists links the player took off the board, including links
-	// withdrawn from the automatic proposal and links lost with a removed peg.
+	// Removed lists links the player deliberately took off the board before
+	// placing their peg. These appear in the move's notation.
 	Removed []Link
 	// RemovedPegs lists the player's own pegs lifted off the board.
 	RemovedPegs []Point
+	// PegLinks lists the links that came away with those pegs. They are implied
+	// by the removal rather than chosen, so they are not part of the notation,
+	// but they are needed to reverse the move exactly.
+	PegLinks []Link
 }
 
-// Errors reported by the engine. They are sentinel values so a UI can react to
-// a specific rule violation instead of matching on message text.
+// Errors reported by the engine. They are sentinel values so a caller can react
+// to a specific rule violation instead of matching on message text.
 var (
 	ErrGameOver        = errors.New("the game is over")
 	ErrNotYourTurn     = errors.New("not this player's turn")
@@ -144,9 +164,18 @@ var (
 	ErrLinkingLocked   = errors.New("this ruleset links automatically and does not allow link edits")
 	ErrRemovalLocked   = errors.New("this ruleset does not allow removing links placed on an earlier turn")
 	ErrPegRemovalOff   = errors.New("this ruleset does not allow removing pegs")
+	ErrRemoveAfterPeg  = errors.New("removals come before the peg is placed, not after")
 	ErrSwapUnavailable = errors.New("the swap option is not available")
 	ErrNoDrawOffer     = errors.New("there is no draw offer to accept")
 )
+
+// ufSnapshot remembers a point in the connectivity structure's history. The
+// generation guards against reuse across a rebuild, which discards the merge log
+// and would make an older mark meaningless.
+type ufSnapshot struct {
+	mark int
+	gen  int
+}
 
 // stagedTurn holds the uncommitted edits of the turn in progress.
 type stagedTurn struct {
@@ -156,15 +185,18 @@ type stagedTurn struct {
 	added       []Link
 	removed     []Link
 	removedPegs []Point
-	// ufMark is the union-find operation count at the start of the turn.
-	ufMark int
-	// destructive records that something was taken off the board this turn, so
-	// connectivity cannot be restored by rolling the union-find back.
-	destructive bool
+	pegLinks    []Link
 }
 
 func (s *stagedTurn) empty() bool {
-	return !s.pegPlaced && len(s.added) == 0 && len(s.removed) == 0 && len(s.removedPegs) == 0
+	return !s.pegPlaced && len(s.added) == 0 && len(s.removed) == 0 &&
+		len(s.removedPegs) == 0 && len(s.pegLinks) == 0
+}
+
+// destructive reports whether the turn took anything off the board, in which
+// case connectivity has to be rebuilt rather than rolled back.
+func (s *stagedTurn) destructive() bool {
+	return len(s.removed) > 0 || len(s.removedPegs) > 0 || len(s.pegLinks) > 0
 }
 
 // Game is a TwixT position together with its rules and history.
@@ -182,8 +214,14 @@ type Game struct {
 	drawOfferedBy Player
 
 	history []Move
-	uf      unionFind
 	staged  stagedTurn
+
+	uf    unionFind
+	ufGen int
+	// turnMark is the connectivity state at the start of the turn in progress.
+	turnMark ufSnapshot
+	// moveMarks[i] is the connectivity state before history[i] was applied.
+	moveMarks []ufSnapshot
 }
 
 // New returns a game at the initial position.
@@ -200,6 +238,7 @@ func New(rs Ruleset) (*Game, error) {
 		turn:  Vertical,
 	}
 	g.uf.reset(n*n + 4)
+	g.turnMark = g.snapshot()
 	return g, nil
 }
 
@@ -212,6 +251,8 @@ func MustNew(rs Ruleset) *Game {
 	return g
 }
 
+func (g *Game) snapshot() ufSnapshot { return ufSnapshot{mark: g.uf.mark(), gen: g.ufGen} }
+
 // Rules returns the ruleset in force.
 func (g *Game) Rules() Ruleset { return g.rs }
 
@@ -221,8 +262,21 @@ func (g *Game) Size() int { return g.n }
 // Turn returns the side to move.
 func (g *Game) Turn() Player { return g.turn }
 
-// Ply returns the number of committed moves.
-func (g *Game) Ply() int { return len(g.history) }
+// Ply returns the number of turns played. Resignations and draw offers are in
+// the record but are not turns, so they do not count.
+func (g *Game) Ply() int {
+	n := 0
+	for _, m := range g.history {
+		if m.Kind.ConsumesTurn() {
+			n++
+		}
+	}
+	return n
+}
+
+// Entries returns the number of entries in the game record, including those that
+// are not turns.
+func (g *Game) Entries() int { return len(g.history) }
 
 // Swapped reports whether the swap option was exercised.
 func (g *Game) Swapped() bool { return g.swapped }
@@ -230,13 +284,13 @@ func (g *Game) Swapped() bool { return g.swapped }
 // Result returns the current result.
 func (g *Game) Result() Result { return g.result }
 
-// History returns the committed moves. The slice must not be modified.
+// History returns the game record. The slice must not be modified.
 func (g *Game) History() []Move { return g.history }
 
 // DrawOfferedBy returns the player with a standing draw offer, if any.
 func (g *Game) DrawOfferedBy() Player { return g.drawOfferedBy }
 
-// virtual border node indices in the union-find.
+// virtual border node indices in the connectivity structure.
 func (g *Game) nodeTop() int    { return g.n*g.n + 0 }
 func (g *Game) nodeBottom() int { return g.n*g.n + 1 }
 func (g *Game) nodeLeft() int   { return g.n*g.n + 2 }
@@ -391,9 +445,11 @@ func (g *Game) linkBlockedBy(l Link, owner Player) (Link, bool) {
 	return Link{}, false
 }
 
-// LinkBlockedBy returns the link that prevents l from being created, if any.
+// LinkBlockedBy returns the link that prevents l from being created, if any. The
+// link is canonicalised first, so a caller that built one by hand with a
+// non-canonical direction still gets the right answer.
 func (g *Game) LinkBlockedBy(l Link, owner Player) (Link, bool) {
-	return g.linkBlockedBy(l, owner)
+	return g.linkBlockedBy(l.Canonical(), owner)
 }
 
 // setLink puts a link on the board and merges the two pegs' groups.
@@ -404,12 +460,19 @@ func (g *Game) setLink(l Link) {
 	g.uf.union(g.idx(l.From), g.idx(to))
 }
 
-// clearLink takes a link off the board. Connectivity is not repaired here; the
-// caller marks the turn destructive and connectivity is rebuilt.
+// clearLink takes a link off the board. Connectivity is repaired by the caller.
 func (g *Game) clearLink(l Link) {
 	to := l.To()
 	g.links[g.idx(l.From)] &^= 1 << l.Dir
 	g.links[g.idx(to)] &^= 1 << l.Dir.Opposite()
+}
+
+// restoreLink puts a link back without touching connectivity, for use while
+// reversing a turn.
+func (g *Game) restoreLink(l Link) {
+	to := l.To()
+	g.links[g.idx(l.From)] |= 1 << l.Dir
+	g.links[g.idx(to)] |= 1 << l.Dir.Opposite()
 }
 
 // setPeg puts a peg on the board and attaches it to its own border lines.
@@ -462,10 +525,13 @@ func (g *Game) autoLink(pl Player, p Point) uint8 {
 	return mask
 }
 
-// rebuildConnectivity recomputes the union-find from the pegs and links on the
-// board. It is used after a removal, which cannot be undone incrementally.
+// rebuildConnectivity recomputes the connectivity structure from the board. It
+// is used after a removal, which cannot be undone incrementally. Doing so
+// discards the merge log, so the generation is bumped to invalidate every
+// snapshot taken before this point.
 func (g *Game) rebuildConnectivity() {
 	g.uf.reset(g.n*g.n + 4)
+	g.ufGen++
 	for row := range g.n {
 		for col := range g.n {
 			p := Point{Col: col, Row: row}
@@ -501,7 +567,17 @@ func (g *Game) rebuildConnectivity() {
 			}
 		}
 	}
-	g.staged.ufMark = g.uf.mark()
+}
+
+// restoreConnectivity returns the connectivity structure to the state described
+// by snap, rolling the merge log back when that is still valid and rebuilding
+// from the board when it is not.
+func (g *Game) restoreConnectivity(snap ufSnapshot, destructive bool) {
+	if !destructive && snap.gen == g.ufGen {
+		g.uf.rollback(snap.mark)
+		return
+	}
+	g.rebuildConnectivity()
 }
 
 // connected reports whether a player has joined both of their border lines.
@@ -518,13 +594,17 @@ func (g *Game) connected(pl Player) bool {
 // Connected reports whether the player currently has a completed chain.
 func (g *Game) Connected(pl Player) bool { return g.connected(pl) }
 
-// requireTurn checks the game is running and it is pl's turn.
-func (g *Game) requireTurn(pl Player) error {
+// beginStaging records the connectivity state at the first edit of a turn.
+func (g *Game) beginStaging() {
+	if g.staged.empty() {
+		g.turnMark = g.snapshot()
+	}
+}
+
+// requireTurn checks the game is running and it is the mover's turn.
+func (g *Game) requireTurn() error {
 	if g.result.Over() {
 		return ErrGameOver
-	}
-	if g.turn != pl {
-		return ErrNotYourTurn
 	}
 	return nil
 }
@@ -532,7 +612,7 @@ func (g *Game) requireTurn(pl Player) error {
 // PlacePeg places the peg for the turn in progress and takes every link the
 // ruleset offers. It does not end the turn: call CommitTurn.
 func (g *Game) PlacePeg(p Point) error {
-	if err := g.requireTurn(g.turn); err != nil {
+	if err := g.requireTurn(); err != nil {
 		return err
 	}
 	if g.staged.pegPlaced {
@@ -541,9 +621,7 @@ func (g *Game) PlacePeg(p Point) error {
 	if err := g.CanPlace(g.turn, p); err != nil {
 		return err
 	}
-	if g.staged.empty() {
-		g.staged.ufMark = g.uf.mark()
-	}
+	g.beginStaging()
 	g.setPeg(g.turn, p)
 	g.staged.pegPlaced = true
 	g.staged.peg = p
@@ -554,7 +632,7 @@ func (g *Game) PlacePeg(p Point) error {
 // AddLink links two of the current player's pegs. Under a ruleset that links
 // automatically there is nothing to add by hand and this is refused.
 func (g *Game) AddLink(a, b Point) error {
-	if err := g.requireTurn(g.turn); err != nil {
+	if err := g.requireTurn(); err != nil {
 		return err
 	}
 	if !g.rs.DeliberateLinking {
@@ -576,30 +654,61 @@ func (g *Game) AddLink(a, b Point) error {
 	if _, blocked := g.linkBlockedBy(l, g.turn); blocked {
 		return ErrLinkCrosses
 	}
-	if g.staged.empty() {
-		g.staged.ufMark = g.uf.mark()
-	}
+	g.beginStaging()
 	g.setLink(l)
-	// A link withdrawn earlier in this turn and then put back cancels out.
-	if i := indexOfLink(g.staged.removed, l); i >= 0 {
-		g.staged.removed = append(g.staged.removed[:i], g.staged.removed[i+1:]...)
-	} else if l.From == g.staged.peg || l.To() == g.staged.peg {
-		if d, ok := dirFrom(g.staged.peg, l); ok {
-			g.staged.autoLinks |= 1 << d
-		} else {
-			g.staged.added = append(g.staged.added, l)
-		}
-	} else {
-		g.staged.added = append(g.staged.added, l)
-	}
+	g.recordLinkAddition(l)
 	return nil
 }
 
-// RemoveLink takes one of the current player's links off the board. Withdrawing
-// a link the engine proposed during this turn is always allowed when linking is
-// deliberate; removing an older link additionally needs Ruleset.LinkRemoval.
+// recordLinkAddition updates the staged bookkeeping when a link appears.
+func (g *Game) recordLinkAddition(l Link) {
+	// A link withdrawn earlier in this turn and then put back cancels out.
+	if i := indexOfLink(g.staged.removed, l); i >= 0 {
+		g.staged.removed = append(g.staged.removed[:i], g.staged.removed[i+1:]...)
+		return
+	}
+	if d, ok := dirFrom(g.staged.peg, l); ok && g.staged.pegPlaced {
+		g.staged.autoLinks |= 1 << d
+		return
+	}
+	g.staged.added = append(g.staged.added, l)
+}
+
+// recordLinkRemoval updates the staged bookkeeping when a link leaves the board.
+// A link the engine offered this turn, or one the player added this turn, is
+// simply un-recorded; only a link that predates the turn becomes a removal that
+// has to be restored if the turn is abandoned. Getting this wrong leaves a link
+// attached to a hole with no peg in it.
+func (g *Game) recordLinkRemoval(l Link) {
+	if d, ok := dirFrom(g.staged.peg, l); ok && g.staged.pegPlaced && g.staged.autoLinks&(1<<d) != 0 {
+		g.staged.autoLinks &^= 1 << d
+		return
+	}
+	if i := indexOfLink(g.staged.added, l); i >= 0 {
+		g.staged.added = append(g.staged.added[:i], g.staged.added[i+1:]...)
+		return
+	}
+	g.staged.removed = append(g.staged.removed, l)
+}
+
+// stagedThisTurn reports whether the link came into being during this turn, in
+// which case withdrawing it is part of choosing links rather than a removal.
+func (g *Game) stagedThisTurn(l Link) bool {
+	if d, ok := dirFrom(g.staged.peg, l); ok && g.staged.pegPlaced && g.staged.autoLinks&(1<<d) != 0 {
+		return true
+	}
+	return indexOfLink(g.staged.added, l) >= 0
+}
+
+// RemoveLink takes one of the current player's links off the board.
+//
+// Withdrawing a link that came into being this turn is always allowed when
+// linking is deliberate, because choosing not to have a link is a choice the
+// printed rules grant. Removing a link placed on an earlier turn is a different
+// act: it needs Ruleset.LinkRemoval, and the printed rules put it before the
+// peg is placed, so it is refused afterwards.
 func (g *Game) RemoveLink(a, b Point) error {
-	if err := g.requireTurn(g.turn); err != nil {
+	if err := g.requireTurn(); err != nil {
 		return err
 	}
 	if !g.rs.DeliberateLinking {
@@ -615,40 +724,33 @@ func (g *Game) RemoveLink(a, b Point) error {
 	if g.pegs[g.idx(l.From)] != g.turn {
 		return ErrNotOwnPeg
 	}
-	stagedThisTurn := false
-	if d, ok := dirFrom(g.staged.peg, l); ok && g.staged.pegPlaced && g.staged.autoLinks&(1<<d) != 0 {
-		stagedThisTurn = true
+	if !g.stagedThisTurn(l) {
+		if !g.rs.LinkRemoval {
+			return ErrRemovalLocked
+		}
+		if g.staged.pegPlaced {
+			return ErrRemoveAfterPeg
+		}
 	}
-	if !stagedThisTurn && indexOfLink(g.staged.added, l) >= 0 {
-		stagedThisTurn = true
-	}
-	if !stagedThisTurn && !g.rs.LinkRemoval {
-		return ErrRemovalLocked
-	}
-	if g.staged.empty() {
-		g.staged.ufMark = g.uf.mark()
-	}
+	g.beginStaging()
 	g.clearLink(l)
-	g.staged.destructive = true
-	if d, ok := dirFrom(g.staged.peg, l); ok && g.staged.autoLinks&(1<<d) != 0 {
-		g.staged.autoLinks &^= 1 << d
-	} else if i := indexOfLink(g.staged.added, l); i >= 0 {
-		g.staged.added = append(g.staged.added[:i], g.staged.added[i+1:]...)
-	} else {
-		g.staged.removed = append(g.staged.removed, l)
-	}
+	g.recordLinkRemoval(l)
 	g.rebuildConnectivity()
 	return nil
 }
 
 // RemovePeg lifts one of the current player's pegs, and every link attached to
-// it, off the board.
+// it, off the board. The printed rules place removals before the peg is placed,
+// so this is refused once the turn's peg is down.
 func (g *Game) RemovePeg(p Point) error {
-	if err := g.requireTurn(g.turn); err != nil {
+	if err := g.requireTurn(); err != nil {
 		return err
 	}
 	if !g.rs.PegRemoval {
 		return ErrPegRemovalOff
+	}
+	if g.staged.pegPlaced {
+		return ErrRemoveAfterPeg
 	}
 	if !g.InBounds(p) {
 		return ErrOffBoard
@@ -656,12 +758,7 @@ func (g *Game) RemovePeg(p Point) error {
 	if g.pegs[g.idx(p)] != g.turn {
 		return ErrNotOwnPeg
 	}
-	if g.staged.pegPlaced && p == g.staged.peg {
-		return ErrNotOwnPeg
-	}
-	if g.staged.empty() {
-		g.staged.ufMark = g.uf.mark()
-	}
+	g.beginStaging()
 	i := g.idx(p)
 	for d := range Dir(NumDirs) {
 		if g.links[i]&(1<<d) == 0 {
@@ -669,17 +766,18 @@ func (g *Game) RemovePeg(p Point) error {
 		}
 		l, _ := NewLink(p, p.Add(d))
 		g.clearLink(l)
-		g.staged.removed = append(g.staged.removed, l)
+		// These links are implied by the peg removal rather than chosen, so they
+		// are kept apart from deliberate removals and stay out of the notation.
+		g.staged.pegLinks = append(g.staged.pegLinks, l)
 	}
 	g.pegs[i] = NoPlayer
 	g.staged.removedPegs = append(g.staged.removedPegs, p)
-	g.staged.destructive = true
 	g.rebuildConnectivity()
 	return nil
 }
 
-// StagedTurn describes the uncommitted edits of the turn in progress, for a UI
-// to show what the player has done so far.
+// StagedTurn describes the uncommitted edits of the turn in progress, for a
+// caller that needs to show the player what they have done so far.
 type StagedTurn struct {
 	PegPlaced   bool
 	Peg         Point
@@ -687,6 +785,7 @@ type StagedTurn struct {
 	Added       []Link
 	Removed     []Link
 	RemovedPegs []Point
+	PegLinks    []Link
 }
 
 // Staged returns the turn in progress.
@@ -698,43 +797,51 @@ func (g *Game) Staged() StagedTurn {
 		Added:       g.staged.added,
 		Removed:     g.staged.removed,
 		RemovedPegs: g.staged.removedPegs,
+		PegLinks:    g.staged.pegLinks,
 	}
 }
 
-// AbortTurn discards every uncommitted edit, restoring the position to the
-// start of the turn.
+// AbortTurn discards every uncommitted edit, restoring the position to the start
+// of the turn.
 func (g *Game) AbortTurn() {
 	if g.staged.empty() {
 		return
 	}
 	s := g.staged
-	// Undo in reverse dependency order: links first, then the placed peg, then
-	// restore what was taken away.
-	if s.pegPlaced {
+	g.staged = stagedTurn{}
+	g.undoBoard(s.pegPlaced, s.peg, s.autoLinks, s.added, s.removed, s.removedPegs, s.pegLinks, g.turn)
+	g.restoreConnectivity(g.turnMark, s.destructive())
+}
+
+// undoBoard reverses one turn's worth of board changes. Order matters: links the
+// turn created go first, then its peg, then the pegs it removed come back, and
+// only then the links that went with them, because restoring a link needs both
+// of its pegs to be present.
+func (g *Game) undoBoard(pegPlaced bool, peg Point, autoLinks uint8, added, removed []Link, removedPegs []Point, pegLinks []Link, owner Player) {
+	if pegPlaced {
 		for d := range Dir(NumDirs) {
-			if s.autoLinks&(1<<d) == 0 {
+			if autoLinks&(1<<d) == 0 {
 				continue
 			}
-			l, _ := NewLink(s.peg, s.peg.Add(d))
+			l, _ := NewLink(peg, peg.Add(d))
 			g.clearLink(l)
 		}
 	}
-	for _, l := range s.added {
+	for _, l := range added {
 		g.clearLink(l)
 	}
-	if s.pegPlaced {
-		g.pegs[g.idx(s.peg)] = NoPlayer
+	if pegPlaced {
+		g.pegs[g.idx(peg)] = NoPlayer
 	}
-	for _, p := range s.removedPegs {
-		g.pegs[g.idx(p)] = g.turn
+	for _, p := range removedPegs {
+		g.pegs[g.idx(p)] = owner
 	}
-	for _, l := range s.removed {
-		to := l.To()
-		g.links[g.idx(l.From)] |= 1 << l.Dir
-		g.links[g.idx(to)] |= 1 << l.Dir.Opposite()
+	for _, l := range pegLinks {
+		g.restoreLink(l)
 	}
-	g.staged = stagedTurn{}
-	g.rebuildConnectivity()
+	for _, l := range removed {
+		g.restoreLink(l)
+	}
 }
 
 // CommitTurn ends the turn, evaluates the position and passes the move to the
@@ -761,11 +868,21 @@ func (g *Game) CommitTurn() (Result, error) {
 	if len(g.staged.removedPegs) > 0 {
 		m.RemovedPegs = append([]Point(nil), g.staged.removedPegs...)
 	}
-	g.history = append(g.history, m)
+	if len(g.staged.pegLinks) > 0 {
+		m.PegLinks = append([]Link(nil), g.staged.pegLinks...)
+	}
+	g.record(m, g.turnMark)
 	g.staged = stagedTurn{}
 	g.drawOfferedBy = NoPlayer
 	g.finishTurn(m.Player)
 	return g.result, nil
+}
+
+// record appends an entry to the game record along with the connectivity state
+// that preceded it.
+func (g *Game) record(m Move, snap ufSnapshot) {
+	g.history = append(g.history, m)
+	g.moveMarks = append(g.moveMarks, snap)
 }
 
 // finishTurn evaluates the position after mover's turn and hands over the move.
@@ -776,6 +893,7 @@ func (g *Game) finishTurn(mover Player) {
 	}
 	next := mover.Opponent()
 	g.turn = next
+	g.turnMark = g.snapshot()
 	if !g.HasLegalPlacement(next) {
 		g.result = Result{Outcome: Draw, Reason: NoMovesLeft}
 	}
@@ -798,10 +916,26 @@ func (g *Game) PlayPeg(p Point) (Result, error) {
 	return g.CommitTurn()
 }
 
-// CanSwap reports whether the side to move may take the swap option.
+// CanSwap reports whether the side to move may take the swap option, which
+// exists only in answer to the very first peg.
 func (g *Game) CanSwap() bool {
-	return g.rs.Swap && !g.swapped && !g.result.Over() &&
-		len(g.history) == 1 && g.history[0].Kind == PlaceMove && g.staged.empty()
+	if !g.rs.Swap || g.swapped || g.result.Over() || !g.staged.empty() {
+		return false
+	}
+	// Exactly one turn has been played, and it was an ordinary placement.
+	// Entries that are not turns, such as a draw offer, must not count.
+	turns := 0
+	var first Move
+	for _, m := range g.history {
+		if !m.Kind.ConsumesTurn() {
+			continue
+		}
+		if turns == 0 {
+			first = m
+		}
+		turns++
+	}
+	return turns == 1 && first.Kind == PlaceMove
 }
 
 // Swap exercises the swap option: the opening peg changes hands and reflects
@@ -812,22 +946,30 @@ func (g *Game) Swap() error {
 	if !g.CanSwap() {
 		return ErrSwapUnavailable
 	}
-	first := g.history[0]
-	mirrored := Point{Col: first.Peg.Row, Row: first.Peg.Col}
+	var original Point
+	for _, m := range g.history {
+		if m.Kind == PlaceMove {
+			original = m.Peg
+			break
+		}
+	}
+	mirrored := Point{Col: original.Row, Row: original.Col}
 	swapper := g.turn
+	snap := g.snapshot()
 
-	g.pegs[g.idx(first.Peg)] = NoPlayer
-	g.links[g.idx(first.Peg)] = 0
+	g.pegs[g.idx(original)] = NoPlayer
+	g.links[g.idx(original)] = 0
 	g.setPeg(swapper, mirrored)
 	g.rebuildConnectivity()
 
 	g.swapped = true
-	g.history = append(g.history, Move{Kind: SwapMove, Player: swapper, Peg: mirrored})
+	g.record(Move{Kind: SwapMove, Player: swapper, Peg: mirrored}, snap)
 	g.finishTurn(swapper)
 	return nil
 }
 
-// Resign concedes the game.
+// Resign concedes the game. A player may resign at any time, including while the
+// opponent is thinking, so this does not depend on whose turn it is.
 func (g *Game) Resign(pl Player) error {
 	if g.result.Over() {
 		return ErrGameOver
@@ -836,18 +978,21 @@ func (g *Game) Resign(pl Player) error {
 		return ErrNotYourTurn
 	}
 	g.AbortTurn()
-	g.history = append(g.history, Move{Kind: ResignMove, Player: pl})
+	g.record(Move{Kind: ResignMove, Player: pl}, g.snapshot())
 	g.result = Result{Outcome: winFor(pl.Opponent()), Reason: Resignation}
 	return nil
 }
 
-// OfferDraw records a draw offer from a player.
+// OfferDraw records a draw offer from a player. It does not consume a turn.
 func (g *Game) OfferDraw(pl Player) error {
 	if g.result.Over() {
 		return ErrGameOver
 	}
+	if pl != Vertical && pl != Horizontal {
+		return ErrNotYourTurn
+	}
 	g.drawOfferedBy = pl
-	g.history = append(g.history, Move{Kind: DrawOfferMove, Player: pl})
+	g.record(Move{Kind: DrawOfferMove, Player: pl}, g.snapshot())
 	return nil
 }
 
@@ -860,64 +1005,59 @@ func (g *Game) AcceptDraw(pl Player) error {
 		return ErrNoDrawOffer
 	}
 	g.AbortTurn()
-	g.history = append(g.history, Move{Kind: DrawAcceptMove, Player: pl})
+	g.record(Move{Kind: DrawAcceptMove, Player: pl}, g.snapshot())
 	g.result = Result{Outcome: Draw, Reason: Agreement}
 	return nil
 }
 
-// UndoLastMove reverses the most recently committed move, discarding any turn in
-// progress. It restores the result, the side to move and the board.
+// UndoLastMove reverses the most recent record entry, discarding any turn in
+// progress.
 func (g *Game) UndoLastMove() error {
 	g.AbortTurn()
 	if len(g.history) == 0 {
 		return errors.New("no move to undo")
 	}
-	m := g.history[len(g.history)-1]
-	g.history = g.history[:len(g.history)-1]
+	last := len(g.history) - 1
+	m := g.history[last]
+	snap := g.moveMarks[last]
+	g.history = g.history[:last]
+	g.moveMarks = g.moveMarks[:last]
 
+	destructive := false
 	switch m.Kind {
 	case PlaceMove:
-		for d := range Dir(NumDirs) {
-			if m.AutoLinks&(1<<d) == 0 {
-				continue
-			}
-			l, _ := NewLink(m.Peg, m.Peg.Add(d))
-			g.clearLink(l)
-		}
-		for _, l := range m.Added {
-			g.clearLink(l)
-		}
-		g.pegs[g.idx(m.Peg)] = NoPlayer
-		for _, p := range m.RemovedPegs {
-			g.pegs[g.idx(p)] = m.Player
-		}
-		for _, l := range m.Removed {
-			to := l.To()
-			g.links[g.idx(l.From)] |= 1 << l.Dir
-			g.links[g.idx(to)] |= 1 << l.Dir.Opposite()
-		}
+		destructive = len(m.Removed) > 0 || len(m.PegLinks) > 0 || len(m.RemovedPegs) > 0
+		g.undoBoard(true, m.Peg, m.AutoLinks, m.Added, m.Removed, m.RemovedPegs, m.PegLinks, m.Player)
 	case SwapMove:
-		// Reverse the reflection and hand the peg back to Vertical.
+		// Undo the reflection and hand the peg back to the opener.
 		original := Point{Col: m.Peg.Row, Row: m.Peg.Col}
 		g.pegs[g.idx(m.Peg)] = NoPlayer
 		g.links[g.idx(m.Peg)] = 0
-		g.pegs[g.idx(original)] = Vertical
+		g.pegs[g.idx(original)] = m.Player.Opponent()
 		g.swapped = false
+		destructive = true
 	case ResignMove, DrawOfferMove, DrawAcceptMove:
 		// Nothing on the board changed.
 	}
 
-	g.turn = m.Player
+	// Only an entry that was a turn moved the turn on, so only such an entry
+	// hands it back. Undoing a resignation or a draw offer must leave the move
+	// order exactly as it was.
+	if m.Kind.ConsumesTurn() {
+		g.turn = m.Player
+	}
 	g.result = Result{}
 	g.drawOfferedBy = NoPlayer
 	for _, h := range g.history {
-		if h.Kind == DrawOfferMove {
+		switch h.Kind {
+		case DrawOfferMove:
 			g.drawOfferedBy = h.Player
-		} else {
+		case PlaceMove, SwapMove:
 			g.drawOfferedBy = NoPlayer
 		}
 	}
-	g.rebuildConnectivity()
+	g.restoreConnectivity(snap, destructive)
+	g.turnMark = g.snapshot()
 	return nil
 }
 
@@ -933,6 +1073,9 @@ func (g *Game) Clone() *Game {
 		result:        g.result,
 		drawOfferedBy: g.drawOfferedBy,
 		history:       append([]Move(nil), g.history...),
+		ufGen:         g.ufGen,
+		turnMark:      g.turnMark,
+		moveMarks:     append([]ufSnapshot(nil), g.moveMarks...),
 	}
 	c.uf.copyFrom(&g.uf)
 	c.staged = stagedTurn{
@@ -942,8 +1085,7 @@ func (g *Game) Clone() *Game {
 		added:       append([]Link(nil), g.staged.added...),
 		removed:     append([]Link(nil), g.staged.removed...),
 		removedPegs: append([]Point(nil), g.staged.removedPegs...),
-		ufMark:      g.staged.ufMark,
-		destructive: g.staged.destructive,
+		pegLinks:    append([]Link(nil), g.staged.pegLinks...),
 	}
 	return c
 }
@@ -961,7 +1103,7 @@ func (g *Game) PegCount(pl Player) int {
 
 // String renders the position as text, for debugging and test failure output.
 func (g *Game) String() string {
-	return fmt.Sprintf("twixt %dx%d ply=%d turn=%s result=%v", g.n, g.n, len(g.history), g.turn, g.result.Outcome)
+	return fmt.Sprintf("twixt %dx%d ply=%d turn=%s result=%v", g.n, g.n, g.Ply(), g.turn, g.result.Outcome)
 }
 
 func indexOfLink(ls []Link, l Link) int {

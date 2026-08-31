@@ -271,23 +271,57 @@ func TestRemovalOfOlderLinkNeedsRuleset(t *testing.T) {
 	rs.LinkRemoval = false
 	g := MustNew(rs)
 	play(t, g, "D4", "A6", "E6", "A7")
-	// D4-E6 was created on an earlier turn.
-	if err := g.PlacePeg(at("G4")); err != nil {
-		t.Fatal(err)
-	}
+	// D4-E6 was created on an earlier turn, so taking it off needs the ruleset
+	// to allow link removal.
 	if err := g.RemoveLink(at("D4"), at("E6")); err != ErrRemovalLocked {
 		t.Errorf("got %v, want %v", err, ErrRemovalLocked)
 	}
-	g.AbortTurn()
 
-	// With removal enabled it succeeds.
+	// With removal enabled it succeeds, before the peg goes down.
 	g2 := MustNew(Std)
 	play(t, g2, "D4", "A6", "E6", "A7")
+	if err := g2.RemoveLink(at("D4"), at("E6")); err != nil {
+		t.Fatalf("removing an older link under std rules: %v", err)
+	}
 	if err := g2.PlacePeg(at("G4")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g2.RemoveLink(at("D4"), at("E6")); err != nil {
-		t.Errorf("removing an older link under std rules: %v", err)
+	if _, err := g2.CommitTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := NewLink(at("D4"), at("E6")); g2.HasLink(l) {
+		t.Error("the removed link is back on the board")
+	}
+}
+
+// TestRemovalsComeBeforeThePeg pins the turn order the printed rules give:
+// removals first, then the peg, then link additions. Withdrawing a link the
+// engine offered during this turn is not a removal and stays legal afterwards.
+func TestRemovalsComeBeforeThePeg(t *testing.T) {
+	rs := Std
+	rs.PegRemoval = true
+	g := MustNew(rs)
+	play(t, g, "D4", "A6", "E6", "A7")
+
+	if err := g.PlacePeg(at("F4")); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.RemoveLink(at("D4"), at("E6")); err != ErrRemoveAfterPeg {
+		t.Errorf("removing an older link after the peg: got %v, want %v", err, ErrRemoveAfterPeg)
+	}
+	if err := g.RemovePeg(at("D4")); err != ErrRemoveAfterPeg {
+		t.Errorf("removing a peg after the peg: got %v, want %v", err, ErrRemoveAfterPeg)
+	}
+	// F4 is a knight's move from E6, so the engine offered that link; declining
+	// it is a choice about this turn, not a removal, and stays legal.
+	if l, _ := NewLink(at("F4"), at("E6")); !g.HasLink(l) {
+		t.Fatal("expected F4-E6 to be offered")
+	}
+	if err := g.RemoveLink(at("F4"), at("E6")); err != nil {
+		t.Errorf("declining a link offered this turn: %v", err)
+	}
+	if l, _ := NewLink(at("F4"), at("E6")); g.HasLink(l) {
+		t.Error("the declined link is still on the board")
 	}
 }
 
@@ -820,9 +854,7 @@ func TestPegRemoval(t *testing.T) {
 	if !g.HasLink(l) {
 		t.Fatal("expected the link before removal")
 	}
-	if err := g.PlacePeg(at("G4")); err != nil {
-		t.Fatal(err)
-	}
+	// Removals happen at the start of the turn, before the peg.
 	if err := g.RemovePeg(at("E6")); err != nil {
 		t.Fatalf("removing own peg: %v", err)
 	}
@@ -832,27 +864,76 @@ func TestPegRemoval(t *testing.T) {
 	if g.HasLink(l) {
 		t.Error("link attached to a removed peg survived")
 	}
+	if err := g.PlacePeg(at("G4")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := g.CommitTurn(); err != nil {
 		t.Fatal(err)
 	}
+	if g.At(at("E6")) != NoPlayer || g.HasLink(l) {
+		t.Error("the removal did not survive the commit")
+	}
+
+	// Aborting a turn that removed a peg puts the peg and its links back, and
+	// leaves no link attached to an empty hole.
+	g4 := MustNew(rs)
+	play(t, g4, "D4", "A6", "E6", "A7")
+	if err := g4.RemovePeg(at("E6")); err != nil {
+		t.Fatal(err)
+	}
+	g4.AbortTurn()
+	if g4.At(at("E6")) != Vertical {
+		t.Error("aborting did not restore the removed peg")
+	}
+	if !g4.HasLink(l) {
+		t.Error("aborting did not restore the link that came away with the peg")
+	}
+	assertNoDanglingLinks(t, g4)
 
 	// Off by default, and never applies to the opponent's pegs.
 	g2 := MustNew(Std)
 	play(t, g2, "D4", "A6")
-	if err := g2.PlacePeg(at("E6")); err != nil {
-		t.Fatal(err)
-	}
 	if err := g2.RemovePeg(at("D4")); err != ErrPegRemovalOff {
 		t.Errorf("got %v, want %v", err, ErrPegRemovalOff)
 	}
-	g2.AbortTurn()
 
 	g3 := MustNew(rs)
 	play(t, g3, "D4")
-	if err := g3.PlacePeg(at("A6")); err != nil {
-		t.Fatal(err)
-	}
 	if err := g3.RemovePeg(at("D4")); err != ErrNotOwnPeg {
 		t.Errorf("removing an opponent peg: got %v, want %v", err, ErrNotOwnPeg)
+	}
+}
+
+// assertNoDanglingLinks checks the invariant that a link always joins two pegs
+// of one colour. A link left attached to an empty hole would block future links
+// for the rest of the game.
+func assertNoDanglingLinks(t *testing.T, g *Game) {
+	t.Helper()
+	for row := range g.Size() {
+		for col := range g.Size() {
+			p := Point{Col: col, Row: row}
+			mask := g.LinkMask(p)
+			if mask == 0 {
+				continue
+			}
+			owner := g.At(p)
+			if owner == NoPlayer {
+				t.Errorf("hole %s has links %08b but no peg", p, mask)
+				continue
+			}
+			for d := range Dir(NumDirs) {
+				if mask&(1<<d) == 0 {
+					continue
+				}
+				q := p.Add(d)
+				if !g.InBounds(q) {
+					t.Errorf("hole %s has a link pointing off the board (%v)", p, d)
+					continue
+				}
+				if g.At(q) != owner {
+					t.Errorf("link %s-%s joins %v to %v", p, q, owner, g.At(q))
+				}
+			}
+		}
 	}
 }

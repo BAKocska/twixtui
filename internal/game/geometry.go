@@ -109,6 +109,16 @@ func (l Link) To() Point { return l.From.Add(l.Dir) }
 // Ends returns both endpoints of the link.
 func (l Link) Ends() (Point, Point) { return l.From, l.To() }
 
+// Canonical returns the link named from its endpoint with the smaller column.
+// A Link built by hand may point in any of the eight directions; anything that
+// indexes a per-direction table needs the canonical form of the same edge.
+func (l Link) Canonical() Link {
+	if l.Dir.IsCanonical() {
+		return l
+	}
+	return Link{From: l.To(), Dir: l.Dir.Opposite()}
+}
+
 // crossProduct returns the 2-D cross product of vectors (ax,ay) and (bx,by).
 func crossProduct(ax, ay, bx, by int) int { return ax*by - ay*bx }
 
