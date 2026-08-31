@@ -1,0 +1,367 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
+
+	"github.com/BAKocska/twixtui/internal/app"
+	"github.com/BAKocska/twixtui/internal/game"
+	"github.com/BAKocska/twixtui/internal/gamestore"
+	"github.com/BAKocska/twixtui/internal/learn"
+	"github.com/BAKocska/twixtui/internal/netplay"
+	"github.com/BAKocska/twixtui/internal/ui"
+)
+
+// openGames opens the saved-game store for the resolved configuration directory.
+func (o *options) openGames() (*gamestore.Store, error) {
+	dir, err := o.configPath()
+	if err != nil {
+		return nil, err
+	}
+	return gamestore.Open(dir)
+}
+
+// gameIDCompletions completes a saved game's identifier, described so the player
+// can tell which is which without looking them up.
+func (o *options) gameIDCompletions(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	store, err := o.openGames()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+	saved := store.List()
+	out := make([]cobra.Completion, 0, len(saved))
+	for _, sv := range saved {
+		out = append(out, cobra.CompletionWithDesc(sv.ID, sv.Describe()))
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
+}
+
+func newGameCommand(opts *options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "game",
+		Short: "Work with saved games",
+		Long: `Work with saved games.
+
+Games are saved as they are played, so an interrupted one can be resumed and a
+finished one can be replayed. A saved game carries its own integrity check: a
+file that has been edited is refused rather than loaded as a different game.`,
+	}
+
+	var limit int
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List saved games, most recent first",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, err := opts.openGames()
+			if err != nil {
+				return err
+			}
+			saved := store.List()
+			if len(saved) == 0 {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(),
+					"no saved games yet; play one with: twixtui play bot --side random")
+				return err
+			}
+			if limit > 0 && len(saved) > limit {
+				saved = saved[:limit]
+			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tKIND\tPLAYERS\tSTATE\tUPDATED")
+			for _, sv := range saved {
+				state := "in progress"
+				if sv.Finished {
+					state = "finished"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s vs %s\t%s\t%s\n",
+					sv.ID, sv.Kind, sv.Player, sv.Opponent, state, humanAge(sv.Updated))
+			}
+			return w.Flush()
+		},
+	}
+	list.Flags().IntVar(&limit, "limit", 0, "show at most this many games (0 means all)")
+
+	show := &cobra.Command{
+		Use:               "show <id>",
+		Short:             "Show a saved game's board and move list",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: opts.gameIDCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := opts.openGames()
+			if err != nil {
+				return err
+			}
+			sv, err := store.Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			g, err := sv.Game()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "%s: %s\n", sv.ID, sv.Describe())
+			fmt.Fprintf(out, "rules: %s\n", g.Rules().Describe())
+			fmt.Fprintf(out, "moves: %d\n", g.Ply())
+			fmt.Fprintf(out, "result: %s\n\n", describeResult(g.Result()))
+
+			board, err := opts.renderBoard(g)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(out, board)
+
+			transcript, err := g.Transcript()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "\n%s\n", transcript)
+			return nil
+		},
+	}
+
+	replay := &cobra.Command{
+		Use:   "replay <id>",
+		Short: "Step through a saved game move by move",
+		Long: `Step through a saved game move by move.
+
+Opens the board and walks forwards and backwards through the game with the same
+keys used to play it.`,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: opts.gameIDCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := opts.openGames()
+			if err != nil {
+				return err
+			}
+			sv, err := store.Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			deps, _, err := opts.deps()
+			if err != nil {
+				return err
+			}
+			return runScreens(cmd, deps, func() (app.Screen, error) {
+				return app.NewReplayScreen(deps, sv)
+			})
+		},
+	}
+
+	var outPath string
+	export := &cobra.Command{
+		Use:   "export <id>",
+		Short: "Write a saved game out as a record",
+		Long: `Write a saved game out as a record.
+
+The record holds the ruleset, the moves, the result and two digests, so whoever
+receives it can check it arrived intact and replays to the game it claims to be.`,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: opts.gameIDCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := opts.openGames()
+			if err != nil {
+				return err
+			}
+			sv, err := store.Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			if outPath == "" || outPath == "-" {
+				_, err := fmt.Fprint(cmd.OutOrStdout(), sv.Record)
+				return err
+			}
+			if err := os.WriteFile(outPath, []byte(sv.Record), 0o644); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s to %s\n", sv.ID, outPath)
+			return err
+		},
+	}
+	export.Flags().StringVar(&outPath, "out", "", "write to this file instead of standard output")
+
+	importCmd := &cobra.Command{
+		Use:   "import <file>",
+		Short: "Read a game record in, checking it as it goes",
+		Long: `Read a game record in, checking it as it goes.
+
+A record that has been altered or truncated is refused, naming what went wrong,
+rather than being loaded as a different game. Use - to read standard input.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var body []byte
+			var err error
+			if args[0] == "-" {
+				body, err = io.ReadAll(cmd.InOrStdin())
+			} else {
+				body, err = os.ReadFile(args[0])
+			}
+			if err != nil {
+				return err
+			}
+			g, _, err := game.LoadRecord(string(body))
+			if err != nil {
+				return err
+			}
+			store, err := opts.openGames()
+			if err != nil {
+				return err
+			}
+			_, player, err := opts.requireProfile()
+			if err != nil {
+				return err
+			}
+			sv := gamestore.Saved{
+				ID:       gamestore.NewID(),
+				Kind:     gamestore.Hotseat,
+				Player:   player,
+				Opponent: "imported",
+				Record:   string(body),
+				Finished: g.Result().Over(),
+			}
+			if err := store.Put(sv); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(),
+				"imported as %s: %d moves, %s\n", sv.ID, g.Ply(), describeResult(g.Result()))
+			return err
+		},
+	}
+
+	del := &cobra.Command{
+		Use:               "delete <id>",
+		Short:             "Delete a saved game",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: opts.gameIDCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := opts.openGames()
+			if err != nil {
+				return err
+			}
+			sv, err := store.Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			if err := store.Delete(sv.ID); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "deleted %s\n", sv.ID)
+			return err
+		},
+	}
+
+	cmd.AddCommand(list, show, replay, export, importCmd, del)
+	return cmd
+}
+
+// describeResult renders a result in words.
+func describeResult(r game.Result) string {
+	if !r.Over() {
+		return "still being played"
+	}
+	reason := map[game.Reason]string{
+		game.Connection:  "by completing a chain",
+		game.NoMovesLeft: "with no legal moves left",
+		game.Resignation: "by resignation",
+		game.Agreement:   "by agreement",
+	}[r.Reason]
+	switch r.Outcome {
+	case game.Draw:
+		return "drawn " + reason
+	case game.VerticalWins:
+		return "vertical won " + reason
+	case game.HorizontalWins:
+		return "horizontal won " + reason
+	}
+	return "unknown"
+}
+
+func newServeCommand(opts *options) *cobra.Command {
+	var addr string
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Run a relay so two players behind firewalls can pair up",
+		Long: `Run a relay so two players behind firewalls can pair up.
+
+Direct play needs one side to accept an incoming connection, which a home router
+or a company network often prevents. A relay is somewhere both sides can reach:
+each connects out to it and it passes bytes between them. It never parses the
+game, keeps nothing on disk, and matches players purely by the pairing code they
+both quote, so running one for your friends costs nothing and reveals nothing.
+
+  twixtui serve --addr :4271
+  twixtui play host --relay relay.example:4271
+  twixtui play join --relay relay.example:4271 <pairing code>`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Fprintf(cmd.OutOrStdout(), "relay listening on %s; press ctrl+c to stop\n", addr)
+			return netplay.Serve(cmd.Context(), addr)
+		},
+	}
+	cmd.Flags().StringVar(&addr, "addr", ":4271", "address to listen on")
+	return cmd
+}
+
+func newLearnCommand(opts *options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "learn [lesson]",
+		Aliases: []string{"tutorial"},
+		Short:   "Learn the game interactively",
+		Long: `Learn the game interactively.
+
+A guided tour of the board, the knight's-move link, the crossing rule that
+catches every newcomer, blocking, the double threat, and how a game is won. Each
+lesson sets up real positions and asks you to find the move, using the same keys
+you play with.
+
+Given a lesson name, start there; otherwise choose from the list.`,
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: lessonCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			deps, _, err := opts.deps()
+			if err != nil {
+				return err
+			}
+			lesson := ""
+			if len(args) == 1 {
+				lesson = args[0]
+			}
+			return runScreens(cmd, deps, func() (app.Screen, error) {
+				return app.NewTutorialScreen(deps, lesson)
+			})
+		},
+	}
+	return cmd
+}
+
+// renderBoard draws a board once for a non-interactive listing, at whichever
+// scale fits the terminal the output is going to.
+func (o *options) renderBoard(g *game.Game) (string, error) {
+	th, err := o.theme()
+	if err != nil {
+		return "", err
+	}
+	styles := ui.StylesFor(th)
+	width, height := terminalSize()
+	scale := ui.Detail
+	if w, h := ui.Detail.BlockSize(g.Size()); w > width || h > height {
+		scale = ui.Compact
+	}
+	view := &ui.BoardView{Scale: scale}
+	return strings.Join(view.Render(g, &styles, width, height), "\n"), nil
+}
+
+// lessonCompletions completes a tutorial lesson name with its summary.
+func lessonCompletions(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	lessons := learn.Lessons()
+	out := make([]cobra.Completion, 0, len(lessons))
+	for _, l := range lessons {
+		out = append(out, cobra.CompletionWithDesc(l.ID, l.Title))
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
+}
