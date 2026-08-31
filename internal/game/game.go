@@ -674,18 +674,26 @@ func (g *Game) recordLinkAddition(l Link) {
 	g.staged.added = append(g.staged.added, l)
 }
 
-// recordLinkRemoval updates the staged bookkeeping when a link leaves the board.
-// A link the engine offered this turn, or one the player added this turn, is
-// simply un-recorded; only a link that predates the turn becomes a removal that
-// has to be restored if the turn is abandoned. Getting this wrong leaves a link
-// attached to a hole with no peg in it.
-func (g *Game) recordLinkRemoval(l Link) {
+// forgetLink un-records a link that has just been taken off the board.
+//
+// A link that came into being during this turn simply never happened, so it is
+// dropped from whichever staged list holds it. A link that predates the turn has
+// to be remembered so the turn can be reversed, and incidental decides which
+// list remembers it: links swept away with a removed peg are implied by the
+// removal, so they stay out of the notation while deliberate removals go into
+// it. Skipping the reconciliation leaves a link recorded as both created and
+// destroyed, which reappears attached to nothing when the turn is reversed.
+func (g *Game) forgetLink(l Link, incidental bool) {
 	if d, ok := dirFrom(g.staged.peg, l); ok && g.staged.pegPlaced && g.staged.autoLinks&(1<<d) != 0 {
 		g.staged.autoLinks &^= 1 << d
 		return
 	}
 	if i := indexOfLink(g.staged.added, l); i >= 0 {
 		g.staged.added = append(g.staged.added[:i], g.staged.added[i+1:]...)
+		return
+	}
+	if incidental {
+		g.staged.pegLinks = append(g.staged.pegLinks, l)
 		return
 	}
 	g.staged.removed = append(g.staged.removed, l)
@@ -734,7 +742,7 @@ func (g *Game) RemoveLink(a, b Point) error {
 	}
 	g.beginStaging()
 	g.clearLink(l)
-	g.recordLinkRemoval(l)
+	g.forgetLink(l, false)
 	g.rebuildConnectivity()
 	return nil
 }
@@ -766,9 +774,11 @@ func (g *Game) RemovePeg(p Point) error {
 		}
 		l, _ := NewLink(p, p.Add(d))
 		g.clearLink(l)
-		// These links are implied by the peg removal rather than chosen, so they
-		// are kept apart from deliberate removals and stay out of the notation.
-		g.staged.pegLinks = append(g.staged.pegLinks, l)
+		// Links swept away with the peg are implied by the removal rather than
+		// chosen, so they are remembered apart from deliberate removals and stay
+		// out of the notation. One the player added earlier in this turn is
+		// reconciled away instead of being recorded as both added and lost.
+		g.forgetLink(l, true)
 	}
 	g.pegs[i] = NoPlayer
 	g.staged.removedPegs = append(g.staged.removedPegs, p)

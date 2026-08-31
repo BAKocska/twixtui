@@ -937,3 +937,87 @@ func assertNoDanglingLinks(t *testing.T, g *Game) {
 		}
 	}
 }
+
+// TestPegRemovalSweepsLinksAddedThisTurn covers the case where a link the player
+// added by hand is then swept away by removing one of its pegs in the same turn.
+// The link must be reconciled away rather than recorded as both added and lost;
+// otherwise reversing the turn puts it back attached to nothing, and the game's
+// own transcript no longer replays.
+func TestPegRemovalSweepsLinksAddedThisTurn(t *testing.T) {
+	rs := Std
+	rs.PegRemoval = true
+
+	// D4 and E6 are both Vertical's, from earlier turns, and unlinked because
+	// Vertical declined the link when E6 went down.
+	setup := func(t *testing.T) *Game {
+		t.Helper()
+		g := MustNew(rs)
+		play(t, g, "D4", "A6")
+		if err := g.PlacePeg(at("E6")); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.RemoveLink(at("D4"), at("E6")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := g.CommitTurn(); err != nil {
+			t.Fatal(err)
+		}
+		play(t, g, "A7")
+		return g
+	}
+
+	l, _ := NewLink(at("D4"), at("E6"))
+
+	t.Run("abort", func(t *testing.T) {
+		g := setup(t)
+		if err := g.AddLink(at("D4"), at("E6")); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.RemovePeg(at("E6")); err != nil {
+			t.Fatal(err)
+		}
+		g.AbortTurn()
+		if g.HasLink(l) {
+			t.Error("a link added and then swept away in the same turn came back")
+		}
+		assertNoDanglingLinks(t, g)
+	})
+
+	t.Run("undo", func(t *testing.T) {
+		g := setup(t)
+		if err := g.AddLink(at("D4"), at("E6")); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.RemovePeg(at("E6")); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.PlacePeg(at("G4")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := g.CommitTurn(); err != nil {
+			t.Fatal(err)
+		}
+		assertNoDanglingLinks(t, g)
+
+		// The transcript of that turn must replay to the same position.
+		transcript, err := g.Transcript()
+		if err != nil {
+			t.Fatalf("transcript: %v", err)
+		}
+		replayed, err := ReplayTranscript(rs, transcript)
+		if err != nil {
+			t.Fatalf("replaying %q: %v", transcript, err)
+		}
+		if got, want := snapshot(replayed), snapshot(g); got != want {
+			t.Errorf("replayed position differs\ntranscript: %s", transcript)
+		}
+
+		if err := g.UndoLastMove(); err != nil {
+			t.Fatal(err)
+		}
+		if g.HasLink(l) {
+			t.Error("undo restored a link that was added and swept away in the same turn")
+		}
+		assertNoDanglingLinks(t, g)
+	})
+}
