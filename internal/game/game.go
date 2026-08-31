@@ -573,7 +573,7 @@ func (g *Game) rebuildConnectivity() {
 // by snap, rolling the merge log back when that is still valid and rebuilding
 // from the board when it is not.
 func (g *Game) restoreConnectivity(snap ufSnapshot, destructive bool) {
-	if !destructive && snap.gen == g.ufGen {
+	if !destructive && snap.gen == g.ufGen && snap.mark <= g.uf.mark() {
 		g.uf.rollback(snap.mark)
 		return
 	}
@@ -798,17 +798,34 @@ type StagedTurn struct {
 	PegLinks    []Link
 }
 
-// Staged returns the turn in progress.
+// Staged returns the turn in progress. The slices are copies, so a caller may
+// hold the value across further staging calls without watching it change
+// underneath; a board view asks for this every frame and the lists are almost
+// always empty.
 func (g *Game) Staged() StagedTurn {
 	return StagedTurn{
 		PegPlaced:   g.staged.pegPlaced,
 		Peg:         g.staged.peg,
 		AutoLinks:   g.staged.autoLinks,
-		Added:       g.staged.added,
-		Removed:     g.staged.removed,
-		RemovedPegs: g.staged.removedPegs,
-		PegLinks:    g.staged.pegLinks,
+		Added:       cloneLinks(g.staged.added),
+		Removed:     cloneLinks(g.staged.removed),
+		RemovedPegs: clonePoints(g.staged.removedPegs),
+		PegLinks:    cloneLinks(g.staged.pegLinks),
 	}
+}
+
+func cloneLinks(in []Link) []Link {
+	if len(in) == 0 {
+		return nil
+	}
+	return append([]Link(nil), in...)
+}
+
+func clonePoints(in []Point) []Point {
+	if len(in) == 0 {
+		return nil
+	}
+	return append([]Point(nil), in...)
 }
 
 // AbortTurn discards every uncommitted edit, restoring the position to the start
@@ -883,7 +900,11 @@ func (g *Game) CommitTurn() (Result, error) {
 	}
 	g.record(m, g.turnMark)
 	g.staged = stagedTurn{}
-	g.drawOfferedBy = NoPlayer
+	// Moving on refuses a draw the opponent had offered. An offer the mover made
+	// themselves stands, so that offering a draw along with your move works.
+	if g.drawOfferedBy == m.Player.Opponent() {
+		g.drawOfferedBy = NoPlayer
+	}
 	g.finishTurn(m.Player)
 	return g.result, nil
 }
@@ -1059,14 +1080,19 @@ func (g *Game) UndoLastMove() error {
 	g.result = Result{}
 	g.drawOfferedBy = NoPlayer
 	for _, h := range g.history {
-		switch h.Kind {
-		case DrawOfferMove:
+		switch {
+		case h.Kind == DrawOfferMove:
 			g.drawOfferedBy = h.Player
-		case PlaceMove, SwapMove:
+		case h.Kind.ConsumesTurn() && g.drawOfferedBy == h.Player.Opponent():
 			g.drawOfferedBy = NoPlayer
 		}
 	}
-	g.restoreConnectivity(snap, destructive)
+	// An entry that changed nothing on the board needs no connectivity work, and
+	// rolling back to a mark taken while some other turn was staged would
+	// truncate the merge log below its current extent.
+	if m.Kind == PlaceMove || m.Kind == SwapMove {
+		g.restoreConnectivity(snap, destructive)
+	}
 	g.turnMark = g.snapshot()
 	return nil
 }

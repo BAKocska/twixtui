@@ -1021,3 +1021,82 @@ func TestPegRemovalSweepsLinksAddedThisTurn(t *testing.T) {
 		assertNoDanglingLinks(t, g)
 	})
 }
+
+// TestDrawOfferSurvivesTheOfferersOwnMove covers offering a draw together with
+// your move, which is how it is normally done. Committing must not delete the
+// offer before the opponent has seen it, but the opponent moving on must refuse
+// it.
+func TestDrawOfferSurvivesTheOfferersOwnMove(t *testing.T) {
+	g := MustNew(Std)
+	play(t, g, "D4")
+
+	// Horizontal offers a draw and then plays its move.
+	if err := g.OfferDraw(Horizontal); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.PlacePeg(at("A6")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.CommitTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if g.DrawOfferedBy() != Horizontal {
+		t.Fatalf("the offer was lost when its own maker moved; DrawOfferedBy = %v", g.DrawOfferedBy())
+	}
+	if err := g.AcceptDraw(Vertical); err != nil {
+		t.Fatalf("vertical could not accept the standing offer: %v", err)
+	}
+	if got := g.Result(); got.Outcome != Draw || got.Reason != Agreement {
+		t.Errorf("result = %+v, want a draw by agreement", got)
+	}
+
+	// Moving on instead of accepting refuses the offer.
+	g2 := MustNew(Std)
+	play(t, g2, "D4")
+	if err := g2.OfferDraw(Horizontal); err != nil {
+		t.Fatal(err)
+	}
+	play(t, g2, "A6", "E6")
+	if g2.DrawOfferedBy() != NoPlayer {
+		t.Errorf("the offer should have been refused by Vertical moving on")
+	}
+	if err := g2.AcceptDraw(Vertical); err != ErrNoDrawOffer {
+		t.Errorf("accepting a refused offer: got %v, want %v", err, ErrNoDrawOffer)
+	}
+}
+
+// TestUndoAfterOfferDuringOpponentsStagedTurn exercises the ordering the
+// connectivity snapshot has to survive: an entry recorded while the other side
+// had edits staged, that staged turn abandoned, and then the entry undone.
+func TestUndoAfterOfferDuringOpponentsStagedTurn(t *testing.T) {
+	g := MustNew(Std)
+	play(t, g, "D4", "A6", "E6")
+
+	// Horizontal begins a turn, then Vertical offers a draw out of turn.
+	if err := g.PlacePeg(at("A7")); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.OfferDraw(Vertical); err != nil {
+		t.Fatal(err)
+	}
+	g.AbortTurn()
+	if err := g.UndoLastMove(); err != nil {
+		t.Fatalf("undoing the offer: %v", err)
+	}
+	if g.DrawOfferedBy() != NoPlayer {
+		t.Error("the offer survived being undone")
+	}
+	if g.Turn() != Horizontal {
+		t.Errorf("turn = %v, want horizontal: undoing an offer must not change the move order", g.Turn())
+	}
+	// Connectivity must still agree with the board.
+	for _, pl := range []Player{Vertical, Horizontal} {
+		if got, want := g.Connected(pl), floodFillConnected(g, pl); got != want {
+			t.Errorf("%s connected: union-find says %v, flood fill says %v", pl, got, want)
+		}
+	}
+	assertNoDanglingLinks(t, g)
+	if _, err := g.PlayPeg(at("A7")); err != nil {
+		t.Errorf("the position should still be playable: %v", err)
+	}
+}
