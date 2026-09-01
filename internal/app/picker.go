@@ -101,6 +101,13 @@ func (p *Picker) buildHints() {
 // Chosen replaces what happens once a name has been picked. It is how the
 // picker is embedded in another screen: the command can emit a message that
 // screen handles instead of leaving the picker.
+//
+// The default builds a fresh menu and replaces the picker with it, which is right
+// when the picker is the program's first screen and there is nothing behind it.
+// A caller that opened the picker on top of its own screen must set this, or the
+// replacement leaves a second menu stacked on the first and the screen the player
+// came from is two deep and never returned to. The choice is persisted before this
+// runs, so a handler only has to decide where the player goes next.
 func (p *Picker) Chosen(f func(name string) tea.Cmd) *Picker {
 	if f != nil {
 		p.chosen = f

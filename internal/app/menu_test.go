@@ -2127,3 +2127,82 @@ func mnLeftPane(frame string) string {
 	}
 	return mnFlatten(b.String())
 }
+
+// TestChoosingAProfileFromSettingsReturnsToSettings drives the path a review
+// found broken after it had been reported fixed. The row was given a way out of
+// the picker but only for escape: choosing still took the picker's default, which
+// builds a fresh menu and replaces the picker with it. That left a second menu
+// stacked on the first, so the settings list the player came from was two screens
+// down and never returned to, and the new menu's own first-run check then offered
+// the introduction to the profile that had just been chosen.
+//
+// So this drives a real selection rather than only escape, and asserts what the
+// stack looks like afterwards as well as what is on it.
+func TestChoosingAProfileFromSettingsReturnsToSettings(t *testing.T) {
+	d := shellTestDeps(t)
+	for _, name := range []string{"Balint", "Kata"} {
+		if _, err := d.Profiles.Create(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := d.Profiles.UseCurrent("Balint"); err != nil {
+		t.Fatal(err)
+	}
+	menu := NewMenu(d, "Balint")
+	shell := NewShell(d, menu)
+	shell.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	// Settings, then the profile row.
+	if cmd := menu.openSettings(); cmd != nil {
+		cmd()
+	}
+	cmd := menu.switchProfile()
+	if cmd == nil {
+		t.Fatal("the profile row produced no command")
+	}
+	open, ok := cmd().(OpenMsg)
+	if !ok {
+		t.Fatalf("the profile row produced %T, want the picker opened on top", cmd())
+	}
+	if c := shell.Push(open.Screen); c != nil {
+		c()
+	}
+	if got := len(shell.stack); got != 2 {
+		t.Fatalf("the stack is %d deep with the picker open, want 2", got)
+	}
+
+	// A real selection.
+	picker, ok := open.Screen.(*Picker)
+	if !ok {
+		t.Fatalf("opened %T, want the picker", open.Screen)
+	}
+	done := picker.choose("Kata")
+	if done == nil {
+		t.Fatal("choosing produced no command")
+	}
+	if msg := done(); msg != nil {
+		if _, quit := shell.Update(msg); quit != nil {
+			t.Fatal("choosing a profile ended the program")
+		}
+	}
+
+	// One menu, not two, and it is the menu we started with.
+	if got := len(shell.stack); got != 1 {
+		t.Fatalf("the stack is %d deep after choosing, want the one menu back", got)
+	}
+	if shell.top() != Screen(menu) {
+		t.Fatalf("the screen on top is %T, not the menu the picker was opened from", shell.top())
+	}
+
+	// The menu has adopted the choice, and the settings list it returned to says so.
+	if menu.player != "Kata" {
+		t.Errorf("the menu is still playing as %q", menu.player)
+	}
+	frame := mnLeftPane(menu.View().Content)
+	if !strings.Contains(frame, "Profile — Kata") {
+		t.Errorf("the settings list does not name the chosen profile:\n%s", menu.View().Content)
+	}
+	if strings.Contains(frame, "Profile — Balint") {
+		t.Errorf("the settings list still names the profile that was replaced:\n%s", menu.View().Content)
+	}
+}

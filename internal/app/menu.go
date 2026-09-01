@@ -118,7 +118,7 @@ func NewMenu(d Deps, player string) *Menu {
 		m.frontQuitHint = m.quitHint
 	}
 	m.list = &chooser{
-		title: "twixtui — " + player,
+		title: menuTitle(player),
 		opts:  menuEntries(),
 		// There is nothing above the main list to back out to, and quitting is
 		// an entry of its own so that it cannot happen by pressing escape one
@@ -777,10 +777,40 @@ func (m *Menu) openHints() tea.Cmd {
 // out, while every other settings row escaped back to the list.
 func (m *Menu) switchProfile() tea.Cmd {
 	m.reopenOnReveal = func(m *Menu) { _ = m.openSettings() }
-	picker := NewPicker(m.deps, "Who is playing?").Cancelled(func() tea.Cmd {
-		return Done(DoneMsg{})
-	})
+	back := func() tea.Cmd { return Done(DoneMsg{}) }
+	picker := NewPicker(m.deps, "Who is playing?").
+		Cancelled(back).
+		// Choosing has to finish the picker as well, not replace it. The default
+		// builds a fresh menu, which is right when the picker is the program's
+		// first screen and wrong here: it left a second menu stacked on this one,
+		// so the settings list the player came from was two screens down and
+		// never returned to, and the new menu's own first-run check then offered
+		// the introduction to the profile that had just been chosen.
+		Chosen(func(name string) tea.Cmd {
+			m.adoptProfile(name)
+			return back()
+		})
 	return Open(picker)
+}
+
+// adoptProfile makes a newly chosen profile this menu's own. The choice is
+// already stored by the time this runs; what is left is the menu's copy of it,
+// which the title shows and which every game the menu starts is recorded
+// against. The settings list is rebuilt when the picker closes, so its row picks
+// the new name up from here.
+//
+// One consequence, decided rather than inherited: a profile that has never seen
+// the introduction does not get it here. The first-run check belongs to a menu
+// being created, and this menu is not being created. Interrupting somebody who
+// went into the settings to change one thing with a five-step introduction would
+// be the wrong moment for it, and the profile still meets it the next time it
+// launches the program itself, which is the moment it was written for.
+func (m *Menu) adoptProfile(name string) {
+	if name == "" || strings.EqualFold(name, m.player) {
+		return
+	}
+	m.player = name
+	m.list.title = menuTitle(name)
 }
 
 func (m *Menu) quit() tea.Cmd { return Quit() }
@@ -795,6 +825,11 @@ func (m *Menu) quit() tea.Cmd { return Quit() }
 // before the resignation — but the leaderboard panel and the profile list are
 // stale in the same way. Dropping the panel puts the player back on the menu,
 // where reopening it reads the stores again.
+// menuTitle is the front screen's heading. Games and standings are recorded
+// against the profile it names, so it is the one place the front screen says who
+// is playing.
+func menuTitle(player string) string { return "twixtui — " + player }
+
 func (m *Menu) revealed() {
 	m.form = nil
 	m.message = ""
