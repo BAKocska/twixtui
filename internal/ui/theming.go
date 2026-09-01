@@ -32,6 +32,7 @@ func StylesFor(t theme.Theme) Styles {
 		Cursor:         colour(t.Cursor).Bold(true),
 		Highlight:      colour(t.Highlight),
 		LinkDigit:      colour(t.Highlight).Bold(true),
+		LastMove:       colour(t.LastMove).Bold(true),
 		Label:          colour(t.BorderRow),
 		PanelTitle:     colour(t.Text).Bold(true),
 		PanelText:      colour(t.Text),

@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/BAKocska/twixtui/internal/game"
+	"github.com/BAKocska/twixtui/internal/gamestore"
 )
 
 // The shell answers the global quit key itself, so that a busy screen cannot
@@ -254,5 +257,145 @@ func TestLeavingTheOnlyScreenEndsTheProgram(t *testing.T) {
 	}
 	if _, quit := shell.Update(done); quit == nil {
 		t.Error("leaving the only screen did not end the program")
+	}
+}
+
+// TestAFinishedGameIsNotOfferedAgain reproduces a sequence a reviewer found by
+// playing: open the saved-game list, resume a game, finish it by resignation,
+// leave, and the list underneath still offers the game it had read before the
+// resignation. Choosing it resumed the finished game at the position it held
+// before the result, with the player who had just resigned back on the move, and
+// leaving again wrote that position over the finished record. The recorded result
+// was lost, and where the game had already been rated the rating log and the
+// stored game disagreed.
+func TestAFinishedGameIsNotOfferedAgain(t *testing.T) {
+	d := shellTestDeps(t)
+	for _, name := range []string{"Ann", "Ben"} {
+		if _, err := d.Profiles.Create(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved := mnSaveGame(t, d, gamestore.Hotseat, "Ann", "Ben")
+
+	menu := NewMenu(d, "Ann")
+	shell := NewShell(d, menu)
+	shell.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	// The list is built from the store as it stands now.
+	if cmd := menu.openSaved(); cmd != nil {
+		cmd()
+	}
+	if _, ok := menu.form.(*chooser); !ok {
+		t.Fatalf("the saved-game list did not open: %T", menu.form)
+	}
+
+	// The game is finished while a screen sits on top of the menu.
+	done, err := d.Games.Get(saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done.Finished = true
+	if err := d.Games.Put(done); err != nil {
+		t.Fatal(err)
+	}
+
+	// Coming back to the menu must not redisplay the list it read earlier.
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd := shell.Push(screen); cmd != nil {
+		cmd()
+	}
+	if cmd := shell.leave(DoneMsg{}); cmd != nil {
+		cmd()
+	}
+	if menu.form != nil {
+		t.Errorf("the menu is still showing the panel it built before the game ran: %T", menu.form)
+	}
+
+	// Even if something did hand the stale row back, resuming must refuse it.
+	if _, err := menu.resumeConfig(saved); err == nil {
+		t.Error("a finished game was accepted for resumption")
+	} else if !strings.Contains(err.Error(), "over") {
+		t.Errorf("refusal does not say the game is over: %v", err)
+	}
+
+	// And the record must still say the game finished.
+	back, err := d.Games.Get(saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !back.Finished {
+		t.Error("the finished game was reopened in the store")
+	}
+}
+
+// TestTheGameIsStoredAsItIsPlayed pins the promise that games are saved as they
+// are played. Saving used to happen only on the way out of the screen, so a game
+// in progress existed nowhere but in memory: closing the terminal window or
+// killing the process lost it. Verified against the real binary too, with kill -9
+// mid-game, after which the game was still listed at the right position.
+func TestTheGameIsStoredAsItIsPlayed(t *testing.T) {
+	d := shellTestDeps(t)
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	screen.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+
+	if got := len(d.Games.List()); got != 0 {
+		t.Fatalf("%d games stored before anything was played", got)
+	}
+
+	// Play a peg and commit it through the keys, so the autosave sees exactly
+	// what a player's turn produces.
+	gs := screen.(*gameScreen)
+	gsCommitAt(t, gs, game.Point{Col: 5, Row: 5})
+
+	stored := d.Games.List()
+	if len(stored) != 1 {
+		t.Fatalf("%d games stored after one move, want 1", len(stored))
+	}
+	g, err := stored[0].Game()
+	if err != nil {
+		t.Fatalf("the stored game does not load: %v", err)
+	}
+	if g.Ply() != 1 {
+		t.Errorf("the stored game holds %d moves, want 1", g.Ply())
+	}
+	if stored[0].Finished {
+		t.Error("a game in progress was stored as finished")
+	}
+
+	// A second move updates the same game rather than adding another.
+	gsCommitAt(t, gs, game.Point{Col: 6, Row: 7})
+	stored = d.Games.List()
+	if len(stored) != 1 {
+		t.Fatalf("%d games stored after two moves, want 1", len(stored))
+	}
+	if g, err := stored[0].Game(); err != nil {
+		t.Fatalf("the stored game does not load: %v", err)
+	} else if g.Ply() != 2 {
+		t.Errorf("the stored game holds %d moves, want 2", g.Ply())
+	}
+}
+
+// gsCommitAt moves the cursor to a hole, places a peg and commits the turn.
+func gsCommitAt(t *testing.T, s *gameScreen, p game.Point) {
+	t.Helper()
+	// Hotseat puts a handover between turns so the next player can take the
+	// keyboard; clear it before playing.
+	if s.handover {
+		if cmd := s.handleKey(gsKeyMsg(t, "enter")); cmd != nil {
+			cmd()
+		}
+	}
+	s.board.Cursor = p
+	for _, key := range []string{"space", "enter"} {
+		if cmd := s.handleKey(gsKeyMsg(t, key)); cmd != nil {
+			cmd()
+		}
+		s.autosave()
 	}
 }

@@ -153,7 +153,7 @@ func (cv *canvas) resolveLinks() {
 		}
 		x, y := i%cv.w, i/cv.w
 		switch cv.runes[i] {
-		case glyphPegVertical, glyphPegHorizontal:
+		case glyphPegVertical, glyphPegHorizontal, glyphPegVerticalLast, glyphPegHorizontalLast:
 		case glyphRise, glyphFall, glyphCross:
 			cv.set(x, y, glyphCross, cv.bitIDs[i])
 		default:
@@ -178,7 +178,7 @@ func (cv *canvas) hasPeg(x, y int) bool {
 		return false
 	}
 	switch cv.runes[y*cv.w+x] {
-	case glyphPegVertical, glyphPegHorizontal:
+	case glyphPegVertical, glyphPegHorizontal, glyphPegVerticalLast, glyphPegHorizontalLast:
 		return true
 	}
 	return false
@@ -191,7 +191,7 @@ func (cv *canvas) mergeDiagonal(x, y int, r rune, id styleID) {
 		return
 	}
 	switch old := cv.runes[y*cv.w+x]; old {
-	case glyphPegVertical, glyphPegHorizontal:
+	case glyphPegVertical, glyphPegHorizontal, glyphPegVerticalLast, glyphPegHorizontalLast:
 		return
 	case ' ', glyphHole, r:
 	default:
@@ -344,6 +344,10 @@ type BoardView struct {
 	// Cursor is the hole the cursor sits on; ShowCursor turns it on.
 	Cursor     game.Point
 	ShowCursor bool
+	// LastMove marks the peg just played, so it can be found on a large board
+	// without reading the coordinate off the panel. ShowLastMove turns it on.
+	LastMove     game.Point
+	ShowLastMove bool
 	// Highlights marks holes to call out (hints, tutorial steps, the staged
 	// peg). They render as round brackets around the hole.
 	Highlights []game.Point
@@ -399,11 +403,20 @@ func (bv *BoardView) paint(g *game.Game) *canvas {
 				continue
 			}
 			x, y := bv.Scale.holeX(col), bv.Scale.holeY(row)
+			last := bv.ShowLastMove && p == bv.LastMove
 			switch g.At(p) {
 			case game.Vertical:
-				cv.set(x, y, glyphPegVertical, styPegVertical)
+				if last {
+					cv.set(x, y, glyphPegVerticalLast, styLastMove)
+				} else {
+					cv.set(x, y, glyphPegVertical, styPegVertical)
+				}
 			case game.Horizontal:
-				cv.set(x, y, glyphPegHorizontal, styPegHorizontal)
+				if last {
+					cv.set(x, y, glyphPegHorizontalLast, styLastMove)
+				} else {
+					cv.set(x, y, glyphPegHorizontal, styPegHorizontal)
+				}
 			default:
 				cv.set(x, y, glyphHole, styHole)
 			}

@@ -18,10 +18,16 @@ const (
 	glyphHole          = '·'
 	glyphPegVertical   = '●'
 	glyphPegHorizontal = '○'
-	glyphCursorLeft    = '['
-	glyphCursorRight   = ']'
-	glyphMarkLeft      = '('
-	glyphMarkRight     = ')'
+
+	// The peg just played, marked so it can be found on a large board without
+	// reading coordinates off the panel. It is a glyph rather than only a colour
+	// because every distinction here has to survive colour being off.
+	glyphPegVerticalLast   = '◉'
+	glyphPegHorizontalLast = '◎'
+	glyphCursorLeft        = '['
+	glyphCursorRight       = ']'
+	glyphMarkLeft          = '('
+	glyphMarkRight         = ')'
 
 	// Steep links (column ±1, row ±2) render at slope 1 in screen cells under
 	// both scales, so a plain diagonal works.
@@ -51,6 +57,7 @@ const (
 	styCursor
 	styHighlight
 	styLinkDigit
+	styLastMove
 	styLabel
 	numStyleIDs
 )
@@ -71,6 +78,7 @@ type Styles struct {
 	Cursor         lipgloss.Style
 	Highlight      lipgloss.Style
 	LinkDigit      lipgloss.Style
+	LastMove       lipgloss.Style
 	Label          lipgloss.Style
 
 	PanelTitle lipgloss.Style
@@ -93,6 +101,7 @@ func DefaultStyles() Styles {
 		Cursor:         lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true),
 		Highlight:      lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
 		LinkDigit:      lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true),
+		LastMove:       lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true),
 		Label:          lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
 		PanelTitle:     lipgloss.NewStyle().Bold(true),
 		PanelText:      lipgloss.NewStyle(),
@@ -131,6 +140,8 @@ func (st *Styles) apply(id styleID, s string) string {
 		style = &st.Highlight
 	case styLinkDigit:
 		style = &st.LinkDigit
+	case styLastMove:
+		style = &st.LastMove
 	case styLabel:
 		style = &st.Label
 	default:

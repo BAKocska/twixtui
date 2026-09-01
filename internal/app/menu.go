@@ -275,6 +275,21 @@ func (m *Menu) switchProfile() tea.Cmd {
 
 func (m *Menu) quit() tea.Cmd { return Quit() }
 
+// revealed is called when a screen that was covering the menu has finished.
+//
+// Every panel the menu opens is built from what the profile, game and
+// leaderboard stores said at the moment it was opened, and the screen that just
+// closed is exactly what changes them: a game gets played, finished, rated. The
+// saved-game list was the visible case — a game resigned in the screen above was
+// still offered for resumption by the list underneath, at the position it held
+// before the resignation — but the leaderboard panel and the profile list are
+// stale in the same way. Dropping the panel puts the player back on the menu,
+// where reopening it reads the stores again.
+func (m *Menu) revealed() {
+	m.form = nil
+	m.message = ""
+}
+
 // openSaved lists the games still waiting for a move.
 func (m *Menu) openSaved() tea.Cmd {
 	saved := m.deps.Games.Unfinished()
@@ -962,10 +977,20 @@ func (m *Menu) buildConfig() (GameConfig, error) {
 // resumeConfig rebuilds a stored game's setup. The seats come from the stored
 // row, because the game screen takes only the position and the rules from the
 // record.
+//
+// The row handed in is a snapshot taken when the list was built, so the store is
+// read again here: by now the game may have been finished, or played on in
+// another window. The snapshot is used only if the store no longer has it.
 func (m *Menu) resumeConfig(sv gamestore.Saved) (GameConfig, error) {
+	if fresh, err := m.deps.Games.Get(sv.ID); err == nil {
+		sv = fresh
+	}
 	g, err := sv.Game()
 	if err != nil {
 		return GameConfig{}, err
+	}
+	if sv.Finished || g.Result().Over() {
+		return GameConfig{}, errors.New("that game is over: start a new one, or look at it with 'twixtui game show'")
 	}
 	side, err := game.ParsePlayer(sv.Side)
 	if err != nil {

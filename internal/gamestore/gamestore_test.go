@@ -274,3 +274,43 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("Describe = %q", got)
 	}
 }
+
+// TestAFinishedGameCannotBeReopened covers the last line of defence against a
+// finished game being played on. A result has been recorded and rated by the
+// time a game is finished, so a later write carrying the position from before
+// that result would both lose the result and contradict the rating log.
+func TestAFinishedGameCannotBeReopened(t *testing.T) {
+	s := newStore(t)
+	record, _ := sampleRecord(t)
+	done := Saved{
+		ID: NewID(), Kind: Hotseat, Player: "Ann", Side: "vertical",
+		Opponent: "Ben", Record: record, Finished: true,
+	}
+	if err := s.Put(done); err != nil {
+		t.Fatalf("storing the finished game: %v", err)
+	}
+
+	reopened := done
+	reopened.Finished = false
+	err := s.Put(reopened)
+	if err == nil {
+		t.Fatal("the store accepted an in-progress write over a finished game")
+	}
+	if !strings.Contains(err.Error(), "finished") {
+		t.Errorf("refusal does not say why: %v", err)
+	}
+
+	// The stored game is untouched.
+	back, err := s.Get(done.ID)
+	if err != nil {
+		t.Fatalf("reading it back: %v", err)
+	}
+	if !back.Finished {
+		t.Error("the stored game is no longer finished")
+	}
+
+	// Correcting a finished game is still allowed: only regressing it is not.
+	if err := s.Put(done); err != nil {
+		t.Errorf("rewriting the finished game was refused: %v", err)
+	}
+}

@@ -154,6 +154,12 @@ func ValidateID(id string) error {
 
 // Put writes a game, replacing any earlier version of it. Updated is stamped
 // here so that a caller cannot forget to.
+//
+// A finished game is final. Once a result has been recorded the game is over,
+// it has been rated, and there is nothing left to play; reopening it and
+// storing the position it had before the result would contradict the rating log
+// and lose the result. Such a write is refused here rather than in the caller,
+// because the store is the one place every writer passes through.
 func (s *Store) Put(sv Saved) error {
 	if sv.ID == "" {
 		return errors.New("cannot store a game with no identifier")
@@ -164,6 +170,11 @@ func (s *Store) Put(sv Saved) error {
 	}
 	if sv.Created.IsZero() {
 		sv.Created = time.Now()
+	}
+	if !sv.Finished {
+		if old, err := s.Get(sv.ID); err == nil && old.Finished {
+			return fmt.Errorf("game %s is finished and cannot be reopened", sv.ID)
+		}
 	}
 	sv.Updated = time.Now()
 	if _, _, err := game.LoadRecord(sv.Record); err != nil {

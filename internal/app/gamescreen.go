@@ -154,6 +154,10 @@ type gameScreen struct {
 	storeID  string
 	recorded bool
 	leaving  bool
+	// savedAt is the number of recorded entries the stored copy holds, so an
+	// autosave writes only when the position has actually moved on.
+	savedAt    int
+	saveFailed bool
 
 	botGen      int
 	botThinking bool
@@ -309,6 +313,45 @@ func (s *gameScreen) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (s *gameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := s.update(msg)
+	s.autosave()
+	return model, cmd
+}
+
+// autosave stores the game whenever the recorded position has moved on.
+//
+// Saving used to happen only when the player left the screen or the game ended,
+// so a game in progress existed nowhere but in memory: closing the terminal
+// window or killing the process lost it, which the documented promise that games
+// are saved as they are played did not survive. Writing after every change keeps
+// that promise for every way a position can change — a move played here, a bot's
+// reply, a move arriving over the network, a code pasted into a correspondence
+// game — without each of those having to remember to.
+//
+// A finished game is stored by finish, which also rates it, so this leaves those
+// alone rather than racing it.
+func (s *gameScreen) autosave() {
+	if s.deps.Games == nil || s.leaving || s.g.Result().Over() {
+		return
+	}
+	at := s.g.Entries()
+	if at == s.savedAt {
+		return
+	}
+	if err := s.save(false); err != nil {
+		// Worth saying once: a player who has been told the game is kept should
+		// hear that it is not. Repeating it every move would bury the game.
+		if !s.saveFailed {
+			s.saveFailed = true
+			s.message = "this game is not being saved: " + err.Error()
+		}
+		return
+	}
+	s.savedAt = at
+	s.saveFailed = false
+}
+
+func (s *gameScreen) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
@@ -346,6 +389,7 @@ func (s *gameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View implements tea.Model.
 func (s *gameScreen) View() tea.View {
+	s.board.LastMove, s.board.ShowLastMove = s.lastPeg()
 	arr := ui.Arrange(s.width, s.height, s.g.Size())
 	var frame string
 	switch {
@@ -1499,6 +1543,21 @@ func (s *gameScreen) resultText(res game.Result) string {
 		out += " by " + why
 	}
 	return out + fmt.Sprintf(" after %d moves", s.g.Ply())
+}
+
+// lastPeg reports the hole the most recent peg went into. Entries that place no
+// peg — a resignation, a draw offer or its acceptance — leave the mark where it
+// was, because the board has not changed and the last peg played is still the
+// last peg played.
+func (s *gameScreen) lastPeg() (game.Point, bool) {
+	history := s.g.History()
+	for i := len(history) - 1; i >= 0; i-- {
+		switch history[i].Kind {
+		case game.PlaceMove, game.SwapMove:
+			return history[i].Peg, true
+		}
+	}
+	return game.Point{}, false
 }
 
 // lastMoveText describes the most recent record entry.

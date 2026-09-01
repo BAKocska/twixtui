@@ -161,8 +161,19 @@ func (s *Shell) leave(m DoneMsg) tea.Cmd {
 		return s.quit()
 	}
 	// A buried screen received no size messages while it was covered, so it is
-	// re-sized on the way back rather than redrawing at a stale size.
+	// re-sized on the way back rather than redrawing at a stale size. It may
+	// also be showing something it read from disk before the screen above it
+	// ran, so it is told it is on top again first.
+	if r, ok := s.top().(revealed); ok {
+		r.revealed()
+	}
 	return s.sizeTop()
+}
+
+// revealed is implemented by a screen holding state that can go stale while
+// another screen sits on top of it.
+type revealed interface {
+	revealed()
 }
 
 // sizeTop hands the remembered terminal size to the screen on top, so a screen
