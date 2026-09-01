@@ -344,7 +344,7 @@ func overlayBanner(st *ui.Styles, frame string, err error, width, height int) st
 		return frame
 	}
 	const dismiss = "press any key to continue"
-	msg := strings.Split(ansi.Wrap("error: "+err.Error(), width, ""), "\n")
+	msg := wrapText("error: "+err.Error(), width)
 	if len(msg) > height-1 {
 		msg = msg[:height-1]
 	}

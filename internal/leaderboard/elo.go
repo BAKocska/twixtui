@@ -70,14 +70,33 @@ func RemoteName(name string) string { return RemotePrefix + name }
 // IsBot reports whether a participant name denotes a bot, whose rating is fixed.
 func IsBot(name string) bool { return strings.HasPrefix(name, BotPrefix) }
 
-// DisplayName strips the participant-kind prefix from a name, for a leaderboard
-// column that has its own way of showing what kind of opponent it was.
-func DisplayName(name string) string {
+// BareName strips the participant-kind prefix, giving back the tier or remote
+// name underneath. It is the accessor for the encoding, used where the bare
+// string is parsed or re-recorded; nothing a player reads should come from it.
+func BareName(name string) string {
 	if rest, ok := strings.CutPrefix(name, BotPrefix); ok {
 		return rest
 	}
 	if rest, ok := strings.CutPrefix(name, RemotePrefix); ok {
 		return rest
+	}
+	return name
+}
+
+// DisplayName is how a participant is named on screen, on every surface: the
+// leaderboard, the saved-game list, the seat panel beside the board. The stored
+// name is an encoding — "bot:beginner" — and each screen used to decode it its
+// own way, so one opponent went by three names. This function is the single
+// answer: whatever it returns is what the product calls that participant.
+//
+// A prefix with nothing after it is returned as it was stored, because there is
+// no name in it to show.
+func DisplayName(name string) string {
+	if tier, ok := strings.CutPrefix(name, BotPrefix); ok && tier != "" {
+		return tier + " bot"
+	}
+	if who, ok := strings.CutPrefix(name, RemotePrefix); ok && who != "" {
+		return who + " (remote)"
 	}
 	return name
 }

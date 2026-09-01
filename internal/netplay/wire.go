@@ -8,7 +8,11 @@
 //     WireGuard address, or through a forwarded port.
 //   - relay (relay.go): both players dial out to a third machine running the
 //     same binary, which pairs them by a short code. This is for the common
-//     case where neither end can accept an inbound connection.
+//     case where neither end can accept an inbound connection. A relay is not
+//     trusted with the game: it sees every byte it carries, so both ends
+//     authenticate every frame with a key taken from the part of the pairing
+//     code the relay is never told. See auth.go for what that does and does not
+//     cover, and relay.go for what an operator can still see.
 //   - correspondence codes (code.go): no live connection at all. Each move
 //     becomes a short string the players paste to each other over any chat.
 //     Its failure modes are disjoint from the other two: it needs no socket,
@@ -17,10 +21,17 @@
 // Every transport carries the same moves and the same position hashes, so a
 // divergence between the two ends is caught the moment it happens rather than
 // discovered several moves later.
+//
+// Nothing that arrives from the other end is believed or printed as it stands.
+// Every string field of an incoming message is bounded and filtered as it is
+// decoded, in framer.read, because all of them can reach the player's terminal
+// in an error message and a terminal acts on the control bytes in what it is
+// asked to draw. sanitise.go says why that happens where it happens.
 package netplay
 
 import (
 	"bufio"
+	"crypto/hmac"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -78,6 +89,9 @@ var (
 	ErrClosed = errors.New("the session is closed")
 	// ErrBadCode marks a correspondence code that cannot be trusted.
 	ErrBadCode = errors.New("bad move code")
+	// ErrUnauthenticated marks a frame that did not come from the opponent, or
+	// that did not arrive in the order the opponent sent it.
+	ErrUnauthenticated = errors.New("the frame is not authenticated")
 )
 
 // msgType is the discriminator of a protocol message.
@@ -126,6 +140,53 @@ type message struct {
 
 	Replay []wireEntry `json:"replay,omitempty"`
 	Text   string      `json:"text,omitempty"`
+
+	// MAC authenticates everything above on a relayed game. It is never part of
+	// what it covers: authBytes clears it before computing the tag, and read
+	// clears it again once the tag has been checked.
+	MAC string `json:"mac,omitempty"`
+}
+
+// Bounds for the string fields a message carries. Every one of them arrives
+// from the other end, and every one of them can end up in a line on the
+// player's screen: a name in the greeting, a move or a hash in a divergence
+// report, the text of a refusal verbatim. Each bound is a little above the
+// longest value this build would ever send, so a peer that stays inside the
+// protocol never notices them.
+const (
+	// maxWireRulesLen bounds game.Ruleset.Canonical(), which is about eighty
+	// characters for every ruleset the engine can express.
+	maxWireRulesLen = 128
+	// maxWireDigestLen bounds a hexadecimal digest. A position hash and a
+	// transcript digest are both a full SHA-256; a ruleset fingerprint is
+	// shorter.
+	maxWireDigestLen = 2 * 32
+	// maxWireSideLen bounds a side name: "vertical" or "horizontal".
+	maxWireSideLen = 16
+	// maxWireTextLen bounds the free text of a refusal or a goodbye, which is
+	// the one field whose content is a sentence rather than a token. The longest
+	// this build produces is a full ruleset disagreement, about three hundred
+	// characters.
+	maxWireTextLen = 512
+)
+
+// sanitise bounds and filters every string an incoming message carries.
+//
+// It runs after the authentication check, not before, so that a tag covers the
+// bytes the opponent actually sent rather than whatever survived filtering.
+func (m *message) sanitise() {
+	m.Name = cleanName(m.Name)
+	m.Rules = safeText(m.Rules, maxWireRulesLen)
+	m.Fingerprint = safeText(m.Fingerprint, maxWireDigestLen)
+	m.Side = safeText(m.Side, maxWireSideLen)
+	m.Move = safeText(m.Move, maxNotationLen)
+	m.PosHash = safeText(m.PosHash, maxWireDigestLen)
+	m.Digest = safeText(m.Digest, maxWireDigestLen)
+	m.Text = safeText(m.Text, maxWireTextLen)
+	for i := range m.Replay {
+		m.Replay[i].Side = safeText(m.Replay[i].Side, maxWireSideLen)
+		m.Replay[i].Move = safeText(m.Replay[i].Move, maxNotationLen)
+	}
 }
 
 // framer reads and writes frames on one connection. Writes are serialised
@@ -138,10 +199,19 @@ type framer struct {
 	conn    net.Conn // non-nil when the transport supports deadlines
 	timeout time.Duration
 
-	mu  sync.Mutex
-	out []byte
+	// key, when set, authenticates every frame in both directions. It is
+	// derived from the part of a relayed game's pairing code the relay is never
+	// told; a direct connection has no shared secret and leaves it nil.
+	key     []byte
+	sendDir byte
+	recvDir byte
 
-	in []byte // read side, only touched by the read loop
+	mu      sync.Mutex
+	out     []byte
+	sendSeq uint64
+
+	in      []byte // read side, only touched by the read loop
+	recvSeq uint64 // likewise
 }
 
 func newFramer(rw io.ReadWriter, timeout time.Duration) *framer {
@@ -156,6 +226,13 @@ func newFramer(rw io.ReadWriter, timeout time.Duration) *framer {
 	return f
 }
 
+// authenticate turns on frame authentication for both directions of this
+// connection. sendDir and recvDir are the direction tags of the two ends, which
+// keeps a frame from being reflected back at the end that sent it.
+func (f *framer) authenticate(key []byte, sendDir, recvDir byte) {
+	f.key, f.sendDir, f.recvDir = key, sendDir, recvDir
+}
+
 // write sends one message as a single frame.
 func (f *framer) write(m message) error {
 	return f.writeTimeout(m, f.timeout)
@@ -163,25 +240,44 @@ func (f *framer) write(m message) error {
 
 // writeTimeout sends one message with an explicit write deadline.
 func (f *framer) writeTimeout(m message, timeout time.Duration) error {
-	payload, err := marshalMessage(m)
-	if err != nil {
-		return err
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.writePayload(payload, timeout)
+	return f.send(m, timeout)
 }
 
 // tryWriteTimeout sends a courtesy message only when no ordinary write owns the
 // connection. Shutdown uses it before closing rw: waiting for the mutex would
 // put Close behind the very stuck write that closing rw has to unblock.
 func (f *framer) tryWriteTimeout(m message, timeout time.Duration) bool {
-	payload, err := marshalMessage(m)
-	if err != nil || !f.mu.TryLock() {
+	if !f.mu.TryLock() {
 		return false
 	}
 	defer f.mu.Unlock()
-	return f.writePayload(payload, timeout) == nil
+	return f.send(m, timeout) == nil
+}
+
+// send encodes and writes one message while the caller holds f.mu. The
+// encoding cannot be lifted out from under the lock: an authenticated frame
+// carries the sequence number of this direction, so which frame a tag is
+// computed for is decided by the same lock that decides which frame goes out
+// first.
+func (f *framer) send(m message, timeout time.Duration) error {
+	if f.key != nil {
+		covered, err := authBytes(m)
+		if err != nil {
+			return err
+		}
+		m.MAC = frameMAC(f.key, f.sendDir, f.sendSeq, covered)
+	}
+	payload, err := marshalMessage(m)
+	if err != nil {
+		return err
+	}
+	if err := f.writePayload(payload, timeout); err != nil {
+		return err
+	}
+	f.sendSeq++
+	return nil
 }
 
 func marshalMessage(m message) ([]byte, error) {
@@ -230,7 +326,9 @@ func writeAll(w io.Writer, b []byte) error {
 }
 
 // read returns the next message. It reassembles frames split across any number
-// of reads, which is the normal case on a real network.
+// of reads, which is the normal case on a real network. On a relayed game every
+// frame is authenticated before it is returned, and every message is bounded
+// and filtered before it goes anywhere near the rest of the program.
 func (f *framer) read() (message, error) {
 	var hdr [frameHeaderLen]byte
 	if _, err := io.ReadFull(f.r, hdr[:]); err != nil {
@@ -267,5 +365,37 @@ func (f *framer) read() (message, error) {
 	if m.Type == "" {
 		return message{}, fmt.Errorf("%w: message without a type", ErrProtocol)
 	}
+	if err := f.verify(&m); err != nil {
+		return message{}, err
+	}
+	m.sanitise()
 	return m, nil
+}
+
+// verify checks a frame's authentication tag, and checks that there is one
+// exactly when this end expects one. An end that holds a key refuses a frame
+// without a tag, and an end that holds none refuses a frame with one, so a game
+// where only one side has the whole pairing code stops at the handshake with a
+// reason rather than running on unauthenticated.
+func (f *framer) verify(m *message) error {
+	if f.key == nil {
+		if m.MAC != "" {
+			return fmt.Errorf("%w: the opponent is authenticating its frames with the key part of a pairing code and this end has no key; join with the whole code your opponent gave you rather than only its beginning", ErrUnauthenticated)
+		}
+		return nil
+	}
+	if m.MAC == "" {
+		return fmt.Errorf("%w: the opponent's %s frame carries no authentication tag, so this end cannot tell it from something a relay made up; both ends need the whole pairing code, whose second part is the key a relay is never told", ErrUnauthenticated, m.Type)
+	}
+	covered, err := authBytes(*m)
+	if err != nil {
+		return err
+	}
+	want := frameMAC(f.key, f.recvDir, f.recvSeq, covered)
+	if !hmac.Equal([]byte(want), []byte(m.MAC)) {
+		return fmt.Errorf("%w: frame %d did not authenticate, so it is not what the opponent sent as its frame %d: either something between the two ends altered, injected, replayed, reordered or dropped a frame, or the two pairing codes are not the same code", ErrUnauthenticated, f.recvSeq+1, f.recvSeq+1)
+	}
+	f.recvSeq++
+	m.MAC = ""
+	return nil
 }

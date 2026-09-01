@@ -64,18 +64,31 @@ func TestHintIsShownOnTheBoardAndExplainedVerbatim(t *testing.T) {
 		t.Errorf("%d holes are marked on the board, want %d\n%s", n, len(want), frame)
 	}
 
-	// In words: the engine's own, and only the engine's own. The rendered block
-	// is compared for equality, so a sentence of the interface's own invention
-	// would fail here rather than hide between the engine's lines.
+	// In words: the engine's own, and only the engine's own, plus a legend that
+	// says what the marks are. The engine's sentences are compared for equality
+	// where they sit, and every remaining line must be the legend, so a sentence
+	// of the interface's own invention about the position would fail here rather
+	// than hide between the engine's lines.
 	lines := h.s.hint.lines(40)
 	expect := []string{hintLabel, gsHintFixture.Headline, gsHintFixture.Detail}
-	if len(lines) != len(expect) {
-		t.Fatalf("the advice block is %q, want %q", lines, expect)
+	if len(lines) < len(expect) {
+		t.Fatalf("the advice block is %q, want at least %q", lines, expect)
 	}
 	for i := range expect {
 		if lines[i] != expect[i] {
-			t.Fatalf("the advice block is %q, want %q", lines, expect)
+			t.Fatalf("the advice block is %q, want it to begin %q", lines, expect)
 		}
+	}
+	// Whatever follows the engine's own text is the legend and nothing else. It
+	// is checked against the panel's own legend string rather than a copy, so
+	// rewording the legend does not need this test edited, but adding a second
+	// line of the interface's own does.
+	tail := strings.Join(lines[len(expect):], " ")
+	if tail != strings.Join(gsWrap(h.s.hint.legend(), 40), " ") {
+		t.Errorf("the advice block says %q after the engine's own text, which the engine did not write", tail)
+	}
+	if !strings.Contains(tail, gsHintFixture.Move.String()) {
+		t.Errorf("the legend does not name the recommended move: %q", tail)
 	}
 	h.mustContain("headline", gsHintFixture.Headline)
 	h.mustContain("detail", gsHintFixture.Detail)

@@ -247,9 +247,12 @@ func Inspect(code string) (MoveCode, error) {
 		Game:    hex.EncodeToString(body[4:8]),
 		Entries: int(binary.BigEndian.Uint16(body[2:4])),
 		Side:    side,
-		Move:    string(body[moveCodeHeaderLen:]),
-		Before:  hex.EncodeToString(body[8:12]),
-		After:   hex.EncodeToString(body[12:16]),
+		// The length byte allows 255 bytes of anything. This field arrives from
+		// a pasted string and is printed by callers that have no way of knowing
+		// it came from outside, so it is filtered here, where it enters.
+		Move:   safeText(string(body[moveCodeHeaderLen:]), maxNotationLen),
+		Before: hex.EncodeToString(body[8:12]),
+		After:  hex.EncodeToString(body[12:16]),
 	}
 	return mc, nil
 }
@@ -351,8 +354,15 @@ func EncodeTranscript(id string, rs game.Ruleset, moves []Entry) (string, error)
 }
 
 // ApplyTranscript plays a block of move codes onto g and returns the transcript
-// it added. A block that does not fit is refused at the first line that does
-// not, leaving g at the last move that did.
+// it added.
+//
+// The block is applied to a copy first and adopted only once every line of it
+// has been accepted, so a block that goes wrong at its third line leaves g
+// exactly as it was rather than two moves further on. That matters because the
+// block came out of a paste: ApplyMove and checkMoveCode take the same care with
+// a single code, and session.applyPeer with a single frame, so that a hostile or
+// merely mistaken entry cannot advance the player's live game before it is known
+// to be good.
 func ApplyTranscript(g *game.Game, id, block string) ([]Entry, error) {
 	if g == nil {
 		return nil, errors.New("there is no game to apply move codes to")
@@ -360,6 +370,7 @@ func ApplyTranscript(g *game.Game, id, block string) ([]Entry, error) {
 	if len(block) > maxTranscriptBytes {
 		return nil, fmt.Errorf("%w: the pasted transcript is %d bytes, over the %d byte limit", ErrBadCode, len(block), maxTranscriptBytes)
 	}
+	trial := g.Clone()
 	var added []Entry
 	scanner := bufio.NewScanner(strings.NewReader(block))
 	scanner.Buffer(make([]byte, 256), maxCodeTextLen)
@@ -371,21 +382,24 @@ func ApplyTranscript(g *game.Game, id, block string) ([]Entry, error) {
 			continue
 		}
 		if len(added) >= maxTranscriptEntries {
-			return added, fmt.Errorf("%w: the transcript has more than %d entries", ErrBadCode, maxTranscriptEntries)
+			return nil, fmt.Errorf("%w: the transcript has more than %d entries", ErrBadCode, maxTranscriptEntries)
 		}
 		mc, err := Inspect(line)
 		if err != nil {
-			return added, fmt.Errorf("line %d: %w", lineNo, err)
+			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
-		notation, err := ApplyMove(g, id, line)
+		notation, err := ApplyMove(trial, id, line)
 		if err != nil {
-			return added, fmt.Errorf("line %d: %w", lineNo, err)
+			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
 		added = append(added, Entry{Side: mc.Side, Move: notation})
 	}
 	if err := scanner.Err(); err != nil {
-		return added, fmt.Errorf("%w: malformed transcript: %v", ErrBadCode, err)
+		return nil, fmt.Errorf("%w: malformed transcript: %v", ErrBadCode, err)
 	}
+	// The copy is discarded here, so taking its fields wholesale is safe: no
+	// slice ends up shared with anything that outlives this call.
+	*g = *trial
 	return added, nil
 }
 
@@ -430,6 +444,14 @@ const (
 
 // validateGameID keeps every move tied to the invite and saved game that owns
 // it. An empty identifier would make unrelated games share the same digest.
+//
+// The character set is checked and not only the length, because an identifier
+// does not stay inside this package: the caller turns it into a file name, and
+// it arrives from a code somebody pasted. Bounding the length alone admitted
+// "/etc/twixt" and an identifier with an escape sequence in it. Everything this
+// program generates is letters and digits -- upper case from NewGameID, lower
+// case from the game store -- so letters, digits and the hyphen the store
+// accepts is the whole of what a real identifier can hold.
 func validateGameID(id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -437,6 +459,13 @@ func validateGameID(id string) error {
 	}
 	if len(id) > maxGameIDLen {
 		return fmt.Errorf("game identifier is %d characters, the limit is %d", len(id), maxGameIDLen)
+	}
+	for _, r := range id {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '-':
+		default:
+			return fmt.Errorf("game identifier %q may only hold letters, digits and hyphens", safeText(id, maxGameIDLen))
+		}
 	}
 	return nil
 }
@@ -537,6 +566,15 @@ func DecodeInvite(code string) (Invite, error) {
 	id, rest, err := takeString(rest)
 	if err != nil {
 		return inv, fmt.Errorf("%w: the invite's game identifier is cut short", ErrBadCode)
+	}
+	// EncodeInvite checks the identifier and DecodeInvite used to check nothing:
+	// the length prefix allows 255 bytes of anything, and the caller turns what
+	// comes back into a file name. The same rule is applied here, so a hostile
+	// paste is refused by the format that read it rather than by whatever the
+	// caller happens to check afterwards.
+	id = strings.TrimSpace(id)
+	if err := validateGameID(id); err != nil {
+		return inv, fmt.Errorf("%w: the invite's game identifier is not one this program could have produced: %w", ErrBadCode, err)
 	}
 	name, rest, err := takeString(rest)
 	if err != nil {

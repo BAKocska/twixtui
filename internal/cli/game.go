@@ -12,6 +12,8 @@ import (
 	"github.com/BAKocska/twixtui/internal/app"
 	"github.com/BAKocska/twixtui/internal/game"
 	"github.com/BAKocska/twixtui/internal/gamestore"
+	"github.com/BAKocska/twixtui/internal/humantime"
+	"github.com/BAKocska/twixtui/internal/leaderboard"
 	"github.com/BAKocska/twixtui/internal/learn"
 	"github.com/BAKocska/twixtui/internal/netplay"
 	"github.com/BAKocska/twixtui/internal/ui"
@@ -36,9 +38,30 @@ func (o *options) gameIDCompletions(_ *cobra.Command, _ []string, _ string) ([]c
 	saved := store.List()
 	out := make([]cobra.Completion, 0, len(saved))
 	for _, sv := range saved {
-		out = append(out, cobra.CompletionWithDesc(sv.ID, sv.Describe()))
+		out = append(out, cobra.CompletionWithDesc(sv.ID, describeSaved(sv)))
 	}
 	return out, cobra.ShellCompDirectiveNoFileComp
+}
+
+// describeSaved is the player-facing summary of a stored game.
+//
+// gamestore holds the recorded opponent name in its encoded form, which is what
+// makes a game's identity stable, and it must not learn about scoring in order
+// to render it. So the rendering happens here, in the one place that prints these
+// for a reader, and every such place goes through it: otherwise "bot:beginner"
+// leaks into a listing beside the same bot spelled properly elsewhere.
+func describeSaved(sv gamestore.Saved) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s vs %s", sv.Player, leaderboard.DisplayName(sv.Opponent))
+	if sv.Side != "" {
+		fmt.Fprintf(&b, " (%s)", sv.Side)
+	}
+	if sv.Finished {
+		b.WriteString(", finished")
+	} else {
+		b.WriteString(", in progress")
+	}
+	return b.String()
 }
 
 func newGameCommand(opts *options) *cobra.Command {
@@ -79,7 +102,7 @@ file that has been edited is refused rather than loaded as a different game.`,
 					state = "finished"
 				}
 				fmt.Fprintf(w, "%s\t%s\t%s vs %s\t%s\t%s\n",
-					sv.ID, sv.Kind, sv.Player, sv.Opponent, state, humanAge(sv.Updated))
+					sv.ID, sv.Kind, sv.Player, leaderboard.DisplayName(sv.Opponent), state, humantime.Since(sv.Updated))
 			}
 			return w.Flush()
 		},
@@ -105,7 +128,7 @@ file that has been edited is refused rather than loaded as a different game.`,
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "%s: %s\n", sv.ID, sv.Describe())
+			fmt.Fprintf(out, "%s: %s\n", sv.ID, describeSaved(sv))
 			fmt.Fprintf(out, "rules: %s\n", g.Rules().Describe())
 			fmt.Fprintf(out, "moves: %d\n", g.Ply())
 			fmt.Fprintf(out, "result: %s\n\n", describeResult(g.Result()))
@@ -120,7 +143,8 @@ file that has been edited is refused rather than loaded as a different game.`,
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "\n%s\n", transcript)
+			fmt.Fprintln(out, "\nthe moves in twixtui's notation, explained by: twixtui rules show notation")
+			fmt.Fprintln(out, transcript)
 			return nil
 		},
 	}
@@ -339,21 +363,27 @@ Given a lesson name, start there; otherwise choose from the list.`,
 	return cmd
 }
 
-// renderBoard draws a board once for a non-interactive listing, at whichever
-// scale fits the terminal the output is going to.
+// renderBoard draws a board once for a non-interactive listing. It is rendered
+// at the size the whole board needs rather than the size of the terminal: a
+// listing is read by scrolling back, so a board cut off at the bottom with a
+// scroll marker in it — which is what a viewport does — loses rows for nothing.
+// The drawing scale still follows the terminal's width, since that is what
+// decides whether the wide scale can be read without folding.
 func (o *options) renderBoard(g *game.Game) (string, error) {
 	th, err := o.theme()
 	if err != nil {
 		return "", err
 	}
 	styles := ui.StylesFor(th)
-	width, height := terminalSize()
+	width, _ := terminalSize()
 	scale := ui.Detail
-	if w, h := ui.Detail.BlockSize(g.Size()); w > width || h > height {
+	blockW, blockH := scale.BlockSize(g.Size())
+	if blockW > width {
 		scale = ui.Compact
+		blockW, blockH = scale.BlockSize(g.Size())
 	}
 	view := &ui.BoardView{Scale: scale}
-	return strings.Join(view.Render(g, &styles, width, height), "\n"), nil
+	return strings.Join(view.Render(g, &styles, blockW, blockH), "\n"), nil
 }
 
 // lessonCompletions completes a tutorial lesson name with its summary.

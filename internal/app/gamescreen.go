@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/bits"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +49,7 @@ const (
 	gaDraw
 	gaResign
 	gaLiftPeg
+	gaCode
 	gaYes
 	gaNo
 )
@@ -83,6 +83,7 @@ var gameBindings = []gameBinding{
 	{gaDraw, []string{"d"}, phasePlay, "d", "offer or accept a draw"},
 	{gaResign, []string{"r"}, phasePlay, "r", "resign"},
 	{gaLiftPeg, []string{"p"}, phasePlay, "p", "lift one of your pegs"},
+	{gaCode, []string{"c"}, phasePlay, "c", "the exchange: your code and theirs"},
 	{gaYes, []string{"y"}, phaseConfirm, "y", "yes"},
 	{gaNo, []string{"n", "esc"}, phaseConfirm, "n", "no, carry on"},
 }
@@ -164,13 +165,18 @@ type gameScreen struct {
 	// game.
 	remoteSide game.Player
 	netNote    string
+	// corr is the code exchange of a correspondence game, nil in every other
+	// kind, and the one thing that drives a remote seat with no session behind
+	// it.
+	corr *correspondence
 
 	hint hintPanel
 }
 
 // NewGameScreen builds the screen for one game. Both sides must have a seat and
-// at least one of them must be played at this keyboard; a remote seat needs a
-// live session, and a session needs a remote seat.
+// at least one of them must be played at this keyboard. A remote seat is driven
+// either by a live session or, in a correspondence game, by the move codes the
+// players exchange by hand; it needs exactly one of the two.
 func NewGameScreen(d Deps, cfg GameConfig) (Screen, error) {
 	humans, remote := 0, game.NoPlayer
 	for _, side := range []game.Player{game.Vertical, game.Horizontal} {
@@ -189,13 +195,21 @@ func NewGameScreen(d Deps, cfg GameConfig) (Screen, error) {
 		return nil, errors.New("game: neither side is played at this keyboard")
 	}
 	switch {
-	case remote != game.NoPlayer && cfg.Session == nil:
+	case cfg.Codes && cfg.Session != nil:
+		return nil, errors.New("game: a game is played either over a session or by move codes, not both")
+	case cfg.Codes && remote == game.NoPlayer:
+		return nil, errors.New("game: move codes drive a remote seat, and neither seat is remote")
+	case remote != game.NoPlayer && cfg.Session == nil && !cfg.Codes:
 		return nil, errors.New("game: a remote seat needs a session")
 	case remote == game.NoPlayer && cfg.Session != nil:
 		return nil, errors.New("game: a session was given but neither seat is remote")
 	case cfg.Session != nil && cfg.Session.Side() != remote.Opponent():
 		return nil, fmt.Errorf("game: the session plays %s, so the remote seat cannot be %s",
 			cfg.Session.Side(), remote)
+	case cfg.Codes && cfg.StoreID == "" && cfg.Resume == nil:
+		// The identifier is what both ends bind their codes to. Allocating one
+		// here would produce a game whose codes the opponent can only refuse.
+		return nil, errors.New("game: a correspondence game needs the identifier its codes are bound to")
 	}
 
 	now := d.Clock()
@@ -263,6 +277,12 @@ func NewGameScreen(d Deps, cfg GameConfig) (Screen, error) {
 		session:    cfg.Session,
 		remoteSide: remote,
 	}
+	if cfg.Codes {
+		s.corr = newCorrespondence(storeID, remote)
+		if err := s.corr.resend(g); err != nil {
+			s.corr.note = "the code for your last move could not be rebuilt: " + err.Error()
+		}
+	}
 	if res := g.Result(); res.Over() {
 		// A finished game was recorded when it finished. Opening it again must
 		// not add a second leaderboard row for the same game.
@@ -293,7 +313,18 @@ func (s *gameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
 	case tea.KeyPressMsg:
-		return s, s.handleKey(msg.String())
+		return s, s.handleKey(msg)
+	case tea.PasteMsg:
+		// A paste on a correspondence game can only be a code, so it opens the
+		// exchange rather than being dropped for want of a focused field. A
+		// finished game has nothing to apply, but it may still have a last code
+		// to send, so the exchange opens without taking the text.
+		if s.corr != nil {
+			s.corr.open = true
+			if !s.g.Result().Over() {
+				s.corr.paste(msg.Content)
+			}
+		}
 	case botMoveMsg:
 		return s, s.applyBotMove(msg)
 	case botTickMsg:
@@ -317,9 +348,12 @@ func (s *gameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (s *gameScreen) View() tea.View {
 	arr := ui.Arrange(s.width, s.height, s.g.Size())
 	var frame string
-	if arr.TooSmall {
+	switch {
+	case arr.TooSmall:
 		frame = ui.Compose(arr, nil, nil, "", s.styles)
-	} else {
+	case s.corr != nil && s.corr.open:
+		frame = s.exchangeFrame(s.width, s.height)
+	default:
 		s.board.Scale = arr.Scale
 		s.board.Digits = s.linkDigits()
 		s.board.Highlights = s.highlights()
@@ -333,7 +367,8 @@ func (s *gameScreen) View() tea.View {
 
 // --- keys -------------------------------------------------------------------
 
-func (s *gameScreen) handleKey(key string) tea.Cmd {
+func (s *gameScreen) handleKey(m tea.KeyPressMsg) tea.Cmd {
+	key := m.String()
 	ctx := ui.CtxBoard
 	if s.linkMode {
 		ctx = ui.CtxLink
@@ -343,6 +378,9 @@ func (s *gameScreen) handleKey(key string) tea.Cmd {
 	// the game.
 	if b, ok := s.keymap.Lookup(ctx, key); ok && b.Action == ui.ActQuit && key != "q" {
 		return s.quitProgram()
+	}
+	if s.corr != nil && s.corr.open {
+		return s.exchangeKey(m)
 	}
 	if s.confirm != gaNone {
 		return s.handleConfirm(key)
@@ -448,6 +486,12 @@ func (s *gameScreen) handleGameAction(a gameAction) tea.Cmd {
 		return s.draw()
 	case gaLiftPeg:
 		s.liftPeg()
+	case gaCode:
+		if s.corr == nil {
+			s.message = "this game is not played by codes"
+		} else {
+			s.corr.open = true
+		}
 	case gaResign:
 		if side, ok := s.actingSide(); !ok {
 			s.message = "there is nobody here to resign"
@@ -571,6 +615,9 @@ func (s *gameScreen) commitTurn() tea.Cmd {
 			return nil
 		}
 	}
+	if !s.codeForLastEntry("move") {
+		return nil
+	}
 	if res.Over() {
 		return s.finish()
 	}
@@ -618,6 +665,9 @@ func (s *gameScreen) takeSwap() tea.Cmd {
 			return nil
 		}
 	}
+	if !s.codeForLastEntry("swap") {
+		return nil
+	}
 	s.message = "swap taken — the opening peg is yours"
 	return s.passTurn()
 }
@@ -642,6 +692,9 @@ func (s *gameScreen) draw() tea.Cmd {
 				s.message = "the acceptance could not be sent: " + err.Error()
 			}
 		}
+		if !s.codeForLastEntry("acceptance") {
+			return nil
+		}
 		return s.finish()
 	}
 	if err := s.g.OfferDraw(side); err != nil {
@@ -653,6 +706,9 @@ func (s *gameScreen) draw() tea.Cmd {
 			s.message = "the offer could not be sent: " + err.Error()
 			return nil
 		}
+	}
+	if !s.codeForLastEntry("draw offer") {
+		return nil
 	}
 	// A draw offer is not a turn: the same player still has the move, and may
 	// make it with the offer standing.
@@ -673,6 +729,9 @@ func (s *gameScreen) resign() tea.Cmd {
 		if err := s.session.SendResign(); err != nil {
 			s.message = "the resignation could not be sent: " + err.Error()
 		}
+	}
+	if !s.codeForLastEntry("resignation") {
+		return nil
 	}
 	return s.finish()
 }
@@ -1034,11 +1093,17 @@ func (s *gameScreen) checkSync() bool {
 }
 
 func (s *gameScreen) opponentName() string {
-	if s.session == nil {
-		return "the opponent"
-	}
-	if name := s.session.OpponentName(); name != "" {
-		return name
+	switch {
+	case s.session != nil:
+		if name := s.session.OpponentName(); name != "" {
+			return name
+		}
+	case s.corr != nil:
+		// There is no connection to ask, so the seat's own label is all there
+		// is, and it is what the invite carried.
+		if name := s.cfg.Seats[s.remoteSide].Label; name != "" {
+			return name
+		}
 	}
 	return "the opponent"
 }
@@ -1264,12 +1329,20 @@ func (s *gameScreen) panelLines(arr ui.Arrangement) []string {
 
 	blank()
 	for _, side := range []game.Player{game.Vertical, game.Horizontal} {
+		// Two spaces, never a tab: a terminal expands a tab to the next
+		// eight-column stop, which threw the seat list out of alignment
+		// whenever the rows above it changed width.
 		mark := "  "
 		if side == s.g.Turn() && !s.g.Result().Over() {
 			mark = "> "
 		}
-		add(mark + s.style(s.pegStyle(side), s.pegGlyph(side)) + " " + side.String() +
-			" " + s.seatName(side) + " · " + gsAxisText(side))
+		glyph := s.style(s.pegStyle(side), s.pegGlyph(side))
+		// The axis reminder is the first thing to go when the panel is narrow:
+		// losing "joins left and right" costs a player much less than losing
+		// half the opponent's name.
+		subject := side.String() + " " + s.seatName(side)
+		body := fitLabelled(subject, gsAxisText(side), " · ", w-ansi.StringWidth(mark+glyph)-1)
+		add(mark + glyph + " " + body)
 	}
 
 	blank()
@@ -1277,20 +1350,25 @@ func (s *gameScreen) panelLines(arr ui.Arrangement) []string {
 	if last := s.lastMoveText(); last != "" {
 		add("last " + last)
 	}
-	if by := s.g.DrawOfferedBy(); by != game.NoPlayer {
+	// A standing offer is only news while the game is running; leaving it under
+	// the result read as though the finished game were still being negotiated.
+	if by := s.g.DrawOfferedBy(); by != game.NoPlayer && !s.g.Result().Over() {
 		add("draw offered by " + by.String())
 	}
 	if s.netNote != "" {
 		add(s.netNote)
 	}
+	if s.corr != nil {
+		add(s.corrPanelLine())
+	}
 
 	blank()
-	title := "twixt"
+	title := "twixtui"
 	if s.cfg.Kind != "" {
 		title += " · " + string(s.cfg.Kind)
 	}
 	add(s.style(s.styles.PanelTitle, title))
-	add(s.style(s.styles.PanelText, "rules "+s.rulesName()))
+	add(s.style(s.styles.PanelText, s.rulesLine()))
 
 	blank()
 	for _, e := range s.helpEntries() {
@@ -1328,6 +1406,9 @@ func (s *gameScreen) helpEntries() []ui.HelpEntry {
 			continue
 		}
 		if b.action == gaLiftPeg && !s.g.Rules().PegRemoval {
+			continue
+		}
+		if b.action == gaCode && s.corr == nil {
 			continue
 		}
 		out = append(out, ui.HelpEntry{Label: b.label, Help: b.help})
@@ -1402,9 +1483,25 @@ func (s *gameScreen) resultText(res game.Result) string {
 	return out + fmt.Sprintf(" after %d moves", s.g.Ply())
 }
 
+// lastMoveText describes the most recent record entry.
+//
+// The transcript's own spelling of the entries that are not moves is meant for a
+// file, not a panel: "v:draw?" is exact and unreadable. A move is written as the
+// hole, which is what a player would say anyway.
 func (s *gameScreen) lastMoveText() string {
 	if s.g.Entries() == 0 {
 		return ""
+	}
+	entry := s.g.History()[s.g.Entries()-1]
+	switch entry.Kind {
+	case game.SwapMove:
+		return fmt.Sprintf("%s took the swap", entry.Player)
+	case game.ResignMove:
+		return fmt.Sprintf("%s resigned", entry.Player)
+	case game.DrawOfferMove:
+		return fmt.Sprintf("%s offered a draw", entry.Player)
+	case game.DrawAcceptMove:
+		return fmt.Sprintf("%s accepted the draw", entry.Player)
 	}
 	notation, err := s.g.MoveNotation(s.g.Entries() - 1)
 	if err != nil {
@@ -1540,6 +1637,11 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 	case s.confirm != gaNone:
 		parts = append(parts, "y yes · n no")
 	case s.g.Result().Over() || s.stopped:
+		if s.corr != nil && len(s.corr.pending) > 0 {
+			// The last code still has to reach the opponent, or their copy of
+			// the game never ends.
+			parts = append(parts, s.gameKeyLabel(gaCode)+" the code to send")
+		}
 		parts = append(parts, s.keyLabel(ui.ActQuit)+" leave")
 	case s.handover:
 		parts = append(parts, s.keyLabel(ui.ActConfirm)+" ready")
@@ -1548,6 +1650,9 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 	default:
 		parts = append(parts, s.keymap.HintLine(ui.CtxBoard,
 			ui.ActPlacePeg, ui.ActConfirm, ui.ActLinkMode, ui.ActAbortTurn, ui.ActQuit))
+		if s.corr != nil {
+			parts = append(parts, s.gameKeyLabel(gaCode)+" exchange")
+		}
 		if s.swapOffered() {
 			parts = append(parts, s.gameKeyLabel(gaSwap)+" swap")
 		}
@@ -1599,13 +1704,24 @@ func (s *gameScreen) seatName(side game.Player) string {
 	return side.String()
 }
 
-func (s *gameScreen) rulesName() string {
+// rulesLine names the ruleset and the board the way a player would say it,
+// rather than as the two bare tokens the transcript format uses.
+func (s *gameScreen) rulesLine() string {
 	rs := s.g.Rules()
 	name := rs.PresetName()
 	if name == "" {
 		name = "custom"
 	}
-	return name + " " + strconv.Itoa(rs.Size)
+	return fmt.Sprintf("%s rules · %dx%d", name, rs.Size, rs.Size)
+}
+
+// rulesName is the bare preset name, for anywhere a short token is wanted.
+func (s *gameScreen) rulesName() string {
+	rs := s.g.Rules()
+	if name := rs.PresetName(); name != "" {
+		return name
+	}
+	return "custom"
 }
 
 func (s *gameScreen) pegGlyph(side game.Player) string {
@@ -1707,49 +1823,15 @@ func gsPad(text string, width int) string {
 	return text
 }
 
+// gsTruncate and gsWrap are the panel's names for the package's one truncator
+// and wrapper. The truncator marks what it cut: a hard clip reads as though the
+// product mangled the line, where a marked one reads as a shortened line.
 func gsTruncate(text string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if ansi.StringWidth(text) <= width {
-		return text
-	}
-	return ansi.Truncate(text, width, "")
+	return truncateText(text, width)
 }
 
-// gsWrap breaks plain text onto lines of at most width cells, on spaces. Hint
-// and notice text is written for a reader, not for a column, so it has to fold
-// rather than be cut off.
 func gsWrap(text string, width int) []string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil
-	}
-	if width <= 1 {
-		return []string{gsTruncate(text, width)}
-	}
-	var lines []string
-	line := ""
-	for _, word := range strings.Fields(text) {
-		switch {
-		case line == "":
-			line = word
-		case ansi.StringWidth(line)+1+ansi.StringWidth(word) <= width:
-			line += " " + word
-		default:
-			lines = append(lines, line)
-			line = word
-		}
-		for ansi.StringWidth(line) > width {
-			cut := ansi.Truncate(line, width, "")
-			lines = append(lines, cut)
-			line = strings.TrimPrefix(line, cut)
-		}
-	}
-	if line != "" {
-		lines = append(lines, line)
-	}
-	return lines
+	return wrapText(strings.TrimSpace(text), width)
 }
 
 // gsPlain strips styling so a styled fragment can be folded into a line that is

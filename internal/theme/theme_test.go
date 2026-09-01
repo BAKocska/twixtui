@@ -322,3 +322,29 @@ func TestThemeRolesAreToldApart(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectCreatesThePrivateConfigDirectory checks this writer agrees with the
+// others about the mode. The configuration directory holds profiles, saved games
+// and the result log, and whichever writer runs first decides the mode, so a
+// single writer using a laxer one is enough to leave it world-readable.
+func TestSelectCreatesThePrivateConfigDirectory(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "twixtui")
+	if _, err := Select(dir, "slate"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("configuration directory created with mode %#o, want 0700", perm)
+	}
+	settings, err := os.Stat(filepath.Join(dir, settingsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := settings.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("settings file created with mode %#o, which is readable by others", perm)
+	}
+}

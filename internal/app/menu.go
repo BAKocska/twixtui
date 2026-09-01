@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -232,18 +234,29 @@ func (m *Menu) opponentChosen(msg menuOpponentMsg) tea.Cmd {
 // entry actions.
 
 func (m *Menu) startVersusBot() tea.Cmd {
-	m.pending = gameSetup{kind: gamestore.VersusBot}
+	m.pending = newGameSetup(gamestore.VersusBot)
 	return m.startSteps(stepTier, stepSide, stepRules, stepSize)
 }
 
 func (m *Menu) startHotseat() tea.Cmd {
-	m.pending = gameSetup{kind: gamestore.Hotseat}
+	m.pending = newGameSetup(gamestore.Hotseat)
 	return m.startSteps(stepOpponent, stepSide, stepRules, stepSize)
 }
 
 func (m *Menu) startNetwork() tea.Cmd {
-	m.pending = gameSetup{kind: gamestore.Remote}
+	m.pending = newGameSetup(gamestore.Remote)
 	return m.startSteps(stepNetMethod)
+}
+
+// newGameSetup is the state of a game's answers before any question is asked.
+//
+// It starts at the defaults the command line uses, so that the answer already
+// highlighted in each chooser is the documented one: pressing enter through the
+// questions must give the same game as `twixtui play bot`. Every chooser then
+// selects whatever the setup already holds, which is also what makes walking
+// backwards through the form keep the answers given so far.
+func newGameSetup(k gamestore.Kind) gameSetup {
+	return gameSetup{kind: k, rules: game.Std, tier: bot.Intermediate}
 }
 
 func (m *Menu) openTutorial() tea.Cmd {
@@ -269,9 +282,10 @@ func (m *Menu) openSaved() tea.Cmd {
 		m.message = "No unfinished games on this machine."
 		return nil
 	}
+	now := m.deps.Clock()
 	opts := make([]menuOption, 0, len(saved))
 	for _, sv := range saved {
-		o := menuOption{label: sv.Describe(), value: sv, help: savedHelp(sv)}
+		o := menuOption{label: savedRow(now, sv), value: sv, help: savedHelp(sv)}
 		if sv.Kind == gamestore.Remote {
 			// A live network game cannot be picked up without reconnecting,
 			// and the game screen refuses a remote seat with no session.
@@ -299,11 +313,41 @@ func (m *Menu) openSaved() tea.Cmd {
 	return nil
 }
 
+// savedRow is the line a player picks a game by, so it has to carry whatever
+// tells two of them apart. Players and side alone do not: a second game against
+// the same opponent is the same line twice, which is what this list used to
+// show. How far in it is and when it was last touched are what differ.
+//
+// Counting the moves means decoding and replaying the stored record. Measured
+// on an Apple M5 Pro that is 15µs for a 60-move game on a 24x24 board and 32µs
+// for a 160-move one, so a hundred saved games cost a few milliseconds on top of
+// the hundred file reads the listing already does. That is why it is done here
+// for every row rather than only for the highlighted one. A record that will not
+// load is listed without those two fields rather than hidden: choosing it will
+// explain why.
+func savedRow(now time.Time, sv gamestore.Saved) string {
+	parts := make([]string, 0, 5)
+	parts = append(parts, sv.Player+" vs "+leaderboard.DisplayName(sv.Opponent))
+	if sv.Side != "" {
+		parts = append(parts, sv.Side)
+	}
+	// Ordered by how much each field distinguishes one save from another, since
+	// a narrow panel cuts the end off: two games of the same pairing differ
+	// first by when they were last touched, then by how far in they are, and
+	// only sometimes by the board they are on.
+	parts = append(parts, playedAgo(now, sv.Updated))
+	if g, err := sv.Game(); err == nil {
+		parts = append(parts, plural(g.Ply(), "move"), fmt.Sprintf("%dx%d", g.Size(), g.Size()))
+	}
+	return strings.Join(parts, " · ")
+}
+
 func savedHelp(sv gamestore.Saved) string {
 	if sv.Kind == gamestore.Remote {
 		return "A network game needs the connection back: host or join again from the network menu."
 	}
-	return fmt.Sprintf("%s, playing %s against %s.", sv.Kind, sv.Side, leaderboard.DisplayName(sv.Opponent))
+	return fmt.Sprintf("A %s game, last played %s. It resumes exactly where it was left.",
+		sv.Kind, sv.Updated.Local().Format("2 January 2006 at 15:04"))
 }
 
 // openLeaderboard shows the standings in a panel that scrolls.
@@ -312,37 +356,60 @@ func (m *Menu) openLeaderboard() tea.Cmd {
 	return nil
 }
 
-// standingsLines renders the standings table. The rate column is labelled
-// "score" and not "wins" because it counts half of every draw, which is the
-// same quantity the rating is derived from.
+// standingsLines renders the standings: people ranked against one another, and
+// under them the bots they played, unranked. A bot's rating is a constant in the
+// program rather than something it won, so a single column holding both invites
+// a comparison neither number supports — that is what made a player who had lost
+// their only game read as the best on the machine.
+//
+// The rate column is labelled "score" and not "wins" because it counts half of
+// every draw, which is the same quantity the rating is derived from.
 func standingsLines(d Deps) []string {
-	rows := d.Board.Standings()
-	if len(rows) == 0 {
+	board := d.Board.Standings()
+	if len(board.Players) == 0 && len(board.Bots) == 0 {
 		return []string{"No games recorded yet. Play one and it will appear here."}
 	}
+
 	nameW := len("player")
-	for _, s := range rows {
-		nameW = max(nameW, len([]rune(participantLabel(s.Name))))
+	for _, s := range board.Players {
+		nameW = max(nameW, len([]rune(leaderboard.DisplayName(s.Name))))
 	}
-	out := make([]string, 0, len(rows)+1)
-	out = append(out, fmt.Sprintf("%-3s %s %6s %6s %6s", "#", padTo("player", nameW), "rating", "games", "score"))
-	for i, s := range rows {
-		out = append(out, fmt.Sprintf("%-3d %s %6d %6d %5.0f%%",
-			i+1, padTo(participantLabel(s.Name), nameW), s.Rating, s.Played, s.WinRate*100))
+	for _, s := range board.Bots {
+		nameW = max(nameW, len([]rune(leaderboard.DisplayName(s.Name))))
+	}
+	// A position needs somebody to hold it against. With one player it would
+	// say only that they are the only one, over a score that is quite possibly
+	// zero, so the column waits for a second player before it appears.
+	rankW := 0
+	if len(board.Players) > 1 {
+		rankW = len("#") + 3
+	}
+	// padTo cannot pad to nothing, so the position is built here: with no rank
+	// column there is no prefix at all, not a one-character stub.
+	pos := func(s string) string {
+		if rankW == 0 {
+			return ""
+		}
+		return padTo(s, rankW)
+	}
+	row := func(rank, name string, s leaderboard.Standing) string {
+		return fmt.Sprintf("%s%s %6d %6d %5.0f%%",
+			pos(rank), padTo(name, nameW), s.Rating, s.Played, s.WinRate*100)
+	}
+
+	out := make([]string, 0, len(board.Players)+len(board.Bots)+4)
+	out = append(out, fmt.Sprintf("%s%s %6s %6s %6s",
+		pos("#"), padTo("player", nameW), "rating", "games", "score"))
+	for i, s := range board.Players {
+		out = append(out, row(strconv.Itoa(i+1), leaderboard.DisplayName(s.Name), s))
+	}
+	if len(board.Bots) > 0 {
+		out = append(out, "", "Bots are not ranked: a tier's rating is fixed, not earned.", "")
+		for _, s := range board.Bots {
+			out = append(out, row("", leaderboard.DisplayName(s.Name), s))
+		}
 	}
 	return out
-}
-
-// participantLabel names a leaderboard row: a profile as itself, a bot and a
-// networked opponent with what they are.
-func participantLabel(name string) string {
-	switch {
-	case leaderboard.IsBot(name):
-		return "bot " + leaderboard.DisplayName(name)
-	case strings.HasPrefix(name, leaderboard.RemotePrefix):
-		return leaderboard.DisplayName(name) + " (remote)"
-	}
-	return name
 }
 
 // openThemes offers the colour schemes.
@@ -437,17 +504,23 @@ func closeForm(m *Menu) tea.Cmd {
 func stepTier(m *Menu) tea.Cmd {
 	names := bot.TierNames()
 	opts := make([]menuOption, 0, len(names))
+	sel := 0
 	for _, n := range names {
 		t, err := bot.ParseTier(n)
 		if err != nil {
 			continue
+		}
+		// The selection is found by value rather than by position: a tier the
+		// list skips would otherwise shift every index after it.
+		if t == m.pending.tier {
+			sel = len(opts)
 		}
 		opts = append(opts, menuOption{label: n, help: bot.TierSummary(n), value: t})
 	}
 	m.form = &chooser{
 		title:  "How strong an opponent?",
 		opts:   opts,
-		sel:    int(m.pending.tier),
+		sel:    sel,
 		cancel: backOneStep,
 		pick: func(m *Menu, i int) tea.Cmd {
 			t, _ := m.form.(*chooser).opts[i].value.(bot.Tier)
@@ -732,7 +805,12 @@ func stepConnect(m *Menu) tea.Cmd {
 			func(ctx context.Context) (netplay.Session, error) {
 				opts := netplay.GuestOptions{Name: m.player}
 				if m.pending.relay != "" {
-					return netplay.JoinViaRelay(ctx, netplay.NormalizeAddr(m.pending.relay), m.pending.target, opts)
+					// The address goes to the relay code unfilled: it supplies
+					// DefaultRelayPort itself. Filling it in here with
+					// NormalizeAddr sent a player who typed a bare host name to
+					// the direct-play port instead, and the only symptom was a
+					// connection that would not open.
+					return netplay.JoinViaRelay(ctx, m.pending.relay, m.pending.target, opts)
 				}
 				return netplay.Dial(ctx, m.pending.target, opts)
 			})
@@ -747,7 +825,7 @@ func stepConnect(m *Menu) tea.Cmd {
 
 	if m.pending.relay != "" {
 		code := netplay.PairingCode()
-		relay := netplay.NormalizeAddr(m.pending.relay)
+		relay := m.pending.relay
 		info := []string{
 			"Pairing code: " + code,
 			"They run: twixtui play join --relay " + m.pending.relay + " " + code,
@@ -837,6 +915,13 @@ func (m *Menu) connected(msg menuSessionMsg) tea.Cmd {
 
 // building the game.
 
+// botLabel names a bot seat. It goes through the recorded name so that the
+// panel beside the board, the saved-game list and the standings cannot drift
+// apart into three spellings of the same opponent.
+func botLabel(t bot.Tier) string {
+	return leaderboard.DisplayName(leaderboard.BotName(t.String()))
+}
+
 // buildConfig turns the collected answers into a game.
 func (m *Menu) buildConfig() (GameConfig, error) {
 	p := m.pending
@@ -852,7 +937,10 @@ func (m *Menu) buildConfig() (GameConfig, error) {
 	switch p.kind {
 	case gamestore.VersusBot:
 		opponent := bot.New(p.tier, m.deps.Clock().UnixNano())
-		cfg.Seats[p.side.Opponent()] = Seat{Bot: opponent, Label: "bot: " + p.tier.String()}
+		// The seat is labelled with the same name the leaderboard will show,
+		// built from the name the result is recorded under, so the opponent is
+		// called one thing from the board to the standings.
+		cfg.Seats[p.side.Opponent()] = Seat{Bot: opponent, Label: botLabel(p.tier)}
 		// R15: a hint is only meaningful when there is an engine to ask, and
 		// the engine already in the game is the one to ask.
 		cfg.Hints = true
@@ -898,12 +986,12 @@ func (m *Menu) resumeConfig(sv gamestore.Saved) (GameConfig, error) {
 
 	switch {
 	case leaderboard.IsBot(sv.Opponent):
-		tier, err := bot.ParseTier(leaderboard.DisplayName(sv.Opponent))
+		tier, err := bot.ParseTier(leaderboard.BareName(sv.Opponent))
 		if err != nil {
 			return GameConfig{}, err
 		}
 		opponent := bot.New(tier, m.deps.Clock().UnixNano())
-		cfg.Seats[side.Opponent()] = Seat{Bot: opponent, Label: "bot: " + tier.String()}
+		cfg.Seats[side.Opponent()] = Seat{Bot: opponent, Label: botLabel(tier)}
 		cfg.Hints = true
 		cfg.HintFor = opponent
 	case strings.HasPrefix(sv.Opponent, leaderboard.RemotePrefix):

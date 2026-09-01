@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -121,7 +122,10 @@ func TestCorrespondenceCodeIsCaseInsensitiveAndTypoResistant(t *testing.T) {
 	g := game.MustNew(testRules())
 	var code string
 	for i := range 256 {
-		id := string(rune(i))
+		// The identifier is varied to vary the digest the code carries, which is
+		// how a code containing 0 or 1 is found. It stays inside the character
+		// set a real identifier can hold.
+		id := "game-" + strconv.Itoa(i)
 		var err error
 		code, err = EncodeMove(g, id, "B1")
 		if err != nil {

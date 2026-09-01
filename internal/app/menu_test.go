@@ -1,6 +1,7 @@
 package app
 
 import (
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,42 @@ func mnSaveGame(t *testing.T, d Deps, kind gamestore.Kind, player, opponent stri
 	sv := gamestore.Saved{
 		ID:       gamestore.NewID(),
 		Kind:     kind,
+		Created:  time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC),
+		Player:   player,
+		Side:     "vertical",
+		Opponent: opponent,
+		Record:   rec.Encode(),
+	}
+	if err := d.Games.Put(sv); err != nil {
+		t.Fatal(err)
+	}
+	return sv
+}
+
+// mnSaveGamePlayed writes an unfinished game of a given size with its first
+// moves already made, so that two saves of the same pairing differ in the ways
+// a player would use to tell them apart.
+func mnSaveGamePlayed(t *testing.T, d Deps, player, opponent string, size int, holes ...string) gamestore.Saved {
+	t.Helper()
+	rs := game.Std
+	rs.Size = size
+	g := game.MustNew(rs)
+	for _, h := range holes {
+		p, err := game.ParsePoint(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := g.PlayPeg(p); err != nil {
+			t.Fatalf("playing %s: %v", h, err)
+		}
+	}
+	rec, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sv := gamestore.Saved{
+		ID:       gamestore.NewID(),
+		Kind:     gamestore.VersusBot,
 		Created:  time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC),
 		Player:   player,
 		Side:     "vertical",
@@ -466,8 +503,13 @@ func TestMenuResumesASavedGame(t *testing.T) {
 
 	mnPick(t, m, "Continue a saved game")
 	frame := m.View().Content
-	if !strings.Contains(frame, sv.Describe()) {
-		t.Errorf("the saved game is not listed as it describes itself:\n%s", frame)
+	// The row is asserted by what it has to identify, not by its exact wording:
+	// who played, which side, and the opponent under the one name the product
+	// uses for them.
+	for _, want := range []string{sv.Player, leaderboard.DisplayName(sv.Opponent), sv.Side} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("the saved game listing does not say %q:\n%s", want, frame)
+		}
 	}
 
 	cfg := mnStartedConfig(t, shellSend(t, m, "enter"))
@@ -540,7 +582,7 @@ func TestMenuLeaderboardLabelsTheRateAsScore(t *testing.T) {
 	if strings.Contains(frame, "wins") || strings.Contains(frame, "win rate") {
 		t.Errorf("the rate column is labelled as wins, but it counts half of every draw:\n%s", frame)
 	}
-	if !strings.Contains(frame, "Balint") || !strings.Contains(frame, "bot pro") {
+	if !strings.Contains(frame, "Balint") || !strings.Contains(frame, leaderboard.DisplayName(leaderboard.BotName("pro"))) {
 		t.Errorf("the participants are not listed:\n%s", frame)
 	}
 	if !strings.Contains(frame, "50%") {
@@ -549,6 +591,212 @@ func TestMenuLeaderboardLabelsTheRateAsScore(t *testing.T) {
 	shellSend(t, m, "esc")
 	if m.form != nil {
 		t.Error("escape did not close the leaderboard")
+	}
+}
+
+// mnRecordLoss records one finished game the local player lost.
+func mnRecordLoss(t *testing.T, d Deps, player, opponent string, played time.Time) {
+	t.Helper()
+	if err := d.Board.Record(leaderboard.Result{
+		Played: played, Player: player, Opponent: opponent,
+		Outcome: leaderboard.Loss, Side: "vertical", Moves: 4,
+		Ruleset: game.Std.Canonical(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mnRow finds the standings line naming want.
+func mnRow(t *testing.T, lines []string, want string) (int, string) {
+	t.Helper()
+	for i, l := range lines {
+		if strings.Contains(l, want) {
+			return i, l
+		}
+	}
+	t.Fatalf("no standings row for %q in:\n%s", want, strings.Join(lines, "\n"))
+	return 0, ""
+}
+
+// TestMenuLeaderboardDoesNotCallALoserTheBest is F4: a bot's rating is a fixed
+// number, so ranking it with people made a player who had lost their only game
+// come out first, above the bot that had just beaten them. The player must not
+// be given a position at all while they are the only one, and the bot must be
+// below the ranking under a line saying it is not part of it.
+func TestMenuLeaderboardDoesNotCallALoserTheBest(t *testing.T) {
+	d := shellTestDeps(t)
+	beginner := leaderboard.BotName("beginner")
+	mnRecordLoss(t, d, "Balint", beginner, time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC))
+
+	lines := standingsLines(d)
+	playerAt, playerRow := mnRow(t, lines, "Balint")
+	botAt, _ := mnRow(t, lines, leaderboard.DisplayName(beginner))
+	if playerAt > botAt {
+		t.Errorf("the bot is listed above the player it beat:\n%s", strings.Join(lines, "\n"))
+	}
+	if fields := strings.Fields(playerRow); fields[0] != "Balint" {
+		t.Errorf("the only player is given the position %q on a board of one:\n%s", fields[0], playerRow)
+	}
+	unranked := -1
+	for i, l := range lines {
+		if strings.Contains(l, "not ranked") {
+			unranked = i
+		}
+	}
+	if unranked < 0 || unranked < playerAt || unranked > botAt {
+		t.Errorf("nothing between the player and the bot says the bot is not ranked:\n%s", strings.Join(lines, "\n"))
+	}
+
+	// The rating the player lost their way to must not be presented as a score
+	// worth being first for.
+	frame := mnLeaderboardFrame(t, d)
+	if !strings.Contains(frame, "0%") {
+		t.Errorf("the lost game is not shown as a 0%% score:\n%s", frame)
+	}
+}
+
+// TestMenuLeaderboardNumbersPlayersOnceThereAreTwo: the position column is
+// withheld only while it would be vacuous. With two people it is a ranking
+// again, and it must agree with the ratings.
+func TestMenuLeaderboardNumbersPlayersOnceThereAreTwo(t *testing.T) {
+	d := shellTestDeps(t)
+	mnRecordLoss(t, d, "Balint", "Reka", time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC))
+
+	lines := standingsLines(d)
+	rekaAt, rekaRow := mnRow(t, lines, "Reka")
+	balintAt, balintRow := mnRow(t, lines, "Balint")
+	if rekaAt > balintAt {
+		t.Errorf("the winner is listed below the loser:\n%s", strings.Join(lines, "\n"))
+	}
+	if got := strings.Fields(rekaRow)[0]; got != "1" {
+		t.Errorf("the winner's position is %q, want 1:\n%s", got, rekaRow)
+	}
+	if got := strings.Fields(balintRow)[0]; got != "2" {
+		t.Errorf("the loser's position is %q, want 2:\n%s", got, balintRow)
+	}
+}
+
+// TestMenuLeaderboardShowsNoTierAsHavingGainedRating is the second half of F4:
+// the anchors are constants, so however many games are played against a tier
+// its rating must be exactly the same number every time it is shown.
+func TestMenuLeaderboardShowsNoTierAsHavingGainedRating(t *testing.T) {
+	d := shellTestDeps(t)
+	intermediate := leaderboard.BotName("intermediate")
+	mnRecordLoss(t, d, "Balint", intermediate, time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC))
+	first := d.Board.Standings().Bots
+	mnRecordLoss(t, d, "Balint", intermediate, time.Date(2026, 2, 2, 9, 0, 0, 0, time.UTC))
+	mnRecordLoss(t, d, "Reka", intermediate, time.Date(2026, 2, 3, 9, 0, 0, 0, time.UTC))
+	second := d.Board.Standings().Bots
+
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("one tier was played, listed as %+v then %+v", first, second)
+	}
+	if first[0].Rating != second[0].Rating {
+		t.Errorf("the tier's rating moved from %d to %d over three games it was never rated for",
+			first[0].Rating, second[0].Rating)
+	}
+	if second[0].Played != 3 {
+		t.Errorf("the tier played %d games, want 3", second[0].Played)
+	}
+}
+
+// mnLeaderboardFrame opens the standings and returns what is on screen.
+func mnLeaderboardFrame(t *testing.T, d Deps) string {
+	t.Helper()
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Leaderboard")
+	return m.View().Content
+}
+
+// TestMenuTellsTwoSavesOfTheSamePairingApart is F16: the listing used to show
+// players, side and state only, so a second unfinished game against the same
+// opponent was the same line twice and there was nothing to choose by.
+func TestMenuTellsTwoSavesOfTheSamePairingApart(t *testing.T) {
+	d := shellTestDeps(t)
+	beginner := leaderboard.BotName("beginner")
+	mnSaveGamePlayed(t, d, "Balint", beginner, 12)
+	mnSaveGamePlayed(t, d, "Balint", beginner, 18, "F6", "G8", "H10", "E4")
+	m := mnMenu(t, d, 120, 30)
+	mnPick(t, m, "Continue a saved game")
+
+	c := mnChooser(t, m)
+	if len(c.opts) != 2 {
+		t.Fatalf("%d rows listed, want the two saved games", len(c.opts))
+	}
+	if c.opts[0].label == c.opts[1].label {
+		t.Fatalf("two different games are listed identically: %q", c.opts[0].label)
+	}
+	rows := c.opts[0].label + "\n" + c.opts[1].label
+	for _, want := range []string{"12x12", "18x18", "4 moves"} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("the listing does not say %q, so the games cannot be told apart by it:\n%s", want, rows)
+		}
+	}
+	if !strings.Contains(m.View().Content, "18x18") {
+		t.Errorf("what the rows say is not on screen:\n%s", m.View().Content)
+	}
+}
+
+// TestMenuFormDefaultsToTheDocumentedGame is F5: the choosers used to preselect
+// whatever sorted first, so pressing enter through the questions gave 1962
+// rules against the weakest opponent, which is not the game the command line
+// starts with no flags.
+func TestMenuFormDefaultsToTheDocumentedGame(t *testing.T) {
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 30)
+
+	mnPick(t, m, "Play the computer")
+	shellSend(t, m, "enter") // how strong an opponent
+	shellSend(t, m, "enter") // which side
+	shellSend(t, m, "enter") // which rules
+	cfg := mnStartedConfig(t, shellSend(t, m, "enter"))
+
+	// These are the defaults of `twixtui play bot`: --tier intermediate,
+	// --ruleset std, and the ruleset's own size.
+	if got := cfg.Rules.PresetName(); got != game.Std.PresetName() {
+		t.Errorf("pressing enter through the questions chose the %q ruleset, want %q",
+			got, game.Std.PresetName())
+	}
+	if cfg.Rules.Size != game.Std.Size {
+		t.Errorf("board size is %d, want the default %d", cfg.Rules.Size, game.Std.Size)
+	}
+	for _, seat := range cfg.Seats {
+		if seat.Bot == nil {
+			continue
+		}
+		if got := seat.Bot.Tier(); got != bot.Intermediate {
+			t.Errorf("the opponent is the %v tier, want the default %v", got, bot.Intermediate)
+		}
+	}
+}
+
+// TestBotHasOneNameOnEverySurface is the rest of F4: the same opponent was
+// called "bot beginner" in the standings, "beginner" in the command line and
+// "bot:beginner" in the saved-game list. Every surface the menu owns must now
+// use the one name, and none of them may leak the stored spelling.
+func TestBotHasOneNameOnEverySurface(t *testing.T) {
+	d := shellTestDeps(t)
+	stored := leaderboard.BotName("pro")
+	want := leaderboard.DisplayName(stored)
+	mnRecordLoss(t, d, "Balint", stored, time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC))
+	mnSaveGamePlayed(t, d, "Balint", stored, 12)
+
+	m := mnMenu(t, d, 120, 30)
+	mnPick(t, m, "Continue a saved game")
+	saved := m.View().Content
+	seat := mnStartedConfig(t, shellSend(t, m, "enter")).Seats[game.Horizontal]
+	standings := mnLeaderboardFrame(t, d)
+
+	if seat.Label != want {
+		t.Errorf("the seat beside the board says %q, want %q", seat.Label, want)
+	}
+	for name, frame := range map[string]string{"saved-game list": saved, "leaderboard": standings} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("the %s does not call the bot %q:\n%s", name, want, frame)
+		}
+		if strings.Contains(frame, stored) {
+			t.Errorf("the %s shows the stored spelling %q:\n%s", name, stored, frame)
+		}
 	}
 }
 
@@ -705,6 +953,47 @@ func TestMenuGuestIsNotAskedForTermsItCannotSet(t *testing.T) {
 		t.Errorf("the address is %q, want it normalised to %q", m.pending.target, want)
 	}
 	shellSend(t, m, "esc")
+}
+
+// TestMenuRelayAddressReachesTheRelayPort: a relay listens on DefaultRelayPort,
+// and the connect step used to fill a bare host name in with the direct-play
+// port instead. A player who typed a host name was quietly sent where nothing
+// was listening, and the only symptom was a refused connection.
+func TestMenuRelayAddressReachesTheRelayPort(t *testing.T) {
+	relay := net.JoinHostPort("127.0.0.1", netplay.DefaultRelayPort)
+	if c, err := net.DialTimeout("tcp", relay, time.Second); err == nil {
+		c.Close()
+		t.Skipf("something on this machine is listening on %s, so a refused connection cannot be read", relay)
+	}
+
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Play someone over the network")
+	mnPick(t, m, "join their pairing code through a relay")
+	mnTypeInto(t, m, "127.0.0.1")
+	shellSend(t, m, "enter")
+	// A code the relay would accept, so the attempt gets as far as dialling.
+	mnTypeInto(t, m, netplay.PairingCode())
+	cmd := shellSend(t, m, "enter")
+	if cmd == nil {
+		t.Fatal("the pairing code did not start a connection")
+	}
+	msg, ok := cmd().(menuSessionMsg)
+	if !ok {
+		t.Fatalf("connecting produced %T, want the outcome of the dial", cmd())
+	}
+	if msg.err == nil {
+		msg.session.Close()
+		t.Fatal("the dial succeeded, but nothing is listening on the relay port")
+	}
+
+	text := msg.err.Error()
+	if !strings.Contains(text, ":"+netplay.DefaultRelayPort) {
+		t.Errorf("a bare relay host was not dialled on the relay port %s: %s", netplay.DefaultRelayPort, text)
+	}
+	if strings.Contains(text, ":"+netplay.DefaultPort) {
+		t.Errorf("a bare relay host was dialled on the direct-play port %s: %s", netplay.DefaultPort, text)
+	}
 }
 
 func TestMenuFitsEverySize(t *testing.T) {

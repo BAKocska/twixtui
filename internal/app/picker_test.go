@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/BAKocska/twixtui/internal/profile"
 	"github.com/BAKocska/twixtui/internal/ui"
@@ -330,23 +331,111 @@ func TestPickerEmitsByReplacingItselfWithTheMenu(t *testing.T) {
 	}
 }
 
-// TestPickerEscapeLeavesTheScreen: escaping the launch prompt leaves it, which
-// at the root of the stack ends the program.
-func TestPickerEscapeLeavesTheScreen(t *testing.T) {
+// TestPickerOffersEscapeOnlyWhereItGoesSomewhere is F22: the launch footer
+// advertised "esc back" on the first screen of the program, with nothing behind
+// it to go back to. The property is that the offer and the key agree — escape
+// is named exactly where a caller has given it somewhere to go — so it holds
+// however the hint is worded.
+func TestPickerOffersEscapeOnlyWhereItGoesSomewhere(t *testing.T) {
 	d := shellTestDeps(t)
 	pkProfiles(t, d, "Balint")
+
+	root := pkPicker(t, d, nil)
+	if frame := root.View().Content; strings.Contains(frame, "esc") {
+		t.Errorf("the launch footer offers escape with nothing behind the screen:\n%s", frame)
+	}
+	if cmd := shellSend(t, root, "esc"); cmd != nil {
+		t.Errorf("escape at the root produced %T, want the key ignored", cmd())
+	}
+
+	// Embedded in another screen, escape has the screen underneath to return to,
+	// and is offered again.
+	backed := false
+	embedded := NewPicker(d, "Who is playing the other side?").
+		Cancelled(func() tea.Cmd {
+			backed = true
+			return nil
+		})
+	embedded.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if frame := embedded.View().Content; !strings.Contains(frame, "esc back") {
+		t.Errorf("the embedded picker does not offer the escape it answers:\n%s", frame)
+	}
+	shellSend(t, embedded, "esc")
+	if !backed {
+		t.Error("escape did not back out of the embedded picker")
+	}
+}
+
+// TestPickerNamesEachMovementPairOnce is the other half of F22: the footer
+// listed the arrows and the emacs pair as two entries that both said "move".
+// Collapsing them must not lose a key, so all four are still named and no two
+// hints describe the same thing.
+func TestPickerNamesEachMovementPairOnce(t *testing.T) {
+	d := shellTestDeps(t)
+	pkProfiles(t, d, "Anna", "Bernadett")
 	p := pkPicker(t, d, nil)
 
-	cmd := shellSend(t, p, "esc")
-	if cmd == nil {
-		t.Fatal("escape produced no command")
+	seen := map[string]string{}
+	for _, hint := range p.hints {
+		fields := strings.Fields(hint)
+		if len(fields) < 2 {
+			t.Fatalf("the hint %q names a key without saying what it does", hint)
+		}
+		does := fields[len(fields)-1]
+		if other, ok := seen[does]; ok {
+			t.Errorf("the hints %q and %q both end in %q", other, hint, does)
+		}
+		seen[does] = hint
 	}
-	done, ok := cmd().(DoneMsg)
-	if !ok {
-		t.Fatalf("escape produced %T, want a DoneMsg", cmd())
+
+	frame := p.View().Content
+	for _, key := range []string{"↑", "↓", keyPrev, keyNext} {
+		if !strings.Contains(frame, key) {
+			t.Errorf("the footer no longer names %q, which still moves the list:\n%s", key, frame)
+		}
 	}
-	if done.Next != nil || done.Err != nil || done.Quit {
-		t.Errorf("escape produced %+v, want a plain pop", done)
+}
+
+// TestPickerAgeColumnFitsEveryWording pins the column the age is drawn in
+// against every wording humantime can produce. The rung past a month is a date,
+// and September gives the calendar its longest month name, so a row carrying the
+// longest allowed name beside the longest possible date still has to fit the
+// terminal.
+func TestPickerAgeColumnFitsEveryWording(t *testing.T) {
+	const width = 80
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	d := shellTestDeps(t)
+	d.Now = func() time.Time { return now }
+	pkProfiles(t, d, "Balint")
+	p := pkPicker(t, d, nil)
+	st := shellStyles(p.deps)
+	longest := strings.Repeat("W", profile.MaxNameRunes)
+
+	for _, age := range []time.Duration{
+		0,
+		30 * time.Second,
+		5 * time.Minute,
+		3 * time.Hour,
+		30 * time.Hour,
+		5 * 24 * time.Hour,
+		365 * 24 * time.Hour,
+	} {
+		then := now.Add(-age)
+		p.rows = []pickerRow{{name: longest, lastUsed: then}}
+		row := p.renderRow(st, 0, width)
+		if got := ansi.StringWidth(row); got > width {
+			t.Errorf("a row aged %s is %d cells wide in a %d column terminal: %q", age, got, width, row)
+		}
+		if want := playedAgo(now, then); !strings.Contains(row, want) {
+			t.Errorf("a row aged %s does not show %q: %q", age, want, row)
+		}
+	}
+
+	// A profile that has never played is its own wording, and the one the
+	// shared ladder cannot supply, since a zero time is not an age.
+	p.rows = []pickerRow{{name: longest}}
+	if row := p.renderRow(st, 0, width); !strings.Contains(row, "never played") {
+		t.Errorf("an unplayed profile does not say so: %q", row)
 	}
 }
 

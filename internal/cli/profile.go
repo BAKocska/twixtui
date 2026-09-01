@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/BAKocska/twixtui/internal/humantime"
 	"github.com/BAKocska/twixtui/internal/profile"
 )
 
@@ -39,27 +39,7 @@ func lastPlayed(p profile.Profile) string {
 	if p.LastUsed.IsZero() {
 		return "never played"
 	}
-	return "last played " + humanAge(p.LastUsed)
-}
-
-// humanAge renders a rough age, which is all a completion description or a list
-// needs.
-func humanAge(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%d hours ago", int(d.Hours()))
-	case d < 48*time.Hour:
-		return "yesterday"
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
-	default:
-		return t.Format("2 January 2006")
-	}
+	return "last played " + humantime.Since(p.LastUsed)
 }
 
 func newProfileCommand(opts *options) *cobra.Command {
@@ -219,7 +199,7 @@ func lastPlayedColumn(p profile.Profile) string {
 	if p.LastUsed.IsZero() {
 		return "never"
 	}
-	return humanAge(p.LastUsed)
+	return humantime.Since(p.LastUsed)
 }
 
 // resolveProfileName turns what the player typed into exactly one profile name,

@@ -81,6 +81,28 @@ type Result struct {
 	Duration time.Duration `json:"duration"`
 }
 
+// reversed is the same game as the other side played it: the two names swap,
+// the outcome flips, and the side becomes the other axis. Everything else — when
+// it was played, how long it took, how many moves it ran to — is a fact about
+// the game rather than about either player, so it is untouched.
+//
+// An outcome this build cannot score is left as it is: there is nothing to flip
+// it to, and inventing one would be worse than showing the word it was recorded
+// under.
+func (r Result) reversed() Result {
+	r.Player, r.Opponent = r.Opponent, r.Player
+	switch r.Outcome {
+	case Win:
+		r.Outcome = Loss
+	case Loss:
+		r.Outcome = Win
+	}
+	if side, err := game.ParsePlayer(r.Side); err == nil {
+		r.Side = side.Opponent().String()
+	}
+	return r
+}
+
 // Standing is one participant's line on the board.
 type Standing struct {
 	Name   string
@@ -93,6 +115,24 @@ type Standing struct {
 	// same quantity the rating is derived from, so a board sorted by rating
 	// never disagrees with the rate beside it. Label it "score", not "wins".
 	WinRate float64
+}
+
+// Standings is the board as it is meant to be read: the people, ranked against
+// one another, and the bots they played, which are not ranked.
+//
+// The two are separate because a bot's rating is a program constant rather than
+// something it won. Ranking a constant against an earned rating misleads in both
+// directions: a player who has lost every game still sorts above any tier
+// anchored below the seed, and a tier looks as though it gained hundreds of
+// points the first time anybody played it. Neither number means what a ranking
+// column implies it means, so they are not put in one column.
+type Standings struct {
+	// Players are the rated participants, best first. A networked opponent is
+	// one of these: their rating moves with their results like anyone else's.
+	Players []Standing
+	// Bots are the fixed-rating opponents, strongest first. Their Rating is the
+	// tier's anchor and never moves, whatever their record says.
+	Bots []Standing
 }
 
 // document is the on-disk shape of the board.
@@ -275,17 +315,27 @@ func (b *Board) Reset() error {
 	})
 }
 
-// History returns the games a participant played, most recent first. A limit of
-// zero or less returns all of them. The name matches either side of a result, so
-// a hotseat opponent sees the game too.
+// History returns the games a participant played, most recent first, each read
+// from that participant's own side of the board. A limit of zero or less returns
+// all of them. The name matches either side of a result, so a hotseat opponent
+// sees the game too.
+//
+// A game is recorded once, from its Player's point of view, and the other half
+// of it is that same row read backwards — the reading the standings already use
+// to credit both sides. Turning the row round belongs here and not in the
+// caller: a caller that forgets shows a player as their own opponent, with the
+// other side's result and the other side's axis.
 func (b *Board) History(name string, limit int) []Result {
 	key := foldKey(name)
 	b.mu.Lock()
 	b.refresh()
 	out := make([]Result, 0, len(b.results))
 	for _, r := range b.results {
-		if foldKey(r.Player) == key || foldKey(r.Opponent) == key {
+		switch key {
+		case foldKey(r.Player):
 			out = append(out, r)
+		case foldKey(r.Opponent):
+			out = append(out, r.reversed())
 		}
 	}
 	b.mu.Unlock()
@@ -310,12 +360,15 @@ type tally struct {
 	arrived int  // first appearance, for a deterministic tie-break
 }
 
-// Standings ranks every participant that appears in the log, best first.
+// Standings replays the log and returns the board: rated players ranked best
+// first, and the fixed-rating bots they met, listed apart from them.
 //
 // Ratings are replayed in the order the games were played. Both sides of a
 // result are updated when both are rated; a bot keeps its anchor rating and only
-// its human opponent moves.
-func (b *Board) Standings() []Standing {
+// its human opponent moves. Which side of the table a participant lands on is
+// decided by the same fact the rating maths uses, so the split cannot drift away
+// from what the numbers mean.
+func (b *Board) Standings() Standings {
 	b.mu.Lock()
 	b.refresh()
 	results := append([]Result(nil), b.results...)
@@ -378,7 +431,7 @@ func (b *Board) Standings() []Standing {
 		opponent.games++
 	}
 
-	out := make([]Standing, 0, len(order))
+	var out Standings
 	for _, t := range order {
 		s := Standing{
 			Name:   t.name,
@@ -391,19 +444,35 @@ func (b *Board) Standings() []Standing {
 		if t.played > 0 {
 			s.WinRate = (float64(t.won) + 0.5*float64(t.drawn)) / float64(t.played)
 		}
-		out = append(out, s)
+		if t.rated {
+			out.Players = append(out.Players, s)
+		} else {
+			out.Bots = append(out.Bots, s)
+		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Rating != out[j].Rating {
-			return out[i].Rating > out[j].Rating
+	arrived := func(s Standing) int { return byName[foldKey(s.Name)].arrived }
+	sort.SliceStable(out.Players, func(i, j int) bool {
+		x, y := out.Players[i], out.Players[j]
+		if x.Rating != y.Rating {
+			return x.Rating > y.Rating
 		}
-		if out[i].WinRate != out[j].WinRate {
-			return out[i].WinRate > out[j].WinRate
+		if x.WinRate != y.WinRate {
+			return x.WinRate > y.WinRate
 		}
-		if out[i].Played != out[j].Played {
-			return out[i].Played > out[j].Played
+		if x.Played != y.Played {
+			return x.Played > y.Played
 		}
-		return byName[foldKey(out[i].Name)].arrived < byName[foldKey(out[j].Name)].arrived
+		return arrived(x) < arrived(y)
+	})
+	// Bots are ordered by the one thing that distinguishes them: how hard they
+	// play. That is the anchor, so this is a list of tiers, not a ranking of
+	// results.
+	sort.SliceStable(out.Bots, func(i, j int) bool {
+		x, y := out.Bots[i], out.Bots[j]
+		if x.Rating != y.Rating {
+			return x.Rating > y.Rating
+		}
+		return arrived(x) < arrived(y)
 	})
 	return out
 }

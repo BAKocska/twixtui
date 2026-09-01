@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -27,9 +28,10 @@ func newLeaderboardCommand(opts *options) *cobra.Command {
 
 Every finished game is recorded once and ratings are replayed from that log, so
 the log is the only stored fact and changing how ratings are worked out cannot
-leave stale numbers behind. Bots appear alongside people, each tier with its own
-fixed rating, so beating the strongest bot counts for more than beating the
-weakest.`,
+leave stale numbers behind. Only people are ranked. The bots are listed under
+them because each tier plays at a rating fixed by the program, which it can
+neither win nor lose: those fixed ratings are what make beating the pro count
+for more than beating the beginner.`,
 	}
 
 	var limit int
@@ -69,26 +71,55 @@ weakest.`,
 				}
 				return w.Flush()
 			}
-
 			standings := board.Standings()
-			if len(standings) == 0 {
+			players, bots := standings.Players, standings.Bots
+			if len(players) == 0 && len(bots) == 0 {
 				_, err := fmt.Fprintln(out, "no games recorded yet; play one with: twixtui play bot")
 				return err
 			}
-			if limit > 0 && len(standings) > limit {
-				standings = standings[:limit]
+			// A position needs somebody to hold it against, so a board with one
+			// player does not claim they are first. It is the whole board that
+			// decides that, not the part --limit prints: the top of a longer
+			// ranking is still a ranking.
+			ranked := len(players) > 1
+			// The limit is the top of the ranking. The bots below it are one
+			// row per tier played, a fixed reference rather than a list that
+			// grows, so there is nothing there worth cutting off.
+			if limit > 0 && len(players) > limit {
+				players = players[:limit]
 			}
+
+			const columns = "RATING\tPLAYED\tWON\tLOST\tDREW\tSCORE"
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "#\tPLAYER\tRATING\tPLAYED\tWON\tLOST\tDREW\tSCORE")
-			for i, s := range standings {
-				fmt.Fprintf(w, "%d\t%s\t%d\t%d\t%d\t%d\t%d\t%.0f%%\n",
-					i+1, leaderboard.DisplayName(s.Name), s.Rating,
+			head := "PLAYER\t" + columns
+			if ranked {
+				head = "#\t" + head
+			}
+			fmt.Fprintln(w, head)
+			for i, s := range players {
+				pos := ""
+				if ranked {
+					pos = strconv.Itoa(i+1) + "\t"
+				}
+				fmt.Fprintf(w, "%s%s\t%d\t%d\t%d\t%d\t%d\t%.0f%%\n",
+					pos, leaderboard.DisplayName(s.Name), s.Rating,
 					s.Played, s.Won, s.Lost, s.Drawn, s.WinRate*100)
+			}
+			if len(bots) > 0 {
+				// A line with no tab ends the run of columns, so the two tables
+				// are measured apart by the one writer.
+				fmt.Fprint(w, "\nBots are not ranked: a tier's rating is fixed, not earned.\n\n")
+				fmt.Fprintln(w, "BOT\t"+columns)
+				for _, s := range bots {
+					fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t%.0f%%\n",
+						leaderboard.DisplayName(s.Name), s.Rating,
+						s.Played, s.Won, s.Lost, s.Drawn, s.WinRate*100)
+				}
 			}
 			return w.Flush()
 		},
 	}
-	show.Flags().IntVar(&limit, "limit", 0, "show at most this many rows (0 means all)")
+	show.Flags().IntVar(&limit, "limit", 0, "show at most this many players (0 means all)")
 	show.Flags().StringVar(&player, "player", "", "show this player's recent games instead of the standings")
 	registerFlagCompletion(show, "player", opts.profileCompletions)
 

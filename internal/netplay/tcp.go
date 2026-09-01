@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 // DefaultPort is the port a direct game uses when an address gives none.
@@ -33,29 +34,105 @@ func Bind(addr string) (*Listener, error) {
 // Addr is the address actually bound, which is what to show the opponent.
 func (h *Listener) Addr() string { return h.l.Addr().String() }
 
+// maxPendingJoins bounds how many unproven connections a hosting listener works
+// on at once. Since the handshakes run concurrently, the bound is not what keeps
+// a silent socket from monopolising the host; it is what keeps a flood of them
+// from costing the host an unbounded number of goroutines and sockets. A
+// connection is not accepted until a slot is free, so the surplus waits in the
+// kernel's backlog and holds nothing of the host's.
+const maxPendingJoins = 8
+
+// DefaultJoinTimeout bounds one unproven connection's handshake on a hosting
+// listener.
+//
+// It is far shorter than DefaultHandshakeTimeout because there is no human in
+// this exchange: the host writes its invitation the moment the socket opens, and
+// a real opponent's client answers within a round trip. Anything that has not
+// answered by now is a scanner, a mistyped address or a stalled socket.
+const DefaultJoinTimeout = 5 * time.Second
+
 // Wait accepts connections until one completes the game handshake, then stops
 // listening. A scanner, a silent socket or a client speaking another protocol
 // does not consume the address the host already gave its opponent.
+//
+// The handshakes run concurrently and each is bounded by DefaultJoinTimeout,
+// which is what stops a connection that says nothing from keeping the invited
+// opponent out. One at a time, a silent socket owned the listener for a whole
+// handshake timeout, and twenty of them owned it for twenty of those.
 func (h *Listener) Wait(ctx context.Context, opts HostOptions) (Session, error) {
-	if err := opts.config().check(); err != nil {
+	cfg := opts.config()
+	if err := cfg.check(); err != nil {
 		return nil, err
 	}
+	opts.HandshakeTimeout = joinBound(cfg.HandshakeTimeout)
+
+	// Cancelling on the way out is the cleanup: it closes the listener and
+	// abandons every handshake still in progress. It cannot harm the session
+	// being returned, because a finished handshake no longer watches the
+	// context.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	won := make(chan Session, 1)
+	failed := make(chan error, 1)
+	go h.attempts(ctx, opts, won, failed)
+
+	select {
+	case s := <-won:
+		_ = h.l.Close()
+		return s, nil
+	case err := <-failed:
+		return nil, err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// joinBound is how long one unproven connection may take. A caller asking for
+// less gets what it asked for; a caller asking for more, or for the default,
+// gets DefaultJoinTimeout, because a listener is the one place where the
+// connection has not been shown to be the opponent yet.
+func joinBound(want time.Duration) time.Duration {
+	if want > 0 && want < DefaultJoinTimeout {
+		return want
+	}
+	return DefaultJoinTimeout
+}
+
+// attempts accepts connections and hands each its own handshake, reporting the
+// first that succeeds. Exactly one game is on offer here, so a handshake that
+// completes second is told so and closed.
+func (h *Listener) attempts(ctx context.Context, opts HostOptions, won chan<- Session, failed chan<- error) {
+	slots := make(chan struct{}, maxPendingJoins)
 	for {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
 		conn, err := h.accept(ctx)
 		if err != nil {
-			return nil, err
+			select {
+			case failed <- err:
+			default:
+			}
+			return
 		}
-		s, err := HostOver(ctx, conn, opts)
-		if err == nil {
-			_ = h.l.Close()
-			return s, nil
-		}
-		_ = conn.Close()
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		// The joining end gets the handshake's specific refusal. The host
-		// keeps the same invitation open for the real opponent.
+		go func() {
+			defer func() { <-slots }()
+			s, err := HostOver(ctx, conn, opts)
+			if err != nil {
+				// The joining end gets the handshake's specific refusal. The
+				// host keeps the same invitation open for the real opponent.
+				_ = conn.Close()
+				return
+			}
+			select {
+			case won <- s:
+			default:
+				_ = s.Close()
+			}
+		}()
 	}
 }
 

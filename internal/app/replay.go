@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -27,10 +28,72 @@ type ReplayScreen struct {
 	// labels[i] describes the entry that produced positions[i+1].
 	labels []string
 
-	at     int
-	board  ui.BoardView
-	width  int
-	height int
+	at    int
+	board ui.BoardView
+	// hints are the footer's key parts, built once from the keymap because the
+	// keys cannot change while the screen is up.
+	hints         []string
+	width, height int
+}
+
+// replayJump is how many moves the up and down keys travel. It is deliberately
+// not the keymap's JumpStep, which is a distance across a board rather than a
+// distance through a record.
+const replayJump = 5
+
+// replayKey is one thing this screen does together with every key that does
+// it: a board action from the shared keymap, whose label the footer shows, and
+// any key of replay's own for the same thing. Dispatch and the footer are both
+// built from this, so a key answered in silence, or a footer naming a key the
+// screen ignores, cannot happen. Neighbouring rows with the same help share
+// one footer part.
+type replayKey struct {
+	action ui.Action
+	own    []string
+	help   string
+	// seek is where the key moves to, given the position shown and the last
+	// one. A row without it leaves the screen.
+	seek func(at, last int) int
+}
+
+// replayKeys is the whole of what the replay screen answers, in footer order.
+// Stepping through a record is not moving a cursor over holes, so the wording is
+// replay's own, but the keys are the keymap's: the product teaches h, j, k and l
+// on every other board, and a replay is no place to teach something else.
+var replayKeys = []replayKey{
+	{ui.ActMoveRight, []string{"n"}, "next", func(at, _ int) int { return at + 1 }},
+	{ui.ActMoveLeft, []string{"p"}, "back", func(at, _ int) int { return at - 1 }},
+	{ui.ActMoveDown, nil, "five", func(at, _ int) int { return at + replayJump }},
+	{ui.ActMoveUp, nil, "five", func(at, _ int) int { return at - replayJump }},
+	{ui.ActEdgeTop, nil, "ends", func(_, _ int) int { return 0 }},
+	{ui.ActEdgeBottom, nil, "ends", func(_, last int) int { return last }},
+	{ui.ActQuit, []string{"esc"}, "leaves", nil},
+}
+
+// replayHints renders the footer's key parts, taking the labels from the keymap
+// so that a rebinding moves the hint along with the key.
+func replayHints(km ui.Keymap) []string {
+	parts := make([]string, 0, len(replayKeys))
+	labels := make([]string, 0, 4)
+	help := ""
+	flush := func() {
+		if len(labels) > 0 {
+			parts = append(parts, strings.Join(labels, " ")+" "+help)
+			labels = labels[:0]
+		}
+	}
+	for _, r := range replayKeys {
+		if r.help != help {
+			flush()
+			help = r.help
+		}
+		if b, ok := km.ByAction(ui.CtxBoard, r.action); ok && b.Label != "" {
+			labels = append(labels, b.Label)
+		}
+		labels = append(labels, r.own...)
+	}
+	flush()
+	return parts
 }
 
 // NewReplayScreen prepares a stored game for review.
@@ -74,6 +137,7 @@ func NewReplayScreen(d Deps, saved gamestore.Saved) (Screen, error) {
 		labels:    labels,
 		at:        len(positions) - 1,
 		board:     ui.BoardView{Scale: ui.Compact},
+		hints:     replayHints(shellKeymap(d)),
 	}, nil
 }
 
@@ -86,24 +150,34 @@ func (s *ReplayScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width, s.height = m.Width, m.Height
 	case tea.KeyPressMsg:
-		switch m.String() {
-		case "q", "esc":
-			return s, Back()
-		case "right", "l", "space", "enter", "n":
-			s.seek(s.at + 1)
-		case "left", "h", "p":
-			s.seek(s.at - 1)
-		case "down", "j":
-			s.seek(s.at + 5)
-		case "up", "k":
-			s.seek(s.at - 5)
-		case "g", "home":
-			s.seek(0)
-		case "G", "end":
-			s.seek(len(s.positions) - 1)
-		}
+		return s, s.press(m.String())
 	}
 	return s, nil
+}
+
+// press interprets one key through the same table the footer is built from, so
+// that the keys the screen answers and the keys it names are one list.
+func (s *ReplayScreen) press(key string) tea.Cmd {
+	action := ui.ActNone
+	// The control forms of a binding are the shell's: it answers them before
+	// this screen is asked, so the footer does not name them and dispatch does
+	// not claim them.
+	if !strings.HasPrefix(key, "ctrl+") {
+		if b, ok := shellKeymap(s.deps).Lookup(ui.CtxBoard, key); ok {
+			action = b.Action
+		}
+	}
+	for _, r := range replayKeys {
+		if r.action != action && !slices.Contains(r.own, key) {
+			continue
+		}
+		if r.seek == nil {
+			return Back()
+		}
+		s.seek(r.seek(s.at, len(s.positions)-1))
+		return nil
+	}
+	return nil
 }
 
 func (s *ReplayScreen) seek(to int) {
@@ -122,9 +196,16 @@ func (s *ReplayScreen) View() tea.View {
 	s.board.Scale = arr.Scale
 	board := s.board.Render(s.current(), s.deps.Styles, arr.BoardAvailW, arr.BoardAvailH)
 	panel := s.panel(arr.PanelW)
-	status := fmt.Sprintf("move %d of %d   left and right step   up and down five   g and G ends   q leaves",
-		s.at, len(s.positions)-1)
+	status := s.status(arr.Width)
 	return tea.NewView(ui.Compose(arr, board, panel, status, s.deps.Styles))
+}
+
+// status is the bottom row: where in the record the player is, then what the
+// keys do, dropped from the end when the terminal is too narrow for all of it.
+func (s *ReplayScreen) status(width int) string {
+	parts := make([]string, 0, len(s.hints)+1)
+	parts = append(parts, fmt.Sprintf("move %d of %d", s.at, len(s.positions)-1))
+	return hintLine(width, append(parts, s.hints...)...)
 }
 
 // panel describes the game and where in it the player is.
@@ -152,7 +233,7 @@ func (s *ReplayScreen) panel(width int) []string {
 
 	out := make([]string, 0, len(lines))
 	for _, l := range lines {
-		out = append(out, wrapTo(l, width)...)
+		out = append(out, wrapText(l, width)...)
 	}
 	return out
 }
@@ -177,48 +258,4 @@ func describeOutcome(r game.Result) string {
 		return "horizontal won " + reason
 	}
 	return "unknown"
-}
-
-// wrapTo breaks a line to fit a width, keeping whole words where it can. A word
-// longer than the width is cut, because leaving it to overflow would break the
-// frame's size invariant.
-func wrapTo(s string, width int) []string {
-	if width <= 0 {
-		return nil
-	}
-	if s == "" {
-		return []string{""}
-	}
-	var out []string
-	for _, paragraph := range strings.Split(s, "\n") {
-		words := strings.Fields(paragraph)
-		if len(words) == 0 {
-			out = append(out, "")
-			continue
-		}
-		line := ""
-		for _, w := range words {
-			for len(w) > width {
-				if line != "" {
-					out = append(out, line)
-					line = ""
-				}
-				out = append(out, w[:width])
-				w = w[width:]
-			}
-			switch {
-			case line == "":
-				line = w
-			case len(line)+1+len(w) <= width:
-				line += " " + w
-			default:
-				out = append(out, line)
-				line = w
-			}
-		}
-		if line != "" {
-			out = append(out, line)
-		}
-	}
-	return out
 }

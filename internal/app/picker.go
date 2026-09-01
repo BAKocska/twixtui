@@ -10,6 +10,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/BAKocska/twixtui/internal/humantime"
 	"github.com/BAKocska/twixtui/internal/profile"
 	"github.com/BAKocska/twixtui/internal/ui"
 )
@@ -26,8 +27,11 @@ type Picker struct {
 
 	edit lineEdit
 	nav  navKeys
-	// hints are the status-line parts, built once because the keys they name
-	// cannot change while the screen is up.
+	// quitHint names the key the shell answers before this screen sees it.
+	quitHint string
+	// hints are the status-line parts. They are rebuilt only when Cancelled
+	// changes what escape does, because the keys they name cannot change while
+	// the screen is up.
 	hints []string
 
 	rows []pickerRow
@@ -40,7 +44,9 @@ type Picker struct {
 
 	width, height int
 
-	chosen    func(name string) tea.Cmd
+	chosen func(name string) tea.Cmd
+	// cancelled is what escape does, and nil at the root: the picker is the
+	// first screen there, with nothing behind it to go back to.
 	cancelled func() tea.Cmd
 }
 
@@ -68,22 +74,28 @@ func NewPicker(d Deps, prompt string) *Picker {
 	}
 	km := shellKeymap(d)
 	p := &Picker{
-		deps:   d,
-		prompt: prompt,
-		nav:    newNavKeys(km),
-	}
-	p.hints = []string{
-		keyLabel(p.nav.up...) + "/" + keyLabel(p.nav.down...) + " move",
-		keyLabel(p.nav.confirm...) + " choose",
-		"esc back",
-		keyLabel(globalQuitKeys(km)...) + " quit",
-		"tab fill in",
-		keyPrev + "/" + keyNext + " move",
+		deps:     d,
+		prompt:   prompt,
+		nav:      newNavKeys(km),
+		quitHint: keyLabel(globalQuitKeys(km)...) + " quit",
 	}
 	p.chosen = func(name string) tea.Cmd { return Replace(NewMenu(p.deps, name)) }
-	p.cancelled = Back
+	p.buildHints()
 	p.refresh()
 	return p
+}
+
+// buildHints assembles the status line. The arrows and the emacs pair move the
+// same cursor, so they are one hint rather than two that both say "move", and
+// escape is named only where it has a screen to go back to.
+func (p *Picker) buildHints() {
+	moves := keyLabel(p.nav.up...) + "/" + keyLabel(p.nav.down...) +
+		" or " + keyPrev + "/" + keyNext + " move"
+	p.hints = []string{moves, keyLabel(p.nav.confirm...) + " choose"}
+	if p.cancelled != nil {
+		p.hints = append(p.hints, "esc back")
+	}
+	p.hints = append(p.hints, p.quitHint, "tab fill in")
 }
 
 // Chosen replaces what happens once a name has been picked. It is how the
@@ -96,11 +108,15 @@ func (p *Picker) Chosen(f func(name string) tea.Cmd) *Picker {
 	return p
 }
 
-// Cancelled replaces what happens when the player backs out. The default
-// leaves the picker, which at launch means leaving the program.
+// Cancelled sets what escape does. The picker has no answer of its own: at
+// launch it is the first screen, and a program that ends on one stray escape
+// is worse than one that ignores the key. Setting this is therefore what puts
+// "esc back" on the status line as well, so the offer and the key arrive
+// together.
 func (p *Picker) Cancelled(f func() tea.Cmd) *Picker {
 	if f != nil {
 		p.cancelled = f
+		p.buildHints()
 	}
 	return p
 }
@@ -132,6 +148,9 @@ func (p *Picker) key(m tea.KeyPressMsg) tea.Cmd {
 	}
 	switch {
 	case p.nav.isCancel(key):
+		if p.cancelled == nil {
+			return nil
+		}
 		return p.cancelled()
 	case p.nav.isConfirm(key):
 		return p.commit()
@@ -294,7 +313,7 @@ func appendWrapped(lines []string, st *ui.Styles, style *lipgloss.Style, text st
 	if width < 1 {
 		return lines
 	}
-	for _, l := range strings.Split(ansi.Wrap(text, width, ""), "\n") {
+	for _, l := range wrapText(text, width) {
 		lines = append(lines, paint(st, style, l))
 	}
 	return lines
@@ -315,8 +334,9 @@ func (p *Picker) renderRow(st *ui.Styles, i, width int) string {
 	name := highlightRunes(st, r.name, r.positions)
 	// The time column is the other half of R14: recognising your own name in a
 	// list is easier when you can see which one you played last. It is dropped
-	// on a narrow terminal, where the name matters more.
-	const timeColumn = 16
+	// on a narrow terminal, where the name matters more. Eighteen columns is
+	// the widest date humantime falls back to, "27 September 2026".
+	const timeColumn = 18
 	nameW := width - 2 - timeColumn
 	if nameW < profile.MaxNameRunes {
 		return marker + name
@@ -379,26 +399,19 @@ func nameProblem(err error) string {
 }
 
 // playedAgo says how long ago a profile was used, coarsely: the point is
-// recognising your own row, not measuring anything.
+// recognising your own row, not measuring anything. The wording comes from
+// humantime, so a profile reads the same here as it does under
+// "twixtui profile list", and anything older than a month is given as its date
+// rather than as a count of days nobody can place.
 func playedAgo(now, then time.Time) string {
 	if then.IsZero() {
 		return "never played"
 	}
-	d := now.Sub(then)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return plural(int(d/time.Minute), "minute") + " ago"
-	case d < 24*time.Hour:
-		return plural(int(d/time.Hour), "hour") + " ago"
-	case d < 365*24*time.Hour:
-		return plural(int(d/(24*time.Hour)), "day") + " ago"
-	default:
-		return plural(int(d/(365*24*time.Hour)), "year") + " ago"
-	}
+	return humantime.Ago(now, then)
 }
 
+// plural pairs a count with its unit. It is the saved-game listing's helper for
+// "3 moves"; the ages in this file get their wording from humantime instead.
 func plural(n int, unit string) string {
 	if n == 1 {
 		return "1 " + unit

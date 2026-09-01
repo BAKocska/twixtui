@@ -228,6 +228,14 @@ var tutorialActionHelp = map[ui.Action]string{
 const (
 	tutorialPanelTarget = 8
 	tutorialMinBoardH   = 4
+
+	// tutorialMeasure caps how wide prose is set, whatever the terminal. The eye
+	// finds the start of the next line from where the last one ended, and past
+	// roughly ninety columns that distance is long enough to lose it, so a very
+	// wide terminal gets a measured column of text rather than one line for a
+	// whole paragraph. The board is a grid rather than prose and keeps the full
+	// width.
+	tutorialMeasure = 90
 )
 
 // tutorialSep separates the hints on the status line, as it does in ui.
@@ -756,7 +764,7 @@ func (m *tutorialModel) arrange() ui.Arrangement {
 }
 
 // tutorialArrange lays a lesson out: the board at the top, the prose panel
-// below it and the full width of the terminal.
+// below it, and the panel set to a measure rather than to the terminal.
 //
 // ui.Arrange decides the too-small case, the drawing scale and the board's
 // natural size. What the tutorial changes is where the panel goes and how the
@@ -764,7 +772,9 @@ func (m *tutorialModel) arrange() ui.Arrangement {
 // panel is right for a game screen showing a turn line and wrong for a screen
 // whose content is several sentences: the same paragraph needs three times as
 // many lines at 36 columns as it does across a wide pane, so at every terminal
-// size a full-width panel below the board holds more of it.
+// size a panel below the board holds more of it. Its width stops at
+// tutorialMeasure, since beyond that a wider pane costs the reader more in
+// finding the next line than it saves in lines.
 func tutorialArrange(width, height, n int) ui.Arrangement {
 	arr := ui.Arrange(width, height, n)
 	if arr.TooSmall {
@@ -777,7 +787,7 @@ func tutorialArrange(width, height, n int) ui.Arrangement {
 	}
 	arr.Panel = ui.PanelBottom
 	arr.BoardH = boardH
-	arr.PanelW = width
+	arr.PanelW = min(width, tutorialMeasure)
 	arr.PanelH = avail - boardH
 	arr.BoardAvailW = width
 	arr.BoardAvailH = boardH
@@ -797,7 +807,7 @@ func tutorialTextArrange(width, height, n int) ui.Arrangement {
 	arr.Panel = ui.PanelBottom
 	arr.BoardW, arr.BoardH = 0, 0
 	arr.BoardAvailW, arr.BoardAvailH = 0, 0
-	arr.PanelW, arr.PanelH = width, height-1
+	arr.PanelW, arr.PanelH = min(width, tutorialMeasure), height-1
 	return arr
 }
 
@@ -932,7 +942,7 @@ func (m *tutorialModel) chooserLines(arr ui.Arrangement) []string {
 	}
 	out := make([]string, 0, h)
 	if h >= 4 {
-		out = append(out, m.render(m.styles.PanelTitle, "the tutorial — choose a lesson"))
+		out = append(out, m.render(m.styles.PanelTitle, "the TwixT tutorial — choose a lesson"))
 	}
 	avail := max(1, h-len(out))
 
@@ -1133,7 +1143,7 @@ func tutorialWrap(text string, width int) []string {
 	if width < 1 || strings.TrimSpace(text) == "" {
 		return nil
 	}
-	return strings.Split(ansi.Wrap(text, width, ""), "\n")
+	return wrapText(text, width)
 }
 
 // tutorialWindow returns the h lines of text starting at top.

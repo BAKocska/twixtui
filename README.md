@@ -248,9 +248,25 @@ paste it into their own copy. Games live in your config directory, and you can h
 several running at once.
 
 ```
+# start a game and print an invitation to send
 twixtui play correspondence --new
-twixtui play correspondence --join CODE
+
+# accept an invitation
+twixtui play correspondence --join TWXI-...
+
+# open the game it is your turn in
+twixtui play correspondence
+
+# or name one, when several are waiting
+twixtui play correspondence --game a88srf81
 ```
+
+Inside the game, committing a move prints the code to send on a line of its own, and
+`c` opens a field to paste your opponent's code into. A code carries the game it
+belongs to and the position it was made in, so one pasted into the wrong game, pasted
+twice, or mangled on the way is refused — and tells you which of those happened —
+rather than corrupting the game. Codes can be re-sent: the same one applied twice is
+refused the second time, so a lost message costs nothing.
 
 The host chooses the ruleset, the board size and its own side — `--ruleset`, `--size`,
 `--side`, and `--port` for a port other than the default — and the joining copy takes

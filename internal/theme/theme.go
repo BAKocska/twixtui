@@ -233,7 +233,10 @@ func Select(dir, name string) (Theme, error) {
 	if err != nil {
 		return Theme{}, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// The configuration directory holds profiles, saved games and the result
+	// log, so it is created private. Every other writer under it uses 0700 and
+	// whichever of them runs first decides, so they have to agree.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Theme{}, fmt.Errorf("creating %s: %w", dir, err)
 	}
 	body, err := json.MarshalIndent(settings{Theme: t.Name}, "", "  ")

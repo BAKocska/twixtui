@@ -2,11 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/BAKocska/twixtui/internal/game"
+	"github.com/BAKocska/twixtui/internal/leaderboard"
+	"github.com/BAKocska/twixtui/internal/profile"
 )
 
 // run executes the command line with an isolated configuration directory and
@@ -333,6 +342,149 @@ func TestLeaderboardResetNeedsConfirmation(t *testing.T) {
 	}
 }
 
+// lbSeed records finished games the named player lost, so the standings have
+// something to show.
+func lbSeed(t *testing.T, dir string, player string, opponents ...string) {
+	t.Helper()
+	board, err := leaderboard.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, opponent := range opponents {
+		if err := board.Record(leaderboard.Result{
+			Played:   time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Hour),
+			Player:   player,
+			Opponent: opponent, Outcome: leaderboard.Loss, Side: "vertical", Moves: 4,
+			Ruleset: game.Std.Canonical(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// lbLine returns the printed line naming want.
+func lbLine(t *testing.T, out, want string) (int, string) {
+	t.Helper()
+	for i, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, want) {
+			return i, l
+		}
+	}
+	t.Fatalf("no line for %q in:\n%s", want, out)
+	return 0, ""
+}
+
+// TestLeaderboardShowDoesNotRankBotsWithPeople is F4 on the command line. A
+// tier's rating is a constant, so ranking it beside earned ratings printed a
+// player who had lost every game above the bots that beat them, and made a tier
+// look as though it had gained four hundred points in one game.
+func TestLeaderboardShowDoesNotRankBotsWithPeople(t *testing.T) {
+	dir := t.TempDir()
+	beginner := leaderboard.BotName("beginner")
+	intermediate := leaderboard.BotName("intermediate")
+	lbSeed(t, dir, "Balint", beginner, intermediate)
+
+	out, err := run(t, dir, "leaderboard", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	playerAt, playerLine := lbLine(t, out, "Balint")
+	for _, stored := range []string{beginner, intermediate} {
+		botAt, _ := lbLine(t, out, leaderboard.DisplayName(stored))
+		if botAt < playerAt {
+			t.Errorf("%s is ranked above the player it beat:\n%s", stored, out)
+		}
+		if strings.Contains(out, stored) {
+			t.Errorf("the stored spelling %q is printed:\n%s", stored, out)
+		}
+	}
+	if fields := strings.Fields(playerLine); fields[0] != "Balint" {
+		t.Errorf("the only player is given the position %q:\n%s", fields[0], out)
+	}
+	if !strings.Contains(out, "not ranked") {
+		t.Errorf("nothing says the bots are outside the ranking:\n%s", out)
+	}
+	if got := strings.Fields(strings.Split(out, "\n")[0])[0]; got != "PLAYER" {
+		t.Errorf("the heading of a one-player board starts with %q, want no position column:\n%s", got, out)
+	}
+}
+
+// TestLeaderboardShowRanksPeopleAgainstEachOther: the position column is
+// withheld only while there is nobody to hold a position against.
+func TestLeaderboardShowRanksPeopleAgainstEachOther(t *testing.T) {
+	dir := t.TempDir()
+	lbSeed(t, dir, "Balint", "Reka")
+
+	out, err := run(t, dir, "leaderboard", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, winner := lbLine(t, out, "Reka")
+	_, loser := lbLine(t, out, "Balint")
+	if got := strings.Fields(winner)[0]; got != "1" {
+		t.Errorf("the winner is at position %q, want 1:\n%s", got, out)
+	}
+	if got := strings.Fields(loser)[0]; got != "2" {
+		t.Errorf("the loser is at position %q, want 2:\n%s", got, out)
+	}
+}
+
+// TestLeaderboardHistoryIsPrintedFromTheAskedPlayersSide: every game is recorded
+// once, by one of its two players, so a listing that prints the stored row as it
+// stands showed the other player as their own opponent and gave them the
+// recorder's result. Balint, who lost, was told he had won against himself.
+func TestLeaderboardHistoryIsPrintedFromTheAskedPlayersSide(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(t, dir, "profile", "create", "Balint"); err != nil {
+		t.Fatal(err)
+	}
+	lbSeed(t, dir, "Balint", leaderboard.BotName("beginner"))
+	board, err := leaderboard.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Recorded by Reka, from her side: her win, from the vertical seat.
+	if err := board.Record(leaderboard.Result{
+		Played: time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC),
+		Player: "Reka", Opponent: "Balint", Outcome: leaderboard.Win,
+		Side: "vertical", Moves: 40, Ruleset: game.Std.Canonical(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, dir, "leaderboard", "show", "--player", "Balint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A row reads: date time opponent... side result moves. The opponent is the
+	// only field that can be more than one word, so the rest are counted from
+	// the end.
+	rows := 0
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 6 || f[0] == "WHEN" {
+			continue
+		}
+		rows++
+		opponent := strings.Join(f[2:len(f)-3], " ")
+		side, outcome := f[len(f)-3], f[len(f)-2]
+		if opponent == "Balint" {
+			t.Errorf("Balint's history lists him as his own opponent:\n%s", out)
+		}
+		if opponent == "Reka" {
+			if outcome != string(leaderboard.Loss) {
+				t.Errorf("the game Reka recorded as her win reads as a %q for Balint:\n%s", outcome, out)
+			}
+			if side != "horizontal" {
+				t.Errorf("Balint played %q in a game Reka recorded from the vertical seat:\n%s", side, out)
+			}
+		}
+	}
+	if rows != 2 {
+		t.Fatalf("%d games listed, want the two Balint played:\n%s", rows, out)
+	}
+}
+
 // TestGameCommandsOnAnEmptyStore checks the listings explain themselves rather
 // than printing nothing.
 func TestGameCommandsOnAnEmptyStore(t *testing.T) {
@@ -409,5 +561,238 @@ func TestUnknownRulesetAndTierAreRefused(t *testing.T) {
 	}
 	if _, err := run(t, dir, "play", "bot", "--side", "vertical", "--size", "3"); err == nil {
 		t.Error("an impossible board size should be refused")
+	}
+}
+
+// TestUnknownSubcommandIsRefused covers the requirement that a group of
+// subcommands refuses one it does not have. Printing the group's help and
+// reporting success makes a typo indistinguishable from a command that worked,
+// which no script can recover from.
+func TestUnknownSubcommandIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		args []string
+		near string
+	}{
+		{[]string{"play", "boot"}, "bot"},
+		{[]string{"game", "shwo"}, "show"},
+		{[]string{"profile", "lst"}, "list"},
+		{[]string{"paly"}, "play"},
+	} {
+		out, err := run(t, dir, tc.args...)
+		if err == nil {
+			t.Errorf("%v was accepted; it printed %q", tc.args, out)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.near) {
+			t.Errorf("%v was refused without offering %q: %v", tc.args, tc.near, err)
+		}
+	}
+
+	// A group asked for nothing in particular still explains itself, which is
+	// what someone exploring the command line is doing.
+	for _, group := range []string{"play", "game", "profile", "rules", "theme"} {
+		out, err := run(t, dir, group)
+		if err != nil {
+			t.Errorf("%q on its own failed: %v", group, err)
+		}
+		if !strings.Contains(out, "Commands:") {
+			t.Errorf("%q on its own did not list its subcommands: %q", group, out)
+		}
+	}
+}
+
+// TestGameShowPrintsTheWholeBoard covers what a listing is for: the game is
+// being read, not played, so every row is printed rather than a viewport's worth
+// with a scroll marker standing in for the rest.
+func TestGameShowPrintsTheWholeBoard(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(t, dir, "profile", "create", "Balint"); err != nil {
+		t.Fatal(err)
+	}
+	id := importedGame(t, dir, game.Std, "M13; K14; N15; P14")
+
+	out, err := run(t, dir, "game", "show", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	labels := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 3 {
+			continue
+		}
+		labels[strings.TrimSpace(line[:3])] = true
+	}
+	for row := 1; row <= game.Std.Size; row++ {
+		if !labels[strconv.Itoa(row)] {
+			t.Errorf("row %d of the %d-row board is missing:\n%s", row, game.Std.Size, out)
+		}
+	}
+	for _, marker := range []string{"↑", "↓", "←", "→"} {
+		if strings.Contains(out, marker) {
+			t.Errorf("the listing carries the scroll marker %q, so part of the board is not printed:\n%s", marker, out)
+		}
+	}
+}
+
+// importedGame stores a game played through the given transcript and returns the
+// identifier it was saved under.
+func importedGame(t *testing.T, dir string, rs game.Ruleset, transcript string) string {
+	t.Helper()
+	g, err := game.ReplayTranscript(rs, transcript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "game.record")
+	if err := os.WriteFile(path, []byte(record.Encode()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, dir, "game", "import", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "imported as <id>: 4 moves, still being played"
+	fields := strings.Fields(out)
+	if len(fields) < 3 {
+		t.Fatalf("the import said %q, which does not name the game", out)
+	}
+	return strings.TrimSuffix(fields[2], ":")
+}
+
+// TestRulesShowKeepsMarkdownForAPipe covers the half of the rules output that is
+// not being read by a person: whatever is on the other end of the pipe asked for
+// the document, so it arrives as it stands.
+func TestRulesShowKeepsMarkdownForAPipe(t *testing.T) {
+	out, err := run(t, t.TempDir(), "rules", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != docsRules {
+		t.Error("the document was altered on its way into a pipe")
+	}
+}
+
+// TestRenderMarkdownLaysDocumentsOutForATerminal covers the other half: a reader
+// at a terminal is given prose, with the structure carried by case, indentation
+// and rules so that it survives a terminal with no colour.
+func TestRenderMarkdownLaysDocumentsOutForATerminal(t *testing.T) {
+	const doc = `# The board
+
+The board is a square grid of holes, 24×24 by default, and this paragraph is
+deliberately long enough that it has to be folded onto several lines at every
+measure worth testing, including a wide one.
+
+## Links
+
+Under the default ` + "`std`" + ` ruleset this includes **your own** links, which is the
+*whole* point of the section.
+
+- first item, long enough to need a second line of its own at a narrow measure
+  and carrying on across a line break in the source
+- second item
+
+| Prefix | Meaning |
+|---|---|
+| ` + "`~`" + ` | decline an offered link |
+
+` + "```" + `
+D4
+` + "```" + `
+`
+	for _, width := range []int{40, 80, 200} {
+		out := renderMarkdown(doc, width)
+		for _, markup := range []string{"#", "*", "`", "|"} {
+			if strings.Contains(out, markup) {
+				t.Errorf("at %d columns the markup %q reached the terminal:\n%s", width, markup, out)
+			}
+		}
+		for _, words := range []string{"THE BOARD", "LINKS", "your own", "whole", "std", "decline an offered link", "D4"} {
+			if !strings.Contains(out, words) {
+				t.Errorf("at %d columns %q was lost in the rendering:\n%s", width, words, out)
+			}
+		}
+		measure := min(width, proseMeasure)
+		for _, line := range strings.Split(out, "\n") {
+			if got := ansi.StringWidth(line); got > measure {
+				t.Errorf("at %d columns a line is %d cells wide, past the %d-column measure: %q",
+					width, got, measure, line)
+			}
+		}
+		if !strings.Contains(out, "\n---") && !strings.Contains(out, "\n===") {
+			t.Errorf("at %d columns no heading is ruled off, so the structure is invisible:\n%s", width, out)
+		}
+	}
+
+	// The measure is capped rather than following the terminal, because a
+	// 200-column line is hard to read back to the start of.
+	widest := 0
+	for _, line := range strings.Split(renderMarkdown(doc, 200), "\n") {
+		widest = max(widest, ansi.StringWidth(line))
+	}
+	if widest > proseMeasure {
+		t.Errorf("a 200-column terminal was given lines %d cells wide", widest)
+	}
+	if widest < 60 {
+		t.Errorf("a 200-column terminal was given lines only %d cells wide", widest)
+	}
+}
+
+// TestRenderedDocumentsKeepTheMeasure holds the layout invariant on the real
+// documents, at the widths a terminal is actually likely to be: a line wider
+// than the measure is folded a second time by the terminal, which undoes the
+// wrapping.
+func TestRenderedDocumentsKeepTheMeasure(t *testing.T) {
+	for _, doc := range []struct {
+		name string
+		text string
+	}{
+		{"rules", docsRules},
+		{"provenance", docsProvenance},
+	} {
+		for _, width := range []int{40, 60, 80, 100, 200} {
+			measure := min(width, proseMeasure)
+			for i, line := range strings.Split(renderMarkdown(doc.text, width), "\n") {
+				if got := ansi.StringWidth(line); got > measure {
+					t.Errorf("%s at %d columns: line %d is %d cells wide, past the %d-column measure: %q",
+						doc.name, width, i+1, got, measure, line)
+				}
+			}
+		}
+	}
+}
+
+// TestVersionOnAnUnstampedBuild covers the build nobody released: the three
+// placeholder fields are not facts and printing them as though they were reads
+// as a bug.
+func TestVersionOnAnUnstampedBuild(t *testing.T) {
+	SetBuildInfo(unstampedVersion, "none", "unknown")
+	out, err := run(t, t.TempDir(), "version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, placeholder := range []string{"dev", "(none)", "unknown"} {
+		if strings.Contains(out, placeholder) {
+			t.Errorf("the version reports the placeholder %q: %q", placeholder, out)
+		}
+	}
+	if !strings.Contains(out, "built from source") {
+		t.Errorf("the version does not say where the build came from: %q", out)
+	}
+}
+
+// TestLastPlayedIsSingularForOneMinute keeps the command line on the shared
+// relative-time formatter: the same fact was rendered "1 minutes ago" here and
+// "1 minute ago" in the interface.
+func TestLastPlayedIsSingularForOneMinute(t *testing.T) {
+	p := profile.Profile{Name: "Balint", LastUsed: time.Now().Add(-95 * time.Second)}
+	if got, want := lastPlayedColumn(p), "1 minute ago"; got != want {
+		t.Errorf("the last-played column says %q, want %q", got, want)
+	}
+	if got, want := lastPlayed(p), "last played 1 minute ago"; got != want {
+		t.Errorf("the completion description says %q, want %q", got, want)
 	}
 }

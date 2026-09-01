@@ -8,16 +8,22 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/BAKocska/twixtui/internal/theme"
 )
 
+// unstampedVersion is the version a build carries when nothing stamped one into
+// it, which is every build that is not a release.
+const unstampedVersion = "dev"
+
 // Build information, set through -ldflags at release time.
 var (
-	version = "dev"
+	version = unstampedVersion
 	commit  = "none"
 	date    = "unknown"
 )
@@ -105,15 +111,15 @@ func NewRootCommand() *cobra.Command {
 		Long: `Play TwixT in the terminal.
 
 TwixT is Alex Randolph's 1962 connection game. Two players take turns pegging a
-24x24 board; pegs a knight's move apart link up automatically, links may never
-cross, and the winner is the first to join their two border rows with an unbroken
-chain.
+24x24 board; each peg you place offers links to your own pegs a knight's move
+away, and you choose which of them to make. Links may never cross, and the
+winner is the first to join their two border rows with an unbroken chain.
 
 Run twixtui with no arguments for the interactive interface, or use the
 subcommands below to go straight to a game.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          rejectUnknownSubcommand,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runInteractive(cmd, opts)
 		},
@@ -145,6 +151,7 @@ subcommands below to go straight to a game.`,
 		newVersionCommand(),
 	)
 
+	guardSubcommands(root)
 	root.SetHelpTemplate(helpTemplate)
 	root.SetUsageTemplate(usageTemplate)
 	return root
@@ -166,6 +173,69 @@ func registerFlagCompletion(cmd *cobra.Command, flag string, fn func(*cobra.Comm
 	if err := cmd.RegisterFlagCompletionFunc(flag, fn); err != nil {
 		panic(fmt.Sprintf("registering completion for --%s: %v", flag, err))
 	}
+}
+
+// guardSubcommands makes every command that is only a group of subcommands
+// refuse one it does not have. Cobra answers an unrecognised subcommand of a
+// group by printing the group's help and stopping successfully, so a typo looks
+// like a command that worked and a script cannot tell the difference. A group
+// needs a run of its own for cobra to check its arguments at all; printing help
+// is what it does when asked for nothing in particular.
+func guardSubcommands(cmd *cobra.Command) {
+	for _, sub := range cmd.Commands() {
+		guardSubcommands(sub)
+	}
+	if !cmd.HasSubCommands() {
+		return
+	}
+	if cmd.SuggestionsMinimumDistance <= 0 {
+		cmd.SuggestionsMinimumDistance = 2
+	}
+	if cmd.Args == nil {
+		cmd.Args = rejectUnknownSubcommand
+	}
+	if cmd.Runnable() {
+		return
+	}
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+	// Cobra builds the usage line out of Use, and for a group the line worth
+	// printing is the subcommand form: running the group by itself only prints
+	// its help.
+	if !strings.Contains(cmd.Use, " ") {
+		cmd.Use += " <command>"
+	}
+	cmd.DisableFlagsInUseLine = true
+}
+
+// rejectUnknownSubcommand refuses an argument that is not one of the command's
+// subcommands, naming the near miss cobra already knows how to find.
+func rejectUnknownSubcommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unknown command %q for %q%s",
+		args[0], cmd.CommandPath(), didYouMean(cmd, args[0]))
+}
+
+// didYouMean offers the commands close enough to what was typed to be what was
+// meant, as a clause to hang off the end of the refusal.
+func didYouMean(cmd *cobra.Command, typed string) string {
+	if cmd.DisableSuggestions {
+		return ""
+	}
+	suggestions := cmd.SuggestionsFor(typed)
+	if len(suggestions) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(suggestions))
+	for i, s := range suggestions {
+		quoted[i] = fmt.Sprintf("%q", s)
+	}
+	last := len(quoted) - 1
+	if last == 0 {
+		return "; did you mean " + quoted[0] + "?"
+	}
+	return "; did you mean " + strings.Join(quoted[:last], ", ") + " or " + quoted[last] + "?"
 }
 
 func themeCompletions(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
@@ -223,10 +293,72 @@ func newVersionCommand() *cobra.Command {
 		Short: "Print the version, commit and build date",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "twixtui %s (%s) built %s\n", version, commit, date)
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), describeBuild())
 			return err
 		},
 	}
+}
+
+// describeBuild says which build this is. A release is stamped through -ldflags
+// and reports its version, commit and date. Anything else was built from a
+// checkout, where those three fields are placeholders rather than facts, so say
+// so — and name the commit the toolchain recorded, which is the one thing about
+// a source build worth knowing.
+func describeBuild() string {
+	if version != unstampedVersion {
+		return fmt.Sprintf("twixtui %s (%s) built %s", version, commit, date)
+	}
+	revision, when, modified := checkoutBuilt()
+	if revision == "" {
+		return "twixtui, built from source (not a release build)"
+	}
+	built := "twixtui, built from source at commit " + revision
+	if when != "" {
+		built += " of " + when
+	}
+	if modified {
+		built += ", with local changes"
+	}
+	return built
+}
+
+// checkoutBuilt reports what the toolchain recorded about the checkout a source
+// build came from. Everything is empty for a binary built outside a repository.
+func checkoutBuilt() (revision, when string, modified bool) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", "", false
+	}
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = shortCommit(setting.Value)
+		case "vcs.time":
+			when = buildDate(setting.Value)
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	return revision, when, modified
+}
+
+// shortCommit abbreviates a commit hash to the length git itself prints.
+func shortCommit(revision string) string {
+	const short = 7
+	if len(revision) > short {
+		return revision[:short]
+	}
+	return revision
+}
+
+// buildDate renders a recorded timestamp as a date, or leaves it alone if it is
+// not the timestamp it is supposed to be.
+func buildDate(value string) string {
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return value
+	}
+	return t.Format("2 January 2006")
 }
 
 func newCompletionCommand() *cobra.Command {
@@ -296,7 +428,21 @@ Given a topic, print only the sections whose headings mention it, for example
 			if len(args) == 1 {
 				topic = args[0]
 			}
-			return writeSections(cmd.OutOrStdout(), text, topic)
+			text, err := sections(text, topic)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if !isTerminal(out) {
+				// Redirected into a file, a pager or another program: the
+				// document as it stands is what the reader on the other end
+				// asked for.
+				_, err := io.WriteString(out, text)
+				return err
+			}
+			width, _ := terminalSize()
+			_, err = io.WriteString(out, renderMarkdown(text, width))
+			return err
 		},
 	}
 	show.Flags().BoolVar(&provenance, "provenance", false,
@@ -307,12 +453,11 @@ Given a topic, print only the sections whose headings mention it, for example
 	return rules
 }
 
-// writeSections prints a markdown document, or only the sections whose heading
+// sections returns a markdown document, or only the sections whose heading
 // contains topic.
-func writeSections(w io.Writer, text, topic string) error {
+func sections(text, topic string) (string, error) {
 	if topic == "" {
-		_, err := io.WriteString(w, text)
-		return err
+		return text, nil
 	}
 	needle := strings.ToLower(topic)
 	var out strings.Builder
@@ -335,10 +480,9 @@ func writeSections(w io.Writer, text, topic string) error {
 		}
 	}
 	if out.Len() == 0 {
-		return fmt.Errorf("no section of the rules mentions %q; try one of: board, links, crossing, winning, draw, swap, notation", topic)
+		return "", fmt.Errorf("no section of the rules mentions %q; try one of: board, links, crossing, winning, draw, swap, notation", topic)
 	}
-	_, err := io.WriteString(w, out.String())
-	return err
+	return out.String(), nil
 }
 
 func markdownHeading(line string) (level int, heading string, ok bool) {

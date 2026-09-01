@@ -18,6 +18,7 @@ import (
 	"github.com/BAKocska/twixtui/internal/bot"
 	"github.com/BAKocska/twixtui/internal/game"
 	"github.com/BAKocska/twixtui/internal/gamestore"
+	"github.com/BAKocska/twixtui/internal/leaderboard"
 	"github.com/BAKocska/twixtui/internal/netplay"
 	"github.com/BAKocska/twixtui/internal/ui"
 )
@@ -177,8 +178,11 @@ in the terms the search actually measured.`,
 				Kind:  gamestore.VersusBot,
 				Rules: rs,
 				Seats: map[game.Player]app.Seat{
-					side:            {Profile: player, Label: player},
-					side.Opponent(): {Bot: opponent, Label: "bot: " + tier.String()},
+					side: {Profile: player, Label: player},
+					// The label goes through the same pair of functions the
+					// recorded name does, so what a player reads here cannot
+					// drift from what appears on the leaderboard.
+					side.Opponent(): {Bot: opponent, Label: leaderboard.DisplayName(leaderboard.BotName(tier.String()))},
 				},
 				Hints:   f.hints,
 				HintFor: opponent,
@@ -406,6 +410,7 @@ func portOf(addr string) string {
 
 func newPlayCorrespondenceCommand(opts *options) *cobra.Command {
 	var f gameFlags
+	var gameID string
 	cmd := &cobra.Command{
 		Use:     "correspondence",
 		Aliases: []string{"mail"},
@@ -420,7 +425,8 @@ rather than corrupting the game.
 
   twixtui play correspondence --new            start a game and print an invitation
   twixtui play correspondence --join CODE      accept an invitation
-  twixtui play correspondence                  open a game that is waiting for you`,
+  twixtui play correspondence                  open a game that is waiting for you
+  twixtui play correspondence --game ID        open that game, when several are open`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deps, player, err := opts.deps()
@@ -438,13 +444,15 @@ rather than corrupting the game.
 			case f.join != "":
 				return joinCorrespondence(cmd, deps, player, f.join)
 			}
-			return openCorrespondence(cmd, deps)
+			return openCorrespondence(cmd, deps, gameID)
 		},
 	}
 	f.addRuleFlags(cmd)
 	f.addSideFlag(cmd)
 	cmd.Flags().BoolVar(&f.newGame, "new", false, "start a game and print an invitation to send")
 	cmd.Flags().StringVar(&f.join, "join", "", "accept an invitation code")
+	cmd.Flags().StringVar(&gameID, "game", "", "open this saved game, when more than one is waiting")
+	registerFlagCompletion(cmd, "game", opts.gameIDCompletions)
 	return cmd
 }
 

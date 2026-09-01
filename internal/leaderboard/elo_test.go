@@ -160,7 +160,7 @@ func TestRatingsStayFiniteOverHundredsOfResults(t *testing.T) {
 	// path's durability is covered by the repeated-open cycles test.
 	b := recordBatch(t, rows...)
 
-	standings := b.Standings()
+	standings := allStandings(b.Standings())
 	if len(standings) != 4 {
 		t.Fatalf("Standings has %d rows, want 4", len(standings))
 	}
@@ -226,6 +226,43 @@ func TestBotAnchorsAreOrdered(t *testing.T) {
 	}
 	if _, fixed := anchorRating(RemoteName("kata")); fixed {
 		t.Fatal("anchorRating treated a remote opponent as a fixed anchor")
+	}
+}
+
+// TestDisplayNameIsTheOneSpelling pins what each kind of participant is called
+// on screen. The exact words matter less than there being one set of them, but
+// a test that asks DisplayName what DisplayName returns cannot fail, so they are
+// written out here and the surfaces are checked against this function.
+func TestDisplayNameIsTheOneSpelling(t *testing.T) {
+	for stored, want := range map[string]string{
+		BotName("beginner"):     "beginner bot",
+		BotName("intermediate"): "intermediate bot",
+		BotName("pro"):          "pro bot",
+		BotName("grandmaster"):  "grandmaster bot",
+		RemoteName("kata"):      "kata (remote)",
+		"Balint":                "Balint",
+		// A prefix with no name after it has nothing to show but itself.
+		BotPrefix:    BotPrefix,
+		RemotePrefix: RemotePrefix,
+	} {
+		if got := DisplayName(stored); got != want {
+			t.Errorf("DisplayName(%q) = %q, want %q", stored, got, want)
+		}
+	}
+}
+
+// TestBareNameStaysTheEncodingAccessor: the stored name is parsed back into a
+// tier and re-recorded, so stripping the prefix has to keep giving the bare
+// string however the on-screen spelling changes.
+func TestBareNameStaysTheEncodingAccessor(t *testing.T) {
+	for stored, want := range map[string]string{
+		BotName("pro"):     "pro",
+		RemoteName("kata"): "kata",
+		"Balint":           "Balint",
+	} {
+		if got := BareName(stored); got != want {
+			t.Errorf("BareName(%q) = %q, want %q", stored, got, want)
+		}
 	}
 }
 

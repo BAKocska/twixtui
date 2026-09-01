@@ -42,14 +42,21 @@ func openBoard(t *testing.T, dir string) *Board {
 	return b
 }
 
+// allStandings flattens the board back into one list, for the assertions that
+// are about a participant's numbers rather than about where they are shown.
+func allStandings(s Standings) []Standing {
+	return append(append(make([]Standing, 0, len(s.Players)+len(s.Bots)), s.Players...), s.Bots...)
+}
+
 func standing(t *testing.T, b *Board, name string) Standing {
 	t.Helper()
-	for _, s := range b.Standings() {
+	rows := allStandings(b.Standings())
+	for _, s := range rows {
 		if foldKey(s.Name) == foldKey(name) {
 			return s
 		}
 	}
-	t.Fatalf("no standing for %q in %+v", name, b.Standings())
+	t.Fatalf("no standing for %q in %+v", name, rows)
 	return Standing{}
 }
 
@@ -197,6 +204,72 @@ func TestHistoryFindsThePlayerOnEitherSide(t *testing.T) {
 	}
 }
 
+// TestHistoryReadsEveryRowFromTheAskedPlayersSide: a game is recorded once, by
+// one of its two players. Reading a row as it was stored, whoever asked for it,
+// listed a player as their own opponent and gave them the other side's result
+// and axis — so a player who had been beaten was shown a win.
+func TestHistoryReadsEveryRowFromTheAskedPlayersSide(t *testing.T) {
+	b := openBoard(t, t.TempDir())
+	// One game each, so every assertion below covers both a row its player
+	// recorded and a row their opponent did. Both are recorded as played from
+	// the vertical seat by whoever wrote them, so the flipped axis is visible.
+	byBalint := result("Balint", "Reka", Loss, day(1))
+	byReka := result("Reka", "Balint", Win, day(2))
+	for _, r := range []Result{byBalint, byReka} {
+		if err := b.Record(r); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+
+	// Balint lost both: the one he recorded as his loss, and the one Reka
+	// recorded as her win. Reka won both. Most recent first, so Reka's row
+	// comes first for each of them.
+	want := map[string][]Result{
+		"Balint": {
+			{Player: "Balint", Opponent: "Reka", Outcome: Loss, Side: game.Horizontal.String()},
+			{Player: "Balint", Opponent: "Reka", Outcome: Loss, Side: game.Vertical.String()},
+		},
+		"Reka": {
+			{Player: "Reka", Opponent: "Balint", Outcome: Win, Side: game.Vertical.String()},
+			{Player: "Reka", Opponent: "Balint", Outcome: Win, Side: game.Horizontal.String()},
+		},
+	}
+	for who, rows := range want {
+		got := b.History(who, 0)
+		if len(got) != len(rows) {
+			t.Fatalf("%s has %d rows, want %d: %+v", who, len(got), len(rows), got)
+		}
+		for i, w := range rows {
+			g := got[i]
+			if g.Player != w.Player || g.Opponent != w.Opponent || g.Outcome != w.Outcome || g.Side != w.Side {
+				t.Errorf("%s's game %d reads as %s playing %s against %s (%s), want %s playing %s against %s (%s)",
+					who, i+1, g.Player, g.Side, g.Opponent, g.Outcome,
+					w.Player, w.Side, w.Opponent, w.Outcome)
+			}
+			if g.Moves != 42 {
+				t.Errorf("%s's game %d has %d moves: the move count belongs to the game, not to a side", who, i+1, g.Moves)
+			}
+		}
+	}
+}
+
+// TestReversedLeavesAnUnscoreableOutcomeAlone: a row this build cannot score
+// still has two sides, so the names and the axis turn round, but an outcome
+// there is no opposite for is shown as it was recorded.
+func TestReversedLeavesAnUnscoreableOutcomeAlone(t *testing.T) {
+	r := Result{Player: "Balint", Opponent: "Reka", Outcome: Outcome("abandoned"), Side: game.Vertical.String()}
+	got := r.reversed()
+	if got.Player != "Reka" || got.Opponent != "Balint" {
+		t.Errorf("the sides did not swap: %+v", got)
+	}
+	if got.Side != game.Horizontal.String() {
+		t.Errorf("the axis is %q, want the other one", got.Side)
+	}
+	if got.Outcome != r.Outcome {
+		t.Errorf("an outcome with no opposite became %q", got.Outcome)
+	}
+}
+
 func TestStandingsCreditBothSidesOfOneRow(t *testing.T) {
 	b := openBoard(t, t.TempDir())
 	rows := []Result{
@@ -248,9 +321,9 @@ func TestStandingsRankBestFirst(t *testing.T) {
 			t.Fatalf("Record: %v", err)
 		}
 	}
-	got := b.Standings()
+	got := b.Standings().Players
 	if len(got) != 2 {
-		t.Fatalf("Standings has %d rows, want 2", len(got))
+		t.Fatalf("Standings has %d players, want 2", len(got))
 	}
 	if got[0].Name != "Winner" || got[1].Name != "Loser" {
 		t.Fatalf("Standings order = %q, %q; want the higher rating first", got[0].Name, got[1].Name)
@@ -299,11 +372,16 @@ func TestRemoteOpponentIsRated(t *testing.T) {
 	if remote.Rating <= StartRating {
 		t.Fatalf("remote opponent rating = %d after a win, want it above the seed", remote.Rating)
 	}
-	if DisplayName(remote.Name) != "kata" {
-		t.Fatalf("DisplayName(%q) = %q, want kata", remote.Name, DisplayName(remote.Name))
+	if BareName(remote.Name) != "kata" {
+		t.Fatalf("BareName(%q) = %q, want kata", remote.Name, BareName(remote.Name))
 	}
 	if IsBot(remote.Name) {
 		t.Fatalf("IsBot(%q) = true, want false", remote.Name)
+	}
+	// A remote opponent earns their rating like anybody else, so they belong
+	// among the ranked players and not among the fixed anchors.
+	if bots := b.Standings().Bots; len(bots) != 0 {
+		t.Fatalf("a remote opponent was listed as a fixed anchor: %+v", bots)
 	}
 }
 
@@ -316,7 +394,7 @@ func TestReset(t *testing.T) {
 	if err := b.Reset(); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if got := b.Standings(); len(got) != 0 {
+	if got := b.Standings(); len(got.Players) != 0 || len(got.Bots) != 0 {
 		t.Fatalf("Standings after Reset = %+v, want nothing", got)
 	}
 	if got := openBoard(t, dir).History("Balint", 0); len(got) != 0 {
@@ -445,8 +523,8 @@ func TestReadsSeeAnotherBoardsWrites(t *testing.T) {
 	reader := openBoard(t, dir)
 	writer := openBoard(t, dir)
 
-	if got := len(reader.Standings()); got != 0 {
-		t.Fatalf("fresh board has %d standings, want 0", got)
+	if got := allStandings(reader.Standings()); len(got) != 0 {
+		t.Fatalf("fresh board has %d standings, want 0", len(got))
 	}
 	if err := writer.Record(result("Balint", BotName("pro"), Win, day(1))); err != nil {
 		t.Fatalf("Record: %v", err)

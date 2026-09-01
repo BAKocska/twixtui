@@ -132,6 +132,12 @@ func (h hintPanel) highlights() []game.Point {
 // The whole of the position-specific text is Headline and Detail as the engine
 // wrote them, wrapped on spaces. gameScreen has no other route to the panel for
 // hint text, so a claim the search did not make cannot appear here.
+//
+// The legend is the one line this panel writes itself, and it deliberately says
+// nothing about the position: the recommended move and the holes the explanation
+// refers to are marked with the same glyph, so without it a player cannot tell
+// which mark is the move, or what the others are for. It names the move only by
+// the coordinate the engine returned.
 func (h hintPanel) lines(width int) []string {
 	if !h.active() {
 		return nil
@@ -147,8 +153,25 @@ func (h hintPanel) lines(width int) []string {
 		if strings.TrimSpace(h.hint.Detail) != "" {
 			out = append(out, gsWrap(h.hint.Detail, width)...)
 		}
+		out = append(out, gsWrap(h.legend(), width)...)
 	}
 	return out
+}
+
+// legend explains what the marks on the board mean. It is fixed text plus the
+// move's coordinate, so it cannot assert anything the search did not find.
+func (h hintPanel) legend() string {
+	move := h.hint.Move.String()
+	extra := 0
+	for _, p := range h.hint.Highlight {
+		if p != h.hint.Move {
+			extra++
+		}
+	}
+	if extra == 0 {
+		return "marked on the board: " + move
+	}
+	return "marked on the board: " + move + " is the move, the rest is what the counts above measure"
 }
 
 // statusText is the one-line form for a terminal too narrow for a panel.

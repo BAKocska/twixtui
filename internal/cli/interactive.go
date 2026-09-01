@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 
 	"github.com/charmbracelet/x/term"
@@ -45,4 +46,12 @@ func terminalSize() (width, height int) {
 		return fallbackWidth, fallbackHeight
 	}
 	return w, h
+}
+
+// isTerminal reports whether output written to w reaches a terminal. A listing
+// that a person is reading is laid out for the screen it is on; the same listing
+// on its way into a file or another program is left as it is.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(f.Fd())
 }

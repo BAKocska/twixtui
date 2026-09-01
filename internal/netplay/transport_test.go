@@ -140,6 +140,7 @@ func TestFullGameThroughRelay(t *testing.T) {
 		t.Fatalf("listening: %v", err)
 	}
 	relay := NewRelay()
+	relay.Logf = t.Logf
 	relay.Wait = 5 * time.Second
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
@@ -198,25 +199,40 @@ func waitUntil(t *testing.T, fn func() bool, failure string) {
 	t.Fatal(failure)
 }
 
+// TestPairingCodesAreShortAndForgiving covers the shape of a code and the typo
+// forgiveness applying to the whole of it. The key part matters as much as the
+// room part here: the two ends derive the frame key from it independently, so a
+// code typed in lower case with the dashes left out has to produce the same key,
+// byte for byte, as the one the host printed.
 func TestPairingCodesAreShortAndForgiving(t *testing.T) {
 	code := PairingCode()
-	if len(code) != pairingCodeLen {
-		t.Fatalf("PairingCode returned %q (%d characters)", code, len(code))
+	room, key, err := splitPairingCode(code)
+	if err != nil {
+		t.Fatalf("splitting a fresh code %q: %v", code, err)
+	}
+	if len(room) != pairingRoomLen {
+		t.Fatalf("the room part of %q is %q (%d characters)", code, room, len(room))
+	}
+	if !strings.HasPrefix(code, room) {
+		t.Fatalf("the room part %q is not the beginning of %q", room, code)
 	}
 	if strings.ContainsAny(code, "ILOU") {
 		t.Fatalf("PairingCode returned an ambiguous character: %q", code)
 	}
 	for _, variant := range []string{
 		strings.ToLower(code),
-		code[:3] + "-" + code[3:],
+		strings.ReplaceAll(code, "-", ""),
 		strings.ReplaceAll(strings.ReplaceAll(code, "0", "O"), "1", "I"),
 	} {
-		got, err := normalisePairingCode(variant)
+		gotRoom, gotKey, err := splitPairingCode(variant)
 		if err != nil {
-			t.Fatalf("normalising %q: %v", variant, err)
+			t.Fatalf("splitting %q: %v", variant, err)
 		}
-		if got != code {
-			t.Fatalf("normalising %q gave %q, want %q", variant, got, code)
+		if gotRoom != room {
+			t.Fatalf("splitting %q gave room %q, want %q", variant, gotRoom, room)
+		}
+		if string(gotKey) != string(key) {
+			t.Fatalf("splitting %q gave a different frame key", variant)
 		}
 	}
 }
@@ -230,6 +246,7 @@ func TestRelayIsADumbBytePump(t *testing.T) {
 		t.Fatalf("listening: %v", err)
 	}
 	relay := NewRelay()
+	relay.Logf = t.Logf
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go relay.Serve(ctx, l)
@@ -298,6 +315,7 @@ func TestRelayRejectsHostilePrelude(t *testing.T) {
 		t.Fatalf("listening: %v", err)
 	}
 	relay := NewRelay()
+	relay.Logf = t.Logf
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go relay.Serve(ctx, l)
@@ -331,6 +349,7 @@ func TestRelayBoundsAdmittedConnections(t *testing.T) {
 		t.Fatalf("listening: %v", err)
 	}
 	relay := NewRelay()
+	relay.Logf = t.Logf
 	relay.MaxConnections = 1
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -368,6 +387,7 @@ func TestRelayClosesAnIdlePair(t *testing.T) {
 		t.Fatalf("listening: %v", err)
 	}
 	relay := NewRelay()
+	relay.Logf = t.Logf
 	relay.IdleTimeout = 100 * time.Millisecond
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

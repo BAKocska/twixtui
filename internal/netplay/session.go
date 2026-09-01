@@ -205,6 +205,11 @@ type config struct {
 	rules  game.Ruleset
 	side   game.Player
 	resume *Snapshot
+	// key authenticates every frame. It is set only for a relayed game, from
+	// the part of the pairing code the relay is never told, and only through
+	// hostOverKeyed and joinOverKeyed: there is no option a caller could set it
+	// with, because there is nowhere else a shared secret comes from.
+	key []byte
 	Tuning
 }
 
@@ -297,6 +302,21 @@ func JoinOver(ctx context.Context, rw io.ReadWriter, opts GuestOptions) (Session
 	return handshake(ctx, rw, opts.config())
 }
 
+// hostOverKeyed is HostOver with a key both ends derived from the pairing code
+// of a relayed game, so that neither end has to trust the relay carrying it.
+func hostOverKeyed(ctx context.Context, rw io.ReadWriter, opts HostOptions, key []byte) (Session, error) {
+	cfg := opts.config()
+	cfg.key = key
+	return handshake(ctx, rw, cfg)
+}
+
+// joinOverKeyed is JoinOver with the same key.
+func joinOverKeyed(ctx context.Context, rw io.ReadWriter, opts GuestOptions, key []byte) (Session, error) {
+	cfg := opts.config()
+	cfg.key = key
+	return handshake(ctx, rw, cfg)
+}
+
 func handshake(ctx context.Context, rw io.ReadWriter, cfg config) (Session, error) {
 	if err := cfg.check(); err != nil {
 		return nil, err
@@ -319,6 +339,13 @@ func handshake(ctx context.Context, rw io.ReadWriter, cfg config) (Session, erro
 		deadAfter: cfg.DeadAfter,
 		done:      make(chan struct{}),
 		exited:    make(chan struct{}),
+	}
+	if cfg.key != nil {
+		if cfg.role == Host {
+			s.f.authenticate(cfg.key, dirHost, dirGuest)
+		} else {
+			s.f.authenticate(cfg.key, dirGuest, dirHost)
+		}
 	}
 	if cfg.role == Host {
 		s.rules, s.side = cfg.rules, cfg.side
@@ -425,6 +452,13 @@ func (s *session) openAsHost(cfg config) ([]Event, error) {
 func (s *session) openAsGuest(cfg config) ([]Event, error) {
 	m, err := s.f.read()
 	if err != nil {
+		if errors.Is(err, ErrUnauthenticated) {
+			// One end has the whole pairing code and the other does not. Say so
+			// rather than hanging up in silence: the host is waiting for an
+			// opponent and cannot otherwise tell somebody who is not holding the
+			// key from a connection that merely dropped.
+			s.refuse(err.Error())
+		}
 		return nil, fmt.Errorf("waiting for the host: %w", err)
 	}
 	if m.Type != msgHello {
@@ -494,8 +528,13 @@ func versionError(peer int) error {
 
 // refuse tells the peer why the game is off. The write error is dropped: this
 // end is giving up anyway, and the peer will see the connection go.
+//
+// The reason is bounded here, at the point it is produced, and not only where
+// one is received. Some of these reasons quote what the peer sent, so an
+// unbounded one would reflect a hostile megabyte straight back and would not fit
+// in a frame at all.
 func (s *session) refuse(text string) {
-	_ = s.f.writeTimeout(message{Type: msgReject, Text: text}, time.Second)
+	_ = s.f.writeTimeout(message{Type: msgReject, Text: safeText(text, maxWireTextLen)}, time.Second)
 }
 
 // reconcile settles any difference between the two transcripts. Both ends know
@@ -718,11 +757,11 @@ func transcriptDigest(moves []Entry) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// shortHash cuts a digest down to the part worth showing the player. The cut is
+// rune-safe because the digests it is given may have arrived from the other end,
+// where anything at all could have been in the field.
 func shortHash(s string) string {
-	if len(s) > 12 {
-		return s[:12]
-	}
-	return s
+	return truncateRunes(s, 12)
 }
 
 // why records what ended a session, so the read loop can tell the player the

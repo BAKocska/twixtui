@@ -588,6 +588,48 @@ func TestProseIsWrappedNotClippedAtFortyColumns(t *testing.T) {
 	}
 }
 
+// TestProseIsSetToAMeasureAtAWideTerminal is F15: at 200 columns the panel was
+// set at the full width of the terminal, so a paragraph arrived as two very long
+// lines and the eye lost the line coming back. The property is that prose is set
+// to a measure whatever the terminal, with none of it lost to the narrower
+// column and without taking the width away from the board.
+func TestProseIsSetToAMeasureAtAWideTerminal(t *testing.T) {
+	const width, height = 200, 60
+	d := tutorialTestDeps(t)
+	// The blocking lesson opens with the longest paragraph in the tutorial.
+	m := newTutorialTestModel(t, d, "blocking", width, height)
+	arr := m.arrange()
+	if arr.PanelW > tutorialMeasure {
+		t.Errorf("the prose is set at %d columns, past the %d column measure", arr.PanelW, tutorialMeasure)
+	}
+	if arr.BoardAvailW != width {
+		t.Errorf("the board is given %d of %d columns; the measure is for prose only", arr.BoardAvailW, width)
+	}
+
+	lines := m.panel(arr).lines
+	for i, l := range lines {
+		if got := ansi.StringWidth(l); got > tutorialMeasure {
+			t.Errorf("panel line %d is %d cells wide: %q", i+1, got, l)
+		}
+	}
+	// Nothing is lost to the narrower column: the whole step is still there.
+	got := strings.Join(strings.Fields(strings.Join(lines, " ")), " ")
+	want := strings.Join(strings.Fields(m.lesson.Steps[0].Text), " ")
+	if !strings.Contains(got, want) {
+		t.Errorf("the step's text does not survive the measure.\nwant: %s\ngot:  %s", want, got)
+	}
+
+	// The chooser and the key page are text at the same measure.
+	chooser := newTutorialTestModel(t, d, "", width, height)
+	if got := chooser.arrange().PanelW; got > tutorialMeasure {
+		t.Errorf("the lesson chooser is set at %d columns", got)
+	}
+	tutorialPress(t, chooser, "?")
+	if got := chooser.arrange().PanelW; got > tutorialMeasure {
+		t.Errorf("the key page is set at %d columns", got)
+	}
+}
+
 // TestTutorialKeysDoNotShadowTheKeymap keeps the tutorial's own keys out of the
 // shared keymap's way. A key that meant two things at once would make one of
 // them unreachable.
