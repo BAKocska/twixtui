@@ -69,4 +69,47 @@ Nothing has been released yet; this section records what is in the repository.
   the full test suite. Releases are cut from a `v*` tag. The landing page in `web/` is
   published by its own workflow.
 
+### Security
+
+- Every frame of a relayed game is authenticated. A pairing code now carries a room
+  name, which is all the relay is told, and key material both ends derive a frame key
+  from; each message is covered by a truncated HMAC over its direction, its position in
+  the conversation and the decoded message itself. A relay operator can therefore no
+  longer forge, inject, replay, reflect or drop a move without being caught — a review
+  had demonstrated a relay replacing a move with a resignation the victim's engine
+  accepted. An operator can still read everything a relay carries, which the
+  documentation now says plainly. Direct connections are unchanged.
+- Text arriving from an opponent, or out of a pasted code, is stripped of the control
+  bytes a terminal acts on. An opponent's name or a rejected move could previously
+  retitle or repaint the player's window.
+- A relay no longer holds a room or a connection slot after the socket that claimed it
+  is gone, so joins from closed sockets can no longer exhaust it, and it reports what it
+  is refusing instead of failing silently. Message text fields are bounded, a decoded
+  invite's game identifier is validated where it is read rather than only by its caller,
+  a silent connection can no longer occupy a direct host indefinitely, and a bad entry
+  part way through a transcript block leaves the game untouched rather than half
+  advanced.
+
+### Fixed
+
+- Correspondence play works. It was documented and reachable but broken at every step:
+  the identifier a new game minted was refused by the store, the game screen rejected a
+  remote seat with no live connection, and nothing could produce or apply a move code.
+- Quitting with ctrl+c saved the game in progress. The shell answered the key itself and
+  never let the screen finish, so leaving with `q` saved and leaving with ctrl+c did not.
+- A profile chosen in the interface is remembered. It was not, so after picking a name
+  and playing a game, the next subcommand still reported that nobody was playing.
+- The default colour scheme is legible. Its darker player was near-black, invisible on a
+  dark terminal, and its panel text near-white, invisible on a light one, so there was no
+  terminal it was fully legible on.
+- The information panel no longer cuts text mid-word, and drops the reminder of which
+  edges a side joins before it shortens an opponent's name.
+- The leaderboard ranks people rather than mixing them with the bot tiers' fixed
+  ratings, which had put a player who lost their only game above the bot that beat them.
+  A player's own history no longer inverts the games their opponent recorded.
+- The rules print as text rather than as raw markdown, a saved game prints its whole
+  board instead of clipping it, an unknown subcommand fails with a suggestion instead of
+  succeeding silently, and the tutorial's prose is set to a readable measure on a wide
+  terminal.
+
 [Unreleased]: https://github.com/BAKocska/twixtui/commits/main
