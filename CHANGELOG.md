@@ -150,9 +150,10 @@ First release.
   intermediate tiers are capped by depth and answer instantly; only the pro tier spends
   a clock budget. Measured over 60 games on a 10×10 board, colour balanced with swap
   off, intermediate beat beginner 58–2. How much stronger pro is depends on the board
-  size, so no single figure stands for it: with the per-move time budgets removed, so
-  that each tier reaches its own depth ceiling, pro scores 0.250 against intermediate
-  on 8×8, 0.458 on 9×9 and 0.938 at the shipped 24×24. On request the bot explains the
+  size, and on a small board it may not be stronger at all: on twelve openings played
+  from both sides it scores 0.542 on 12×12 and 0.958 on 16×16 at the shipped budgets,
+  and given an equal thirty-second guard 0.458 on 10×10, 0.417 on 12×12 and 0.583 on
+  both 14×14 and 16×16, every one with a 95% floor below 0.5. On request the bot explains the
   move it would play and marks the holes its reasoning is about.
 - Terminal board renderer with two drawing scales, a viewport that scrolls to follow
   the cursor and survives a resize, and a layout engine that fits the board and the

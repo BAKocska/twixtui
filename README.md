@@ -190,7 +190,7 @@ twixtui play bot --tier pro --side random
 | --- | --- |
 | `beginner` | One move ahead on peg count alone, answered at once: takes a win and blocks one, but has no plan. |
 | `intermediate` | Three moves ahead with the full evaluation, still near-instant: punishes a loose chain. |
-| `pro` | Thinks for up to three seconds, five to seven moves ahead, extending forced lines: the strongest play on offer. |
+| `pro` | Thinks for up to three seconds, extending forced lines, with a transposition table: the strongest play on offer. Its nominal depth limit is sixteen, but sixteen is theoretical — a 16×16 position given an hour reached depth seven. |
 
 One alpha-beta search backs all three. They differ in how deep they may go, how many
 candidate moves they will look at, and how much of the evaluation they are allowed to
@@ -204,14 +204,23 @@ The gaps are measured rather than assumed, by a tournament the test suite runs:
 every opening played twice, once from each side, with the swap option off. Over 60
 games on a 10×10 board, `intermediate` beat `beginner` 58–2.
 
-How much stronger `pro` is depends on the board, so there is no single figure for
-it. Deeper search is not reliably better on a small board, and the measurement
-that runs on every build asks only that `pro` not do materially worse than
-`intermediate` there — a floor of 0.45 of the points available. The size
-dependence is measured separately, with the per-move time budgets removed so that
-each tier reaches its own depth ceiling: `pro` scores 0.250 against `intermediate`
-on 8×8, 0.458 on 9×9, and 0.938 on the 24×24 board the game ships with. Those
-figures are recorded with the measurement, in `internal/bot/strength_test.go`.
+How much stronger `pro` is depends on the board, and on a small one it may not be
+stronger at all. The measurement that runs on every build asks only that `pro` not
+do materially worse than `intermediate` on 10×10 — a floor of 0.45 of the points
+available — because that is all that holds there.
+
+The size dependence is measured separately, on the same protocol: twelve unique
+openings, each played from both sides, twenty-four games a size. At the shipped
+budgets `pro` scored 0.542 on 12×12 and 0.958 on 16×16 — level on the smaller
+board, far ahead on the larger. Given both tiers an equal thirty-second guard so
+the deeper search has room, it scored 0.458 on 10×10, 0.417 on 12×12, 0.583 on
+14×14 and 0.583 on 16×16, and every one of those has a 95% confidence floor below
+0.5. So across that range the extra depth does not establish a reliable advantage.
+
+Read plainly: pick `pro` for the 24×24 board the game ships with, where the gap is
+wide. On a small board it is a different opponent rather than a better one, and
+`intermediate` answers instantly. The figures, the protocol and the number of games
+behind each are recorded with the measurement in `internal/bot/strength_test.go`.
 
 | Flag | Effect |
 | --- | --- |
