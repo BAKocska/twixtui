@@ -65,14 +65,101 @@ type canvas struct {
 	w, h  int
 	runes []rune
 	ids   []styleID
+	// Shallow links accumulate as edge connectivity per cell and become glyphs
+	// only once every link has contributed, so a cell shared by several links
+	// resolves to the junction that joins all of them rather than to whichever
+	// link happened to be drawn last.
+	bits   []linkBits
+	bitIDs []styleID
 }
 
 func newCanvas(w, h int) *canvas {
-	cv := &canvas{w: w, h: h, runes: make([]rune, w*h), ids: make([]styleID, w*h)}
+	cv := &canvas{
+		w: w, h: h,
+		runes:  make([]rune, w*h),
+		ids:    make([]styleID, w*h),
+		bits:   make([]linkBits, w*h),
+		bitIDs: make([]styleID, w*h),
+	}
 	for i := range cv.runes {
 		cv.runes[i] = ' '
 	}
 	return cv
+}
+
+// linkBits records which of a cell's four edges a link line reaches.
+type linkBits uint8
+
+const (
+	linkN linkBits = 1 << iota
+	linkE
+	linkS
+	linkW
+)
+
+// junction gives the box-drawing glyph joining exactly the edges in a set. A
+// cell with one edge is a stub, which happens where a line runs off the clipped
+// edge of the canvas.
+var junction = [16]rune{
+	linkN:                         '╵',
+	linkE:                         '╶',
+	linkS:                         '╷',
+	linkW:                         '╴',
+	linkN | linkS:                 '│',
+	linkE | linkW:                 '─',
+	linkN | linkE:                 '╰',
+	linkN | linkW:                 '╯',
+	linkS | linkE:                 '╭',
+	linkS | linkW:                 '╮',
+	linkN | linkE | linkS:         '├',
+	linkN | linkW | linkS:         '┤',
+	linkE | linkS | linkW:         '┬',
+	linkN | linkE | linkW:         '┴',
+	linkN | linkE | linkS | linkW: '┼',
+}
+
+// isLinkGlyph reports whether a rune is part of a drawn link.
+func isLinkGlyph(r rune) bool {
+	if r == glyphRise || r == glyphFall || r == glyphCross {
+		return true
+	}
+	for _, j := range junction {
+		if j != 0 && r == j {
+			return true
+		}
+	}
+	return false
+}
+
+// connect adds edges to a cell's link connectivity.
+func (cv *canvas) connect(x, y int, b linkBits, id styleID) {
+	if !cv.in(x, y) {
+		return
+	}
+	i := y*cv.w + x
+	if cv.bits[i] == 0 {
+		cv.bitIDs[i] = id
+	}
+	cv.bits[i] |= b
+}
+
+// resolveLinks turns accumulated connectivity into glyphs. A peg keeps its cell:
+// it is the fact the board is about, and a link that passes it is legible from
+// the cells either side. A cell already holding a diagonal becomes a crossing.
+func (cv *canvas) resolveLinks() {
+	for i, b := range cv.bits {
+		if b == 0 {
+			continue
+		}
+		x, y := i%cv.w, i/cv.w
+		switch cv.runes[i] {
+		case glyphPegVertical, glyphPegHorizontal:
+		case glyphRise, glyphFall, glyphCross:
+			cv.set(x, y, glyphCross, cv.bitIDs[i])
+		default:
+			cv.set(x, y, junction[b], cv.bitIDs[i])
+		}
+	}
 }
 
 func (cv *canvas) in(x, y int) bool { return x >= 0 && x < cv.w && y >= 0 && y < cv.h }
@@ -85,92 +172,148 @@ func (cv *canvas) set(x, y int, r rune, id styleID) {
 	cv.ids[y*cv.w+x] = id
 }
 
-// isShallowStroke reports whether r belongs to the shallow-link glyph family.
-func isShallowStroke(r rune) bool {
-	switch r {
-	case glyphScanHigh, glyphScanUpper, glyphScanMid, glyphScanLower, glyphScanLow, glyphPair:
+// hasPeg reports whether a peg occupies a cell.
+func (cv *canvas) hasPeg(x, y int) bool {
+	if !cv.in(x, y) {
+		return false
+	}
+	switch cv.runes[y*cv.w+x] {
+	case glyphPegVertical, glyphPegHorizontal:
 		return true
 	}
 	return false
 }
 
-// mergeLink writes a link glyph, combining with whatever link stroke already
-// occupies the cell. Two shallow strokes in one cell come from a peg with a
-// rising and a falling link on the same side and render as a double stroke;
-// any other combination is a geometric crossing.
-func (cv *canvas) mergeLink(x, y int, r rune, id styleID) {
+// mergeDiagonal writes a steep link's diagonal, marking a cell already holding
+// a different stroke as a crossing.
+func (cv *canvas) mergeDiagonal(x, y int, r rune, id styleID) {
 	if !cv.in(x, y) {
 		return
 	}
-	old := cv.runes[y*cv.w+x]
-	switch {
-	case old == ' ' || old == r:
-		// Same stroke from the other endpoint's walk keeps its glyph.
-	case isShallowStroke(old) && isShallowStroke(r):
-		r = glyphPair
+	switch old := cv.runes[y*cv.w+x]; old {
+	case glyphPegVertical, glyphPegHorizontal:
+		return
+	case ' ', glyphHole, r:
 	default:
 		r = glyphCross
 	}
 	cv.set(x, y, r, id)
 }
 
-// scanGlyph picks the shallow-link stroke height for a line passing frac cells
-// below the centre of its row (negative frac is above centre).
-func scanGlyph(frac float64) rune {
-	switch {
-	case frac <= -0.375:
-		return glyphScanHigh
-	case frac <= -0.125:
-		return glyphScanUpper
-	case frac < 0.125:
-		return glyphScanMid
-	case frac < 0.375:
-		return glyphScanLower
-	default:
-		return glyphScanLow
-	}
-}
-
-// drawLink rasterises one link. Steep links are exact diagonals under both
-// scales; shallow links run at slope 1/4 and are drawn column by column,
-// skipping hole cells, with the stroke height following the exact line.
+// drawLink rasterises one link.
+//
+// A steep link (column ±1, row ±2) is an exact diagonal in screen cells under
+// both scales, so a run of one glyph draws it.
+//
+// A shallow link (column ±2, row ±1) is four screen columns per row and has no
+// diagonal glyph. It is drawn as a connected polyline: horizontal runs along
+// the rows of holes it passes between, joined by single-column steps where it
+// crosses from one row to the next. Each cell records the edges the line
+// reaches rather than a finished glyph, so the corners and the junctions where
+// several links share a cell come out of one table instead of a special case
+// per collision.
+//
+// A step is placed at the column where the line truly crosses the row
+// boundary, except that it is never placed in a column of holes: there the two
+// candidate cells both belong to holes and a corner in each would cost two hole
+// dots instead of one. The step moves to the neighbouring column on whichever
+// side leaves the horizontal run passing an empty hole rather than a peg, so a
+// peg beside the crossing cannot break the line.
 func (sc Scale) drawLink(cv *canvas, l game.Link, id styleID) {
 	from, to := l.Ends()
 	x1, y1 := sc.holeX(from.Col), sc.holeY(from.Row)
 	x2, y2 := sc.holeX(to.Col), sc.holeY(to.Row)
 	dx, dy := x2-x1, y2-y1
-	adx := dx
-	if adx < 0 {
-		adx = -adx
-	}
-	ady := dy
-	if ady < 0 {
-		ady = -ady
-	}
+	adx, ady := abs(dx), abs(dy)
+	sx, sy := sign(dx), sign(dy)
+
 	if adx == ady {
 		g := glyphRise
 		if (dx > 0) == (dy > 0) {
 			g = glyphFall
 		}
-		sx, sy := sign(dx), sign(dy)
 		for i := 1; i < adx; i++ {
-			cv.mergeLink(x1+sx*i, y1+sy*i, g, id)
+			cv.mergeDiagonal(x1+sx*i, y1+sy*i, g, id)
 		}
 		return
 	}
-	slope := float64(dy) / float64(dx)
-	step := sign(dx)
-	for i := 1; i < adx; i++ {
-		x := x1 + step*i
-		yf := float64(y1) + slope*float64(x-x1)
-		y := int(roundHalfAway(yf))
-		// Never draw into a hole cell: on the compact scale the line passes
-		// exactly between two vertically neighbouring holes.
-		if (x-1)%sc.colStep == 0 && y%sc.rowStep == 0 {
+
+	// Edges named for the direction of travel, not the screen.
+	back, fwd := linkW, linkE
+	if sx < 0 {
+		back, fwd = linkE, linkW
+	}
+	near, far := linkS, linkN
+	if sy < 0 {
+		near, far = linkN, linkS
+	}
+
+	r := y1
+	off := 1
+	for k := range ady {
+		t := sc.stepColumn(cv, x1, r, sx, sy, k, adx, ady)
+		for ; off < t; off++ {
+			cv.connect(x1+sx*off, r, back|fwd, id)
+		}
+		cv.connect(x1+sx*t, r, back|near, id)
+		cv.connect(x1+sx*t, r+sy, far|fwd, id)
+		r += sy
+		off = t + 1
+	}
+	for ; off < adx; off++ {
+		cv.connect(x1+sx*off, r, back|fwd, id)
+	}
+}
+
+// stepColumn returns the column offset, measured from the link's first end, at
+// which the line crosses from row r to the next one.
+func (sc Scale) stepColumn(cv *canvas, x1, r, sx, sy, k, adx, ady int) int {
+	// Where the line genuinely crosses the boundary.
+	t := int(roundHalfAway((float64(k) + 0.5) * float64(adx) / float64(ady)))
+	if t%sc.colStep != 0 {
+		return t
+	}
+	// A column of holes. Stepping here would put a corner in both of its cells
+	// and cost two dots, so step one column earlier or later instead. Later
+	// leaves the run passing the hole in row r; earlier leaves it passing the
+	// hole in the row the line moves to. Prefer the one that is not a peg.
+	late, early := t+1, t-1
+	if late >= adx {
+		late = early
+	}
+	if early < 1 {
+		early = late
+	}
+	// Stepping late leaves the horizontal run passing the hole in row r;
+	// stepping early leaves it passing the hole in the row the line moves to.
+	// A run may cross an empty hole but not a peg, and a step may not land on a
+	// diagonal already drawn, so prefer the side that costs neither.
+	lateClear := !cv.hasPeg(x1+sx*t, r) && cv.stepFree(x1+sx*late, r, sy)
+	earlyClear := !cv.hasPeg(x1+sx*t, r+sy) && cv.stepFree(x1+sx*early, r, sy)
+	if !lateClear && earlyClear {
+		return early
+	}
+	return late
+}
+
+// stepFree reports whether both cells a step would occupy are available.
+func (cv *canvas) stepFree(x, r, sy int) bool {
+	for _, y := range [2]int{r, r + sy} {
+		if !cv.in(x, y) {
 			continue
 		}
-		cv.mergeLink(x, y, scanGlyph(yf-float64(y)), id)
+		if isLinkGlyph(cv.runes[y*cv.w+x]) || cv.hasPeg(x, y) {
+			return false
+		}
 	}
+	return true
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func sign(v int) int {
@@ -245,27 +388,9 @@ func (bv *BoardView) paint(g *game.Game) *canvas {
 	cw, ch := bv.Scale.CanvasSize(n)
 	cv := newCanvas(cw, ch)
 
-	for row := range n {
-		for col := range n {
-			p := game.Point{Col: col, Row: row}
-			mask := g.LinkMask(p)
-			if mask == 0 {
-				continue
-			}
-			for d := game.Dir(0); d < game.NumDirs; d++ {
-				if !d.IsCanonical() || mask&(1<<d) == 0 {
-					continue
-				}
-				l, _ := game.NewLink(p, p.Add(d))
-				id := styLinkVertical
-				if g.LinkOwner(l) == game.Horizontal {
-					id = styLinkHorizontal
-				}
-				bv.Scale.drawLink(cv, l, id)
-			}
-		}
-	}
-
+	// Holes and pegs are laid down before the links, so a link stroke can see
+	// the pegs it must not cover and may take the dot of an empty hole it
+	// legitimately crosses.
 	for row := range n {
 		for col := range n {
 			p := game.Point{Col: col, Row: row}
@@ -283,6 +408,36 @@ func (bv *BoardView) paint(g *game.Game) *canvas {
 			}
 		}
 	}
+
+	// Steep links are exact diagonals with no freedom in where they go, so they
+	// are drawn first; a shallow link chooses which column it steps in and can
+	// then avoid a cell a diagonal has already taken.
+	for _, steep := range [2]bool{true, false} {
+		for row := range n {
+			for col := range n {
+				p := game.Point{Col: col, Row: row}
+				mask := g.LinkMask(p)
+				if mask == 0 {
+					continue
+				}
+				for d := game.Dir(0); d < game.NumDirs; d++ {
+					if !d.IsCanonical() || mask&(1<<d) == 0 {
+						continue
+					}
+					if dCol, _ := d.Offset(); (abs(dCol) == 1) != steep {
+						continue
+					}
+					l, _ := game.NewLink(p, p.Add(d))
+					id := styLinkVertical
+					if g.LinkOwner(l) == game.Horizontal {
+						id = styLinkHorizontal
+					}
+					bv.Scale.drawLink(cv, l, id)
+				}
+			}
+		}
+	}
+	cv.resolveLinks()
 
 	for _, p := range bv.Highlights {
 		x, y := bv.Scale.holeX(p.Col), bv.Scale.holeY(p.Row)

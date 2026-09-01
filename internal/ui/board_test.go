@@ -75,9 +75,10 @@ func TestCompactLinkGlyphs(t *testing.T) {
 	bv := &BoardView{Scale: Compact}
 	lines := renderPlain(t, bv, g)
 
-	// Centre hole (5,5) sits at canvas (11,5). Steep links are single
-	// diagonals; the rising and falling shallow pairs merge to '=' beside the
-	// peg and continue with scan strokes beyond.
+	// Centre hole (5,5) sits at canvas (11,5). Steep links are single diagonals.
+	// The four shallow links run into the peg along its own row and step away
+	// one column short of the outer peg, so the two arriving from each side share
+	// one horizontal run and meet it at a tee.
 	checks := []struct {
 		x, y int
 		want rune
@@ -87,15 +88,20 @@ func TestCompactLinkGlyphs(t *testing.T) {
 		{10, 4, '╲', "NNW steep"},
 		{10, 6, '╱', "SSW steep"},
 		{12, 6, '╲', "SSE steep"},
-		{12, 5, '=', "ENE+ESE beside peg"},
-		{10, 5, '=', "WNW+WSW beside peg"},
-		{14, 4, '⎼', "ENE far stroke"},
-		{14, 6, '⎻', "ESE far stroke"},
-		{8, 4, '⎼', "WNW far stroke"},
-		{8, 6, '⎻', "WSW far stroke"},
-		// Horizontal player's chain: A10-C11 is a falling shallow link.
-		{2, 9, '⎼', "H chain ESE near stroke"},
-		{4, 10, '⎻', "H chain ESE far stroke"},
+		{12, 5, '─', "run into the peg from the east"},
+		{10, 5, '─', "run into the peg from the west"},
+		{14, 5, '┤', "ENE and ESE meet the eastern run"},
+		{8, 5, '├', "WNW and WSW meet the western run"},
+		{14, 4, '╭', "ENE steps up to its peg"},
+		{14, 6, '╰', "ESE steps down to its peg"},
+		{8, 4, '╮', "WNW steps up to its peg"},
+		{8, 6, '╯', "WSW steps down to its peg"},
+		// Horizontal player's chain: A10-C11 is a falling shallow link. It steps
+		// immediately, then runs along the lower row into its far peg.
+		{2, 9, '─', "H chain ESE run"},
+		{4, 9, '╮', "H chain ESE step down"},
+		{4, 10, '╰', "H chain ESE arriving row"},
+		{6, 10, '─', "H chain ENE run out of the middle peg"},
 	}
 	for _, c := range checks {
 		if got := cellAt(t, lines, g.Size(), c.x, c.y); got != c.want {
@@ -120,13 +126,14 @@ func TestDetailLinkGlyphs(t *testing.T) {
 		{20, 9, '╲', "NNW steep"},
 		{20, 11, '╱', "SSW steep"},
 		{22, 11, '╲', "SSE steep"},
-		{22, 10, '=', "ENE+ESE beside peg"},
-		{20, 10, '=', "WNW+WSW beside peg"},
-		{23, 10, '⎺', "ENE ramp leaving row"},
-		{24, 9, '⎼', "ENE ramp entering next row"},
-		{25, 9, '─', "ENE ramp midpoint"},
-		{26, 9, '⎻', "ENE ramp rising"},
-		{28, 8, '⎼', "ENE ramp final stroke"},
+		{22, 10, '─', "run into the peg from the east"},
+		{20, 10, '─', "run into the peg from the west"},
+		{23, 10, '┤', "ENE and ESE meet the eastern run"},
+		{23, 9, '╭', "ENE turns out of the peg's row"},
+		{24, 9, '─', "ENE runs along the spare row"},
+		{27, 9, '╯', "ENE steps up again"},
+		{27, 8, '╭', "ENE arrives in its peg's row"},
+		{28, 8, '─', "ENE runs into its peg"},
 	}
 	for _, c := range checks {
 		if got := cellAt(t, lines, g.Size(), c.x, c.y); got != c.want {
@@ -159,8 +166,44 @@ func TestPegsHolesCornersDistinguishableWithoutColour(t *testing.T) {
 		if counts[glyphPegHorizontal] != 8 {
 			t.Errorf("%s: %d horizontal pegs rendered, want 8", sc, counts[glyphPegHorizontal])
 		}
-		if counts[glyphHole] != 12*12-4-17 {
-			t.Errorf("%s: %d empty holes rendered, want %d", sc, counts[glyphHole], 12*12-4-17)
+		// Every hole is accounted for: an occupied one shows its peg, an empty
+		// one shows its dot unless a shallow link legitimately crosses the cell.
+		// The detail scale has a spare row for every crossing, so there it must
+		// never come to that and all 123 dots survive.
+		covered := 0
+		for row := range g.Size() {
+			for col := range g.Size() {
+				p := game.Point{Col: col, Row: row}
+				if !g.Exists(p) {
+					continue
+				}
+				got := cellAt(t, lines, g.Size(), sc.holeX(col), sc.holeY(row))
+				switch g.At(p) {
+				case game.Vertical:
+					if got != glyphPegVertical {
+						t.Errorf("%s: %v holds a vertical peg but renders %q", sc, p, got)
+					}
+				case game.Horizontal:
+					if got != glyphPegHorizontal {
+						t.Errorf("%s: %v holds a horizontal peg but renders %q", sc, p, got)
+					}
+				default:
+					switch {
+					case got == glyphHole:
+					case isLinkGlyph(got):
+						covered++
+					default:
+						t.Errorf("%s: empty hole %v renders %q, want a dot or a link stroke", sc, p, got)
+					}
+				}
+			}
+		}
+		if sc == Detail && covered != 0 {
+			t.Errorf("detail: %d hole dots were covered by link strokes; the scale has room for every crossing", covered)
+		}
+		if counts[glyphHole]+covered != 12*12-4-17 {
+			t.Errorf("%s: %d dots plus %d covered holes, want %d holes in total",
+				sc, counts[glyphHole], covered, 12*12-4-17)
 		}
 		if counts[glyphCursorLeft] != 1 || counts[glyphCursorRight] != 1 {
 			t.Errorf("%s: cursor brackets not rendered exactly once", sc)
@@ -317,4 +360,142 @@ func TestGoldenFrames(t *testing.T) {
 			t.Errorf("%s frame drifted from golden:\ngot:\n%s\nwant:\n%s", sc, got, want)
 		}
 	}
+}
+
+// TestEveryLinkDrawsAsOneUnbrokenRun is the shape complaint made precise. A link
+// between two pegs must read as one connection, which on a character grid means
+// no column between the two ends is left without a stroke.
+//
+// Shallow links used to fail this on the compact scale. Their midpoint falls in
+// the column of the hole between the two ends, on the boundary between two hole
+// rows, and the renderer skipped any cell belonging to a hole. With one row per
+// hole that skipped the midpoint itself, so the link came out as two stubs on
+// two different rows with a hole between them, reading as two unrelated marks
+// rather than as one link.
+func TestEveryLinkDrawsAsOneUnbrokenRun(t *testing.T) {
+	for _, sc := range []Scale{Compact, Detail} {
+		for d := game.Dir(0); d < game.NumDirs; d++ {
+			if !d.IsCanonical() {
+				continue
+			}
+			from := game.Point{Col: 3, Row: 3}
+			to := from.Add(d)
+			g := linkedPair(t, from, to, game.Point{})
+			if gaps, frame := strokeGaps(t, sc, g, from, to); len(gaps) != 0 {
+				t.Errorf("%s %v link %v-%v: no stroke in column(s) %v between the ends, so the link reads as separate marks\n%s",
+					sc, d, from, to, gaps, frame)
+			}
+		}
+	}
+}
+
+// TestEveryLinkInACrowdedPositionIsUnbroken runs the same rule over a real
+// position: a peg carrying all eight links at once, surrounded by other pegs and
+// links, which is where crossings, merged strokes and neighbouring pegs all
+// compete for the same cells.
+func TestEveryLinkInACrowdedPositionIsUnbroken(t *testing.T) {
+	g := hubGame(t)
+	for _, sc := range []Scale{Compact, Detail} {
+		links := 0
+		for row := range g.Size() {
+			for col := range g.Size() {
+				from := game.Point{Col: col, Row: row}
+				mask := g.LinkMask(from)
+				for d := game.Dir(0); d < game.NumDirs; d++ {
+					if !d.IsCanonical() || mask&(1<<d) == 0 {
+						continue
+					}
+					links++
+					to := from.Add(d)
+					if gaps, frame := strokeGaps(t, sc, g, from, to); len(gaps) != 0 {
+						t.Errorf("%s: link %v-%v (%v) has no stroke in column(s) %v\n%s",
+							sc, from, to, d, gaps, frame)
+					}
+				}
+			}
+		}
+		if links < 8 {
+			t.Fatalf("%s: only %d links examined, the fixture is not the crowded position", sc, links)
+		}
+	}
+}
+
+// TestAPegBesideACrossingDoesNotBreakTheLink covers the other way the same
+// defect shows: the crossing cell may be taken by a peg in one of the two holes
+// the link passes between, and then the stroke belongs in the other one.
+func TestAPegBesideACrossingDoesNotBreakTheLink(t *testing.T) {
+	from := game.Point{Col: 3, Row: 3}
+	for _, d := range []game.Dir{game.ENE, game.ESE} {
+		to := from.Add(d)
+		// The two holes the link passes between, in the column between its ends.
+		upper := game.Point{Col: (from.Col + to.Col) / 2, Row: from.Row}
+		lower := game.Point{Col: upper.Col, Row: to.Row}
+		for _, blocked := range []game.Point{upper, lower} {
+			g := linkedPair(t, from, to, blocked)
+			if gaps, frame := strokeGaps(t, Compact, g, from, to); len(gaps) != 0 {
+				t.Errorf("%v link with a peg at %v: column(s) %v carry no stroke\n%s", d, blocked, gaps, frame)
+			}
+			lines := renderPlain(t, &BoardView{Scale: Compact}, g)
+			if got := cellAt(t, lines, g.Size(), Compact.holeX(blocked.Col), Compact.holeY(blocked.Row)); got != glyphPegHorizontal {
+				t.Errorf("%v link with a peg at %v: the peg renders %q, want %q", d, blocked, got, glyphPegHorizontal)
+			}
+		}
+	}
+}
+
+// strokeGaps renders the game and reports which canvas columns strictly between
+// the two ends carry no link stroke in any row, together with the frame, so a
+// failure shows the board that produced it.
+func strokeGaps(t *testing.T, sc Scale, g *game.Game, from, to game.Point) ([]int, string) {
+	t.Helper()
+	lines := renderPlain(t, &BoardView{Scale: sc}, g)
+	_, h := sc.CanvasSize(g.Size())
+	x1, x2 := sc.holeX(from.Col), sc.holeX(to.Col)
+	if x1 > x2 {
+		x1, x2 = x2, x1
+	}
+	var gaps []int
+	for x := x1 + 1; x < x2; x++ {
+		painted := false
+		for y := range h {
+			switch r := cellAt(t, lines, g.Size(), x, y); {
+			case isLinkGlyph(r):
+				painted = true
+			}
+			if painted {
+				break
+			}
+		}
+		if !painted {
+			gaps = append(gaps, x)
+		}
+	}
+	return gaps, strings.Join(lines, "\n")
+}
+
+// linkedPair plays a vertical peg at from and another at to, so the two link,
+// and gives the horizontal player the zero-value-unless-set hole between them.
+// The opponent otherwise plays in its own border column, far from the link, so
+// nothing it does can paint a cell this test reads.
+func linkedPair(t *testing.T, from, to, opponent game.Point) *game.Game {
+	t.Helper()
+	rs := game.Std
+	rs.Size = 12
+	g := game.MustNew(rs)
+	if opponent == (game.Point{}) {
+		opponent = game.Point{Col: 11, Row: 8}
+	}
+	for i, p := range []game.Point{from, opponent, to} {
+		if _, err := g.PlayPeg(p); err != nil {
+			t.Fatalf("move %d at %v: %v", i+1, p, err)
+		}
+	}
+	l, ok := game.NewLink(from, to)
+	if !ok {
+		t.Fatalf("%v-%v is not a knight's move", from, to)
+	}
+	if g.LinkOwner(l) != game.Vertical {
+		t.Fatalf("no vertical link formed between %v and %v", from, to)
+	}
+	return g
 }

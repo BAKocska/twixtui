@@ -8,6 +8,12 @@ import (
 // disabled, so the glyph set alone separates the two players (filled versus
 // hollow peg), empty holes, absent corners (blank), the cursor (square
 // brackets), highlights (round brackets) and the eight link directions.
+//
+// A shallow link (column ±2, row ±1) is far shallower than any diagonal a
+// terminal cell can draw: four screen columns for every row. Drawn as a ramp of
+// scan lines at differing heights it read as a row of detached dashes rather
+// than a connection, so it is drawn as a connected polyline of box-drawing
+// pieces, assembled per cell from the edges the line joins. See linkBits.
 const (
 	glyphHole          = '·'
 	glyphPegVertical   = '●'
@@ -22,20 +28,7 @@ const (
 	glyphRise = '╱'
 	glyphFall = '╲'
 
-	// Shallow links (column ±2, row ±1) run at slope 1/4 in screen cells.
-	// They are drawn with the Unicode horizontal scan lines, choosing the
-	// stroke height inside each cell from the exact position of the link line,
-	// which yields a readable ramp: ⎺⎻─⎼⎽.
-	glyphScanHigh  = '⎺'
-	glyphScanUpper = '⎻'
-	glyphScanMid   = '─'
-	glyphScanLower = '⎼'
-	glyphScanLow   = '⎽'
-
-	// A cell wanted by both a rising and a falling shallow link (a peg with
-	// two links leaving the same side) shows a double stroke; any other
-	// contested cell is a genuine geometric crossing.
-	glyphPair  = '='
+	// A cell where a diagonal meets another stroke.
 	glyphCross = '╳'
 
 	glyphUp    = '↑'
