@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -421,4 +422,149 @@ func TestRelayClosesAnIdlePair(t *testing.T) {
 		t.Fatal("the silent pair remained open")
 	}
 	waitUntil(t, func() bool { return relay.Rooms() == 0 }, "idle room was not released")
+}
+
+// TestTwoSimultaneousGuestsLeaveExactlyOneSession covers two invited-looking
+// guests completing their handshakes at the same moment. Exactly one game is on
+// offer, so exactly one session may survive and the loser's connection must be
+// closed.
+//
+// The handover used to be a buffered channel with a non-blocking send, which
+// cannot decide this: once Wait has taken the first session the buffer is empty
+// again, so a handshake finishing a moment later sent into it successfully,
+// believed it had won, and was never closed by anybody. That left a live socket
+// and its reader goroutine behind for as long as the process ran, and left the
+// second guest sitting in a game the host was not playing.
+func TestTwoSimultaneousGuestsLeaveExactlyOneSession(t *testing.T) {
+	// Repeated because the defect is a race: one round may not interleave.
+	for round := range 20 {
+		h, err := Bind("127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("round %d: binding: %v", round, err)
+		}
+
+		type result struct {
+			s   Session
+			err error
+		}
+		hostResult := make(chan result, 1)
+		go func() {
+			s, err := h.Wait(t.Context(), hostOpts())
+			hostResult <- result{s, err}
+		}()
+
+		// Both guests dial from a standing start so their handshakes overlap.
+		var start sync.WaitGroup
+		start.Add(1)
+		guests := make(chan result, 2)
+		for range 2 {
+			go func() {
+				start.Wait()
+				s, err := Dial(t.Context(), h.Addr(), guestOpts())
+				guests <- result{s, err}
+			}()
+		}
+		start.Done()
+
+		host := <-hostResult
+		if host.err != nil {
+			h.Close()
+			t.Fatalf("round %d: the host accepted nobody: %v", round, host.err)
+		}
+
+		// Collect both guests, then have the host play one move and see which
+		// of them is in the game the host is actually playing.
+		var live []Session
+		var refused int
+		for range 2 {
+			g := <-guests
+			if g.err != nil {
+				// A refusal before the handshake finished is a legitimate way
+				// to lose, and is not the leak this test is about.
+				refused++
+				continue
+			}
+			live = append(live, g.s)
+		}
+		if err := host.s.SendMove("B1"); err != nil {
+			t.Fatalf("round %d: the host could not play: %v", round, err)
+		}
+		inGame, ended, silent := classify(live, "B1")
+		for _, s := range live {
+			s.Close()
+		}
+		host.s.Close()
+		h.Close()
+
+		if inGame != 1 {
+			t.Fatalf("round %d: %d guests are in the host's game, want exactly 1 (%d ended, %d silent, %d refused)",
+				round, inGame, ended, silent, refused)
+		}
+		// This is the leak. A guest that finished its handshake and lost must be
+		// closed, so its stream ends and it can say so. One that is merely
+		// forgotten hears nothing: the host holds a socket and a reader
+		// goroutine for a game it is not playing, and the player is left staring
+		// at a board waiting for a move that will never come.
+		if silent != 0 {
+			t.Fatalf("round %d: %d guest(s) finished the handshake and were then neither played nor closed",
+				round, silent)
+		}
+	}
+}
+
+// classify reports, for sessions that completed a handshake, how many received
+// the host's move, how many had their stream ended, and how many heard nothing
+// at all before the deadline.
+func classify(sessions []Session, move string) (inGame, ended, silent int) {
+	var wg sync.WaitGroup
+	const (
+		unknown = iota
+		got
+		over
+		quiet
+	)
+	out := make([]int, len(sessions))
+	for i, s := range sessions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			deadline := time.After(2 * time.Second)
+			for {
+				select {
+				case ev, ok := <-s.Events():
+					if !ok {
+						out[i] = over
+						return
+					}
+					switch ev.Kind {
+					case EventMove:
+						if ev.Move == move {
+							out[i] = got
+						} else {
+							out[i] = quiet
+						}
+						return
+					case EventDisconnected, EventError:
+						out[i] = over
+						return
+					}
+				case <-deadline:
+					out[i] = quiet
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	for _, r := range out {
+		switch r {
+		case got:
+			inGame++
+		case over:
+			ended++
+		default:
+			silent++
+		}
+	}
+	return inGame, ended, silent
 }

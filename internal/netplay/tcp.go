@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -75,10 +76,52 @@ func (h *Listener) Wait(ctx context.Context, opts HostOptions) (Session, error) 
 
 	won := make(chan Session, 1)
 	failed := make(chan error, 1)
-	go h.attempts(ctx, opts, won, failed)
+
+	// Exactly one game is on offer, so exactly one finished handshake may be
+	// handed over and the rest must be closed. A buffered channel with a
+	// non-blocking send is not enough to decide that: once Wait has taken the
+	// first session the buffer is empty again, so a second handshake finishing
+	// a moment later would send into it successfully and nobody would ever read
+	// it, leaking the connection and the goroutines behind it. The claim is
+	// therefore made under a lock, together with the send.
+	var (
+		mu     sync.Mutex
+		closed bool
+		taken  bool
+	)
+	hand := func(s Session) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if closed || taken {
+			return false
+		}
+		taken = true
+		// Cannot block: the buffer holds one and this is the only send.
+		won <- s
+		return true
+	}
+
+	var handed Session
+	defer func() {
+		mu.Lock()
+		closed = true
+		mu.Unlock()
+		// A handshake may have been handed over just as Wait gave up on some
+		// other path. Nobody will read it now, so close it here.
+		if handed == nil {
+			select {
+			case s := <-won:
+				_ = s.Close()
+			default:
+			}
+		}
+	}()
+
+	go h.attempts(ctx, opts, hand, failed)
 
 	select {
 	case s := <-won:
+		handed = s
 		_ = h.l.Close()
 		return s, nil
 	case err := <-failed:
@@ -99,10 +142,10 @@ func joinBound(want time.Duration) time.Duration {
 	return DefaultJoinTimeout
 }
 
-// attempts accepts connections and hands each its own handshake, reporting the
-// first that succeeds. Exactly one game is on offer here, so a handshake that
-// completes second is told so and closed.
-func (h *Listener) attempts(ctx context.Context, opts HostOptions, won chan<- Session, failed chan<- error) {
+// attempts accepts connections and hands each its own handshake, offering the
+// first that succeeds to hand. Exactly one game is on offer here, so a handshake
+// that hand refuses is closed.
+func (h *Listener) attempts(ctx context.Context, opts HostOptions, hand func(Session) bool, failed chan<- error) {
 	slots := make(chan struct{}, maxPendingJoins)
 	for {
 		select {
@@ -127,9 +170,7 @@ func (h *Listener) attempts(ctx context.Context, opts HostOptions, won chan<- Se
 				_ = conn.Close()
 				return
 			}
-			select {
-			case won <- s:
-			default:
+			if !hand(s) {
 				_ = s.Close()
 			}
 		}()
