@@ -27,6 +27,16 @@ func init() {
 		return cover.MinSize(cover.Best(coverProbeW, coverProbeH, cover.DepthTrueColour))
 	}
 	coverRender = func(w, h int, plain bool) []string {
+		// Two depths, not three. The cover package can also render to the
+		// 256-colour palette, and does it well — the palette was tuned and a
+		// test holds the quantiser to a brute-force nearest neighbour — but the
+		// program has no terminal-capability detection to choose it with: it
+		// resolves colour once, into colour or no colour. A terminal without
+		// 24-bit is therefore sent 24-bit and degrades it itself, which most do
+		// tolerably. Wiring the palette in means adding capability detection,
+		// which is a decision worth taking on its own rather than as a footnote
+		// to the artwork, so docs/COVER.md says plainly that the program does not
+		// take that path.
 		depth := cover.DepthTrueColour
 		if plain {
 			depth = cover.DepthMono

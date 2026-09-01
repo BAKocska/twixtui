@@ -149,6 +149,42 @@ Start with the first line. Playing a game needs a profile to record it against,
 and the bare command takes a name when the machine has none; on a machine with no
 profiles `--profile NAME` will make one too.
 
+## The first run
+
+The first time a profile opens the interactive mode it meets a short
+introduction: five steps on a real board, showing what the game is, whose borders
+are whose, that a turn is one peg, how links form, and that links block. Each
+step invites a move rather than requiring one, and nothing in it refuses to
+advance.
+
+It is skippable at every step and the key that skips is named on every step. It
+is shown once per profile and never again, and skipping counts as having seen it:
+somebody who skipped does not want it again tomorrow. `Learn to play` on the menu
+has an entry that replays it deliberately, next to the seven-lesson tutorial it
+points at.
+
+The flag belongs to the profile rather than to the machine, so a second person
+with their own profile on a shared machine is still a newcomer.
+
+## The menu
+
+`twixtui` with no arguments opens the front screen, which is grouped by how often
+somebody does the thing rather than by the mechanism behind it:
+
+| Entry | What is behind it |
+| --- | --- |
+| `Play` | A new game. Who is on the other side is the first question — the computer, somebody at this keyboard, or somebody on another machine — and the questions after it depend on the answer. Escape walks back through them. |
+| `Continue a saved game` | The games still waiting for a move. A network game that has lost its connection, and a game imported from elsewhere, are listed but cannot be played on, and the row says why. |
+| `Watch a finished game` | Step through a finished game, including one imported from another machine. |
+| `Learn to play` | The tutorial, the written rules, and the introduction again. |
+| `Leaderboard` | The standings, and one player's history. |
+| `Settings` | Colours, the default ruleset, the default board size, whether hints are offered, and which profile is playing. Set once and forgotten; kept per machine, as the colour scheme is. |
+| `Quit` | Leave. `q` does the same from the front screen. |
+
+Every level is leavable by escape and the way out is named on the screen. The
+cover artwork appears beside the menu when the terminal is wide enough for both;
+it never costs an entry, so at eighty columns there is simply no picture.
+
 ## Commands
 
 | Command | What it is for |
@@ -430,6 +466,40 @@ twixtui play bot --ruleset classic --size 12 --side vertical
 Which sources support which reading, and what the primary 1962 text does and does not
 settle, is in [docs/rules.md](docs/rules.md) and
 [docs/RULES-PROVENANCE.md](docs/RULES-PROVENANCE.md).
+
+## The cover
+
+The 1962 box lid — a man contemplating a board of tapered pegs — is drawn beside
+the menu when the terminal is wide enough. Kitty graphics are not available to
+everyone, so it is character cells and ANSI colour and nothing else.
+
+Two artworks ship because neither wins at every size. One is a projection of the
+project's own flat reduction of the lid composition, which is the same picture
+with the photographic texture and the low-contrast paper wear taken out, those
+being what a character grid cannot carry. The other is hand-composed character
+art: the wordmark, the flanking pegs, the linked chain over a field of holes. The
+projection is the better picture where there is room for it; the drawing answers
+below the size at which the projection's wordmark stops reading, and on a
+terminal with no colour at all, where a dithered photograph is noise.
+
+Which one appears is chosen from the space left over and the colour available.
+Two variables override that:
+
+| Variable | Effect |
+| --- | --- |
+| `TWIXTUI_COVER_ART` | `homage` for the drawing or `photo` for the projection, whatever the size suggests. Any other value is reported once at startup and then ignored. |
+| `TWIXTUI_COVER_IMAGE` | A JPEG or PNG of your own to project instead of the shipped picture. Refused, with the reason, if it cannot be decoded or is larger than four thousand pixels a side — more detail than a terminal can resolve. |
+
+Both are read once, when the program starts, so a complaint about either arrives
+before anything is drawn rather than over the top of it. `--no-color` and
+`NO_COLOR` reach the artwork as well as the board: neither will emit colour.
+
+The shipped picture is a nine-kilobyte reduction, decoded on first use rather
+than at startup, and regenerable from a source committed beside it.
+[docs/COVER.md](docs/COVER.md) records how the artworks were chosen, which
+converters were tried and dropped and why, and what the choice costs;
+[assets/README.md](assets/README.md) records what the picture is and where its
+reference came from.
 
 ## Themes
 

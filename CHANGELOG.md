@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-01
+
 ### Added
 
 - A front screen worth the name. The menu was a flat list that had grown by
@@ -302,6 +304,7 @@ First release.
   succeeding silently, and the tutorial's prose is set to a readable measure on a wide
   terminal.
 
-[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/BAKocska/twixtui/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/BAKocska/twixtui/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/BAKocska/twixtui/releases/tag/v0.1.0

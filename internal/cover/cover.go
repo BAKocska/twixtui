@@ -189,10 +189,10 @@ func MinSize(art Art) (w, h int) {
 }
 
 // Best says which artwork a box deserves, which is the rule the side-by-side
-// evaluation of both artworks settled (.work/cover-evaluation.md in the
-// development tree, where the frames for the shipped converters are kept; the
-// two that were dropped were judged before their code was removed and their
-// frames were not retained). In monochrome the homage always answers: it is drawn
+// evaluation of both artworks settled. That evaluation, the converters that were
+// tried and dropped, and the sizes each artwork wins at are written up in
+// docs/COVER.md; it used to cite a file in the development tree, which no reader
+// of the repository could ever have, since that tree is not published. In monochrome the homage always answers: it is drawn
 // for runes, where a dithered projection is noise. In colour the projection
 // answers once the grid its picture actually occupies is fine enough to keep
 // the wordmark and the figure readable — under that, the homage. A player

@@ -2206,3 +2206,35 @@ func TestChoosingAProfileFromSettingsReturnsToSettings(t *testing.T) {
 		t.Errorf("the settings list still names the profile that was replaced:\n%s", menu.View().Content)
 	}
 }
+
+// TestTheCoverIsAskedForOnlyTheDepthsTheProgramResolves pins the seam against the
+// documentation. The cover package offers three colour depths and the program
+// resolves only two, because it has no terminal-capability detection; docs/COVER.md
+// says so. A change that started asking for the 256-colour palette without adding
+// that detection, or that stopped honouring colour-off, would make the document
+// wrong, so the mapping is asserted rather than left to a comment.
+func TestTheCoverIsAskedForOnlyTheDepthsTheProgramResolves(t *testing.T) {
+	if coverRender == nil {
+		t.Fatal("the cover seam is unwired, so this proves nothing")
+	}
+	// Colour off must produce something a terminal in that state can be sent:
+	// no escape bytes at all.
+	for _, line := range coverRender(120, 40, true) {
+		for _, r := range line {
+			if r == 0x1b {
+				t.Fatalf("with colour off the artwork emitted an escape byte: %q", line)
+			}
+		}
+	}
+	// Colour on must actually use it, or the artwork is being drawn plain on a
+	// terminal that can do better.
+	var sawEscape bool
+	for _, line := range coverRender(120, 40, false) {
+		if strings.ContainsRune(line, 0x1b) {
+			sawEscape = true
+		}
+	}
+	if !sawEscape {
+		t.Error("with colour on the artwork emitted no colour at all")
+	}
+}
