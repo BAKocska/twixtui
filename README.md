@@ -226,9 +226,15 @@ twixtui play join host.example:4270
 
 **Through a relay.** When neither side can accept an inbound connection — CGNAT, hotel,
 campus or mobile networks — both sides dial out to a relay instead, and the relay pairs
-them. The host prints a six-character pairing code, which the opponent passes as the
-address. The relay is the same binary in another mode: it pumps bytes between two paired
-clients, never parses the game and keeps no game state, so anyone can run one.
+them. The host prints a 22-character pairing code in three dashed groups; the opponent
+needs all of it, not just the first group.
+
+The relay is the same binary in another mode, and it pumps bytes without ever parsing
+the game. Only the first group of the pairing code is sent to it; both ends derive a key
+from the rest, which the relay is never told, and authenticate every frame with it. So a
+relay cannot alter, inject, replay or drop a move without being caught. It does read
+everything it carries, in plain text: both names, the ruleset and every move. Use a
+relay you or your opponent runs, or one you are content to be read by.
 
 ```
 # whoever has a reachable machine; default port 4271
@@ -238,7 +244,7 @@ twixtui serve --addr :4271
 twixtui play host --relay relay.example:4271
 
 # the opponent, with the code they were given
-twixtui play join K7M2QD --relay relay.example:4271
+twixtui play join K7MDPQ-3FHJ8TWZ-Q2XVNR5B --relay relay.example:4271
 ```
 
 **Correspondence.** No live connection at all, and no network requirement whatsoever.

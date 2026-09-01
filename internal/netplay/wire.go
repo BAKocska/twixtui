@@ -163,6 +163,10 @@ const (
 	maxWireDigestLen = 2 * 32
 	// maxWireSideLen bounds a side name: "vertical" or "horizontal".
 	maxWireSideLen = 16
+	// maxWireTypeLen bounds the discriminator. It is not only compared but also
+	// quoted back at the player when it is one this build does not expect, and
+	// the longest one this build sends is "draw-accept".
+	maxWireTypeLen = 16
 	// maxWireTextLen bounds the free text of a refusal or a goodbye, which is
 	// the one field whose content is a sentence rather than a token. The longest
 	// this build produces is a full ruleset disagreement, about three hundred
@@ -175,6 +179,7 @@ const (
 // It runs after the authentication check, not before, so that a tag covers the
 // bytes the opponent actually sent rather than whatever survived filtering.
 func (m *message) sanitise() {
+	m.Type = msgType(safeText(string(m.Type), maxWireTypeLen))
 	m.Name = cleanName(m.Name)
 	m.Rules = safeText(m.Rules, maxWireRulesLen)
 	m.Fingerprint = safeText(m.Fingerprint, maxWireDigestLen)
@@ -385,7 +390,10 @@ func (f *framer) verify(m *message) error {
 		return nil
 	}
 	if m.MAC == "" {
-		return fmt.Errorf("%w: the opponent's %s frame carries no authentication tag, so this end cannot tell it from something a relay made up; both ends need the whole pairing code, whose second part is the key a relay is never told", ErrUnauthenticated, m.Type)
+		// The message type is deliberately not quoted here. This runs before
+		// sanitise, so every field is still exactly what arrived, and a peer
+		// that is making frames up chooses the type as freely as anything else.
+		return fmt.Errorf("%w: a frame arrived carrying no authentication tag, so this end cannot tell it from something a relay made up; both ends need the whole pairing code, whose second part is the key a relay is never told", ErrUnauthenticated)
 	}
 	covered, err := authBytes(*m)
 	if err != nil {
@@ -393,7 +401,7 @@ func (f *framer) verify(m *message) error {
 	}
 	want := frameMAC(f.key, f.recvDir, f.recvSeq, covered)
 	if !hmac.Equal([]byte(want), []byte(m.MAC)) {
-		return fmt.Errorf("%w: frame %d did not authenticate, so it is not what the opponent sent as its frame %d: either something between the two ends altered, injected, replayed, reordered or dropped a frame, or the two pairing codes are not the same code", ErrUnauthenticated, f.recvSeq+1, f.recvSeq+1)
+		return fmt.Errorf("%w: frame %d is not what the opponent sent as its frame %d: something between the two ends altered, injected, replayed, reordered or dropped a frame, or the two ends are not using the same pairing code", ErrUnauthenticated, f.recvSeq+1, f.recvSeq+1)
 	}
 	f.recvSeq++
 	m.MAC = ""

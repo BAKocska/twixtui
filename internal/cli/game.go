@@ -315,8 +315,13 @@ func newServeCommand(opts *options) *cobra.Command {
 Direct play needs one side to accept an incoming connection, which a home router
 or a company network often prevents. A relay is somewhere both sides can reach:
 each connects out to it and it passes bytes between them. It never parses the
-game, keeps nothing on disk, and matches players purely by the pairing code they
-both quote, so running one for your friends costs nothing and reveals nothing.
+game, keeps nothing on disk, and is told only the first group of the pairing
+code, so it cannot alter, inject, replay or drop a move without being caught:
+both players authenticate every frame with a key derived from the rest of the
+code, which the relay never sees.
+
+It does read what it carries, in plain text — both names, the ruleset and every
+move. Run one for people who are content for you to see their games.
 
   twixtui serve --addr :4271
   twixtui play host --relay relay.example:4271

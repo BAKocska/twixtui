@@ -99,10 +99,21 @@ const (
 )
 
 // normalisePairingCode puts a code, or the room part of one, into the form the
-// relay matches on, mapping the characters that are read wrongly by eye.
+// relay matches on: it drops the separators a player might type and maps the
+// characters that are read wrongly by eye.
+//
+// The separators it drops are the ones parseCode drops from a pasted move code.
+// A pairing code is long enough to be printed in groups and read out, so it will
+// come back with spaces in it as often as with dashes, and the two pasted things
+// this program accepts should not be forgiving in different ways.
 func normalisePairingCode(code string) (string, error) {
-	code = strings.TrimSpace(code)
-	code = strings.ReplaceAll(code, "-", "")
+	code = strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\n', '\r', '-', '_', '.', ',':
+			return -1
+		}
+		return r
+	}, code)
 	if code == "" {
 		return "", errors.New("a relayed game needs a pairing code")
 	}
@@ -121,6 +132,16 @@ func normalisePairingCode(code string) (string, error) {
 }
 
 // Relay pairs clients by room name and copies bytes between them.
+//
+// It is an intermediary its users cannot authenticate, and it should be read as
+// one. Everything it carries passes through it in plain text -- both players'
+// names, the ruleset and every move -- so its operator reads the whole game. It
+// cannot change the game: the two ends authenticate every frame with a key taken
+// from the part of the pairing code the relay is never told, and a frame that
+// does not authenticate is refused rather than played. What is left in the
+// operator's hands is delivery, which nothing can check: a relay may drop a game
+// or refuse to carry it. See auth.go for the shape of the key, and the block
+// comment at the top of this file for the whole of it.
 type Relay struct {
 	// Wait is how long the first client of a room waits for the second. Zero
 	// means DefaultPairingWait.

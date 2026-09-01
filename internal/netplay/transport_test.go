@@ -222,6 +222,8 @@ func TestPairingCodesAreShortAndForgiving(t *testing.T) {
 	for _, variant := range []string{
 		strings.ToLower(code),
 		strings.ReplaceAll(code, "-", ""),
+		strings.ReplaceAll(code, "-", " "),
+		"  " + strings.ReplaceAll(strings.ToLower(code), "-", ".") + "\n",
 		strings.ReplaceAll(strings.ReplaceAll(code, "0", "O"), "1", "I"),
 	} {
 		gotRoom, gotKey, err := splitPairingCode(variant)

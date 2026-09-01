@@ -781,7 +781,7 @@ func stepPairingCode(m *Menu) tea.Cmd {
 	m.form = &textForm{
 		title:  "Their pairing code",
 		label:  "the code they printed",
-		note:   "Codes ignore case.",
+		note:   "Case, dashes and spaces are ignored, so paste it however it arrived.",
 		value:  m.pending.target,
 		cancel: backOneStep,
 		submit: func(m *Menu, v string) tea.Cmd {
