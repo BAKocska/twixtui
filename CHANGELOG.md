@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-01
+
 ### Added
 
 - The peg just played is marked on the board, `◉` for vertical and `◎` for horizontal,
@@ -233,5 +235,6 @@ First release.
   succeeding silently, and the tutorial's prose is set to a readable measure on a wide
   terminal.
 
-[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/BAKocska/twixtui/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/BAKocska/twixtui/releases/tag/v0.1.0
