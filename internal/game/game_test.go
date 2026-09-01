@@ -596,14 +596,10 @@ func TestSwapReflectsAcrossDiagonal(t *testing.T) {
 // may use onto a hole the second player may use, including on border rows.
 func TestSwapPreservesLegality(t *testing.T) {
 	g0 := MustNew(Std)
-	n := g0.Size()
 	for _, p := range g0.LegalPlacements(Vertical) {
 		mirrored := Point{Col: p.Row, Row: p.Col}
 		if err := g0.CanPlace(Horizontal, mirrored); err != nil {
 			t.Fatalf("vertical hole %v reflects to %v which horizontal may not use: %v", p, mirrored, err)
-		}
-		if mirrored.Col < 0 || mirrored.Col >= n || mirrored.Row < 0 || mirrored.Row >= n {
-			t.Fatalf("reflection of %v is off the board", p)
 		}
 	}
 }
@@ -1105,24 +1101,35 @@ func TestUndoAfterOfferDuringOpponentsStagedTurn(t *testing.T) {
 // with the original. Copying the slice of entries is not enough: each entry
 // carries its own link and peg lists, and a caller that rewrites a cloned record
 // would otherwise edit the game it came from.
+//
+// All four lists have to be populated for the four pokes below to mean anything,
+// so the fixture is checked before it is used. An earlier version of this test
+// left Added and PegLinks empty and quietly asserted nothing about either.
 func TestCloneHistoryDoesNotAlias(t *testing.T) {
 	rs := Std
 	rs.PegRemoval = true
 	g := MustNew(rs)
-	play(t, g, "D4", "A6", "E6", "A7")
+	// E6:G7 and D4:E6 are linked automatically; C2:D4 is declined when C2 goes
+	// down so that it is still available to add by hand.
+	for _, s := range []string{"E6", "A2", "G7", "A3", "D4", "A4", "C2 ~C2:D4", "A5"} {
+		if err := g.PlayNotation(s); err != nil {
+			t.Fatalf("building the base position at %q: %v", s, err)
+		}
+	}
 
-	// Build a turn that populates every per-entry list.
+	// One turn that fills every per-entry list: a deliberate removal, a lifted
+	// peg that takes a link of its own with it, and a hand-added link.
 	if err := g.RemoveLink(at("D4"), at("E6")); err != nil {
-		t.Fatal(err)
+		t.Fatalf("removing an older link: %v", err)
 	}
-	if err := g.RemovePeg(at("E6")); err != nil {
-		t.Fatal(err)
+	if err := g.RemovePeg(at("G7")); err != nil {
+		t.Fatalf("lifting own peg G7: %v", err)
 	}
-	if err := g.PlacePeg(at("G4")); err != nil {
-		t.Fatal(err)
+	if err := g.PlacePeg(at("F4")); err != nil {
+		t.Fatalf("placing F4: %v", err)
 	}
-	if err := g.AddLink(at("G4"), at("F6")); err == nil {
-		t.Fatal("expected the hand-added link to be refused: F6 holds no peg")
+	if err := g.AddLink(at("C2"), at("D4")); err != nil {
+		t.Fatalf("adding C2:D4 by hand: %v", err)
 	}
 	if _, err := g.CommitTurn(); err != nil {
 		t.Fatal(err)
@@ -1130,39 +1137,34 @@ func TestCloneHistoryDoesNotAlias(t *testing.T) {
 
 	last := len(g.History()) - 1
 	before := g.History()[last]
-	if len(before.Removed) == 0 || len(before.RemovedPegs) == 0 {
-		t.Fatalf("the fixture did not populate the record entry: %+v", before)
+	if len(before.Added) == 0 || len(before.Removed) == 0 ||
+		len(before.PegLinks) == 0 || len(before.RemovedPegs) == 0 {
+		t.Fatalf("the fixture entry does not carry every list: %+v", before)
 	}
 
 	c := g.Clone()
 	entry := c.History()[last]
-	// Write an impossible value through the clone's entry.
+	// Write an impossible value through the clone's entry: the corner hole A1,
+	// which no peg can occupy and no link can start from, so a poke can never
+	// coincide with a real entry.
 	corner := Point{Col: 0, Row: 0}
-	if len(entry.Removed) > 0 {
-		entry.Removed[0] = Link{From: corner, Dir: NNE}
-	}
-	if len(entry.RemovedPegs) > 0 {
-		entry.RemovedPegs[0] = corner
-	}
-	if len(entry.PegLinks) > 0 {
-		entry.PegLinks[0] = Link{From: corner, Dir: NNE}
-	}
-	if len(entry.Added) > 0 {
-		entry.Added[0] = Link{From: corner, Dir: NNE}
-	}
+	entry.Added[0] = Link{From: corner, Dir: NNE}
+	entry.Removed[0] = Link{From: corner, Dir: ENE}
+	entry.PegLinks[0] = Link{From: corner, Dir: ESE}
+	entry.RemovedPegs[0] = corner
 
 	after := g.History()[last]
-	if len(after.Removed) > 0 && after.Removed[0] == (Link{From: corner, Dir: NNE}) {
+	if after.Added[0] == (Link{From: corner, Dir: NNE}) {
+		t.Error("writing the clone's Added changed the original")
+	}
+	if after.Removed[0] == (Link{From: corner, Dir: ENE}) {
 		t.Error("writing the clone's Removed changed the original")
 	}
-	if len(after.RemovedPegs) > 0 && after.RemovedPegs[0] == corner {
-		t.Error("writing the clone's RemovedPegs changed the original")
-	}
-	if len(after.PegLinks) > 0 && after.PegLinks[0] == (Link{From: corner, Dir: NNE}) {
+	if after.PegLinks[0] == (Link{From: corner, Dir: ESE}) {
 		t.Error("writing the clone's PegLinks changed the original")
 	}
-	if len(after.Added) > 0 && after.Added[0] == (Link{From: corner, Dir: NNE}) {
-		t.Error("writing the clone's Added changed the original")
+	if after.RemovedPegs[0] == corner {
+		t.Error("writing the clone's RemovedPegs changed the original")
 	}
 }
 

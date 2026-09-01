@@ -101,6 +101,7 @@ func corrInvite(t *testing.T, out string) string {
 // TestTwoTerminalsPlayByCode drives both ends of one correspondence game through
 // the compiled binary and checks the two stores end up holding the same game.
 func TestTwoTerminalsPlayByCode(t *testing.T) {
+	t.Parallel()
 	if err := Available(); err != nil {
 		t.Skipf("skipping terminal test: %v", err)
 	}

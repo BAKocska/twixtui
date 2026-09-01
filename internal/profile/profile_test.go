@@ -259,9 +259,18 @@ func TestDelete(t *testing.T) {
 // TestRepeatedOpenWriteCyclesKeepEveryEntry is the durability check: every cycle
 // opens the store fresh, appends one profile and closes, which is what a run of
 // twixtui does. Nothing may be lost or corrupted along the way.
+//
+// A dozen cycles, not sixty. Each cycle is the same deterministic sequence over
+// a file that only grows, so every way this path can lose an entry — a write
+// that never lands, a write that replaces instead of appending, a schema
+// version left unstamped — declares itself on the first or second cycle. Sixty
+// spent half a second of fsyncs repeating a check that had already fired, and a
+// suite slow enough to be skipped catches nothing at all. Twelve is margin over
+// the two the append-rather-than-replace property needs, not a claim that the
+// extra ten prove anything.
 func TestRepeatedOpenWriteCyclesKeepEveryEntry(t *testing.T) {
 	dir := t.TempDir()
-	const cycles = 60
+	const cycles = 12
 	for i := range cycles {
 		s, err := Open(dir)
 		if err != nil {

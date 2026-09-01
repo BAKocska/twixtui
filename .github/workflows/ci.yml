@@ -12,10 +12,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The checks are separate jobs rather than steps of one job. Steps run in order
+# and the first failure ends the run, so while they shared a job a stray tab
+# hid every test result and cost a whole push to learn them. Apart, each check
+# reports for itself and they all run at once, so the split costs runner time
+# -- about eight seconds of setup apiece -- and nothing in wall time.
 jobs:
-  # One job on purpose: the checks are seconds apiece and share a Go
-  # toolchain, so splitting them would cost more in setup than it saves.
-  check:
+  format:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -26,21 +29,6 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Install tmux
-        # The end-to-end suite drives a real terminal multiplexer to test
-        # resize behaviour, and skips itself when tmux is missing. Installing it
-        # explicitly is what stops CI from quietly not running those tests.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tmux
-          tmux -V
-
-      - name: Build
-        run: go build ./...
-
-      - name: Vet
-        run: go vet ./...
-
       - name: Check formatting
         run: |
           unformatted="$(gofmt -l .)"
@@ -50,5 +38,166 @@ jobs:
             exit 1
           fi
 
+  vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+  # Vet and the tests both compile every package, including the ones with no
+  # test files, so this job is not here to catch a type error: it would fail in
+  # two other jobs first. It is here because it is the only check that links,
+  # and an executable is what the release publishes. A link that fails while a
+  # compile succeeds is rare in pure Go, which is the honest measure of what
+  # this job is worth -- but it costs nine seconds beside jobs that take longer,
+  # and the alternative place to find out is a pushed tag.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Build
+        run: go build ./...
+
+  # Both operating systems the project publishes binaries for. Testing one and
+  # shipping both was the largest unchecked claim in the release, and the gap is
+  # not theoretical: the end-to-end layer drives a real pseudo-terminal, and
+  # pseudo-terminals are where Darwin and Linux differ most for a program like
+  # this one -- window-size signals, terminfo, and the shell the harness runs
+  # its commands through.
+  test:
+    strategy:
+      # Both answers are wanted. Cancelling macOS because Linux failed hides
+      # whether a failure is portable, which is the question the matrix exists
+      # to answer.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          # setup-go's cache covers the module cache and the build cache, keyed
+          # per operating system and Go version, which is what keeps the added
+          # jobs cheap. It is also all the caching worth doing here: compiling
+          # this module and its dependencies from an empty build cache costs
+          # about thirteen processor seconds and a quarter of a second warm, so
+          # even a perfect cache could save only a few seconds a run.
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install tmux
+        # Neither runner image ships tmux, and the end-to-end suite drives it as
+        # a scriptable terminal.
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install tmux
+          else
+            sudo apt-get update
+            sudo apt-get install -y tmux
+          fi
+          tmux -V
+
       - name: Test
-        run: go test ./...
+        shell: bash
+        # -count=1 because a run that reports a cached result has not run the
+        # tests, and a green tick that means "nothing executed" is the same
+        # defect as a suite that skips itself. It costs the bot package's search
+        # tests on every push; that is the price of the tick meaning something.
+        #
+        # -parallel 8 rather than the default of one per core, for the
+        # end-to-end tests, which wait on a terminal instead of computing.
+        # Measured on two cores that package takes 39s serially and 9s this way.
+        #
+        # -json so the next step can ask what actually ran. The stream is kept
+        # outside the checkout and the human-readable log is reconstructed from
+        # it, so nothing is lost from the step's output and nothing is left
+        # lying in the working tree. build-output has to be reconstructed
+        # alongside output: a package that fails to compile reports the reason
+        # only under that action, so filtering on output alone would print
+        # "[build failed]" and nothing about why.
+        run: |
+          go test -count=1 -parallel 8 -json ./... \
+            | tee "$RUNNER_TEMP/test.json" \
+            | jq -j -r 'select(.Action == "output" or .Action == "build-output") | .Output'
+
+      - name: Prove the end-to-end suite ran
+        shell: bash
+        # Every test in internal/e2e skips itself when tmux is missing, so
+        # before tmux was installed the whole layer reported success while
+        # running nothing. That is worse than not having the layer, because the
+        # tick claims the terminal behaviour was checked. Installing tmux is
+        # only half the fix: nothing about a green step distinguishes twenty-two
+        # tests passing from twenty-two skipping. This is the other half.
+        #
+        # The floor is one rather than a transcribed count, so that adding or
+        # removing a test does not silently invalidate the check. On its own a
+        # floor would not be enough: one test in the package needs no terminal
+        # and passes on a bare runner while the other twenty-one skip. Requiring
+        # no skips at all is what closes that.
+        run: |
+          pkg=github.com/BAKocska/twixtui/internal/e2e
+          events="$RUNNER_TEMP/test.json"
+          skipped="$(jq -r --arg p "$pkg" \
+            'select(.Package == $p and .Action == "skip" and .Test != null) | .Test' "$events" | sort -u)"
+          if [ -n "$skipped" ]; then
+            echo "::error::the end-to-end suite skipped tests instead of running them" >&2
+            echo "$skipped" >&2
+            exit 1
+          fi
+          ran="$(jq -r --arg p "$pkg" \
+            'select(.Package == $p and .Action == "pass" and .Test != null) | .Test' "$events" | sort -u | wc -l | tr -d ' ')"
+          if [ "$ran" -lt 1 ]; then
+            echo "::error::no end-to-end test ran at all; the package produced no results" >&2
+            exit 1
+          fi
+          echo "$ran end-to-end tests ran, none skipped"
+
+  # The race detector, on the packages that start goroutines. netplay is the
+  # reason it is here at all: listeners, relays and sessions, and forty separate
+  # `go` statements. app, cli, leaderboard and profile each start a handful and
+  # come along for about a fifth of a second apiece.
+  #
+  # bot is deliberately absent although it also starts goroutines. Its tests are
+  # calibrated against wall-clock search budgets, and the detector slows the
+  # search enough to change what they measure: on a 24x24 board at the
+  # measurement budgets the depths reached fall from beginner 1, intermediate 3,
+  # pro 4 to 1, 2 and 2, so the tiers stop being distinguishable and a strength
+  # number produced under the detector is not the engine's. e2e is absent for a
+  # different reason: the harness has no concurrency of its own, and the program
+  # it drives is a separate process the detector cannot see into.
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Race detector
+        # Measured at about a third longer than the plain run on these packages,
+        # which is cheap enough to belong on every push rather than in a nightly
+        # job nobody reads.
+        run: |
+          go test -race -count=1 ./internal/netplay/ ./internal/app/ ./internal/cli/ \
+            ./internal/leaderboard/ ./internal/profile/

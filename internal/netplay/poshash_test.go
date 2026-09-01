@@ -57,17 +57,50 @@ func TestPositionHashIgnoresMoveOrder(t *testing.T) {
 
 // TestPositionHashSurvivesReplayAndClone covers the two ways the protocol
 // produces a second copy of a game: cloning it, and rebuilding it from the
-// transcript on the other end of a connection.
+// record the other end sent.
+//
+// The position holds one link and lacks another that was offered and declined,
+// which is the part of a position the pegs alone do not state. Both copies have
+// to carry that, and rebuilding from the same list of moves the original was
+// built from would only be PositionHash of one call compared with itself.
 func TestPositionHashSurvivesReplayAndClone(t *testing.T) {
-	live := build(t, scriptedGame...)
+	script := []Entry{v("B1"), h("A2"), v("C3 ~B1:C3"), h("F2"), v("D5")}
+	live := build(t, script...)
 	want := PositionHash(live)
+
+	kept, ok := game.NewLink(game.Point{Col: 2, Row: 2}, game.Point{Col: 3, Row: 4})
+	if !ok {
+		t.Fatal("C3 and D5 are not a knight's move apart")
+	}
+	declined, ok := game.NewLink(game.Point{Col: 1, Row: 0}, game.Point{Col: 2, Row: 2})
+	if !ok {
+		t.Fatal("B1 and C3 are not a knight's move apart")
+	}
+	if !live.HasLink(kept) || live.HasLink(declined) {
+		t.Fatal("the position does not hold one link and lack another, so neither copy is being asked about links")
+	}
 
 	if got := PositionHash(live.Clone()); got != want {
 		t.Fatalf("a clone hashed to %s, the original to %s", got, want)
 	}
-	rebuilt := build(t, scriptedGame...)
+
+	// The second copy comes the way the protocol makes one: each end records
+	// the canonical notation its own engine wrote for the entry, and the far
+	// end replays that, not whatever the player typed.
+	written := make([]Entry, len(script))
+	for i := range script {
+		notation, err := live.MoveNotation(i)
+		if err != nil {
+			t.Fatalf("reading the notation of entry %d: %v", i+1, err)
+		}
+		written[i] = Entry{Side: script[i].Side, Move: notation}
+	}
+	rebuilt, err := replay(testRules(), written)
+	if err != nil {
+		t.Fatalf("replaying the written record: %v", err)
+	}
 	if got := PositionHash(rebuilt); got != want {
-		t.Fatalf("a replayed game hashed to %s, the original to %s", got, want)
+		t.Fatalf("a game replayed from its own record hashed to %s, the original to %s", got, want)
 	}
 }
 
@@ -105,6 +138,30 @@ func TestPositionHashDistinguishesPositions(t *testing.T) {
 	// The swap option moves a peg and changes hands, which no ordinary move can
 	// do, so it gets its own entry.
 	positions["swapped"] = build(t, v("B1"), h("swap"))
+
+	// A pair whose pegs are identical and whose links are not. These rules let a
+	// player decline a link the placement offers, so nothing on the peg board
+	// tells the two apart; without this pair the family says nothing about
+	// whether the encoding covers links at all, and two ends could agree on
+	// boards that are not the same position.
+	const linked, declined = "C3 taking the link to B1", "C3 declining the link to B1"
+	positions[linked] = build(t, v("B1"), h("A2"), v("C3"))
+	positions[declined] = build(t, v("B1"), h("A2"), v("C3 ~B1:C3"))
+	bc, ok := game.NewLink(game.Point{Col: 1, Row: 0}, game.Point{Col: 2, Row: 2})
+	if !ok {
+		t.Fatal("B1 and C3 are not a knight's move apart")
+	}
+	if !positions[linked].HasLink(bc) || positions[declined].HasLink(bc) {
+		t.Fatal("the pair does not differ in the B1-C3 link, so it isolates nothing")
+	}
+	for row := range positions[linked].Size() {
+		for col := range positions[linked].Size() {
+			p := game.Point{Col: col, Row: row}
+			if positions[linked].At(p) != positions[declined].At(p) {
+				t.Fatalf("the pair differs at %s as well, so the link is not the only difference", p)
+			}
+		}
+	}
 
 	if len(positions) < 40 {
 		t.Fatalf("only %d positions were generated; the family is too small to say much", len(positions))

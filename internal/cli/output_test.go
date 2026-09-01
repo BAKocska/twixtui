@@ -172,13 +172,20 @@ func TestServeAnnouncesOnlyAfterItBinds(t *testing.T) {
 	}
 }
 
-// fixLocalZone pins the local zone for the test to somewhere that is not UTC, so
-// that a UTC machine cannot make a UTC-versus-local difference invisible.
-func fixLocalZone(t *testing.T) {
-	t.Helper()
-	previous := time.Local
+// TestMain fixes the local zone for the whole binary, somewhere that is not
+// UTC, so that a UTC machine cannot make a UTC-versus-local mistake invisible
+// to the rendering tests below.
+//
+// It is done here rather than inside the one test that needs it because
+// time.Local is a package-level variable that every time.Now in the process
+// reads. Assigning it while tests are running is a data race against anything
+// still winding down, and there is such a thing in this package: the race
+// detector catches the write landing against a relay goroutine left over from
+// an earlier test. Before m.Run, nothing else is running, and it is the only
+// point at which the assignment is safe.
+func TestMain(m *testing.M) {
 	time.Local = time.FixedZone("Test/+05:30", 5*3600+1800)
-	t.Cleanup(func() { time.Local = previous })
+	os.Exit(m.Run())
 }
 
 // TestLeaderboardHistoryIsInLocalTime covers the timestamps a player reads their
@@ -186,8 +193,6 @@ func fixLocalZone(t *testing.T) {
 // comparable, but the row is read by one person in one place and every other
 // surface dates a game in their time.
 func TestLeaderboardHistoryIsInLocalTime(t *testing.T) {
-	fixLocalZone(t)
-
 	dir := t.TempDir()
 	if _, err := run(t, dir, "profile", "create", "Alice"); err != nil {
 		t.Fatal(err)

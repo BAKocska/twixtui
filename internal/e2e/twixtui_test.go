@@ -96,6 +96,7 @@ func session(t *testing.T, args string, width, height int) *Terminal {
 // TestBinaryShowsTheMenu is the baseline: without it, a later assertion could
 // pass against an empty screen from a program that never started.
 func TestBinaryShowsTheMenu(t *testing.T) {
+	t.Parallel()
 	tm := session(t, "", 90, 30)
 	screen := tm.MustWaitFor("Tester", 20*time.Second)
 	if !tm.Alive() {
@@ -107,6 +108,7 @@ func TestBinaryShowsTheMenu(t *testing.T) {
 // TestHotseatGameDrawsTheBoard checks a game screen appears with a board on it,
 // which is the precondition for every resize assertion below.
 func TestHotseatGameDrawsTheBoard(t *testing.T) {
+	t.Parallel()
 	tm := session(t, "play local --size 12 --side vertical", 90, 34)
 	tm.MustWaitFor("A", 20*time.Second)
 	screen := tm.WaitSettled(10 * time.Second)
@@ -139,6 +141,7 @@ func boardColumnLabels(screen string) string {
 // apart, and produces lines wider than the old terminal could hold. Both are
 // impossible unless the new size arrived.
 func TestResizeIsDeliveredToTheGame(t *testing.T) {
+	t.Parallel()
 	tm := session(t, "play local --size 12 --side vertical", 60, 20)
 	tm.MustWaitFor("A", 20*time.Second)
 	small := tm.WaitSettled(10 * time.Second)
@@ -194,6 +197,7 @@ func TestResizeIsDeliveredToTheGame(t *testing.T) {
 // frame invariant at each one. A frame wider than its terminal corrupts the
 // display, and it is the failure a resize bug produces.
 func TestResizeMatrixKeepsTheFrameIntact(t *testing.T) {
+	t.Parallel()
 	sizes := [][2]int{
 		{100, 34}, // comfortable
 		{80, 24},  // the conventional default
@@ -241,6 +245,7 @@ func TestResizeMatrixKeepsTheFrameIntact(t *testing.T) {
 // glyphs across the whole frame would not work, because the panel's legend draws
 // the same glyphs and the panel is dropped at small sizes.
 func TestGameSurvivesResizeWithStateIntact(t *testing.T) {
+	t.Parallel()
 	const (
 		w, h = 100, 34
 	)
@@ -286,6 +291,7 @@ func TestGameSurvivesResizeWithStateIntact(t *testing.T) {
 // TestTooSmallStateIsExplicit checks that a terminal below the supported size
 // says so rather than drawing a broken board.
 func TestTooSmallStateIsExplicit(t *testing.T) {
+	t.Parallel()
 	tm := session(t, "play local --size 12 --side vertical", 80, 24)
 	tm.MustWaitFor("A", 20*time.Second)
 	screen := tm.ResizeAndWait(18, 5, 20*time.Second)
@@ -310,6 +316,7 @@ func TestTooSmallStateIsExplicit(t *testing.T) {
 // TestTutorialResizes covers the other screen with a board on it, whose panel
 // holds wrapped prose and so has a different failure mode from the game's.
 func TestTutorialResizes(t *testing.T) {
+	t.Parallel()
 	tm := session(t, "learn board", 100, 34)
 	tm.MustWaitFor("A", 20*time.Second)
 	tm.WaitSettled(10 * time.Second)
@@ -329,6 +336,7 @@ func TestTutorialResizes(t *testing.T) {
 // alternate screen has to restore the terminal on the way out, and a non-zero
 // status here would mean it fell over instead of exiting.
 func TestQuitEndsTheProgramCleanly(t *testing.T) {
+	t.Parallel()
 	tm := session(t, "play local --size 12 --side vertical", 80, 24)
 	tm.MustWaitFor("A", 20*time.Second)
 	tm.WaitSettled(10 * time.Second)
@@ -356,6 +364,7 @@ func TestQuitEndsTheProgramCleanly(t *testing.T) {
 // TestCtrlCEndsTheProgramCleanly covers the other way out, which must also
 // restore the terminal rather than leaving it in the alternate screen.
 func TestCtrlCEndsTheProgramCleanly(t *testing.T) {
+	t.Parallel()
 	tm := session(t, "play local --size 12 --side vertical", 80, 24)
 	tm.MustWaitFor("A", 20*time.Second)
 	tm.WaitSettled(10 * time.Second)

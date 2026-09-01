@@ -12,11 +12,22 @@ import (
 // that would fail if the capability did not work, not merely a test that runs
 // without error.
 
+// Every test in this package calls t.Parallel, here and in the files beside
+// this one. It is safe because nothing is shared: each test gets its own tmux
+// server on its own socket, and the ones that drive the binary get their own
+// configuration directory too. It is worth doing because these tests wait far
+// more than they compute -- for a terminal to settle, for a program to print --
+// so they overlap almost perfectly. Run one at a time the package takes 39
+// seconds; run together it takes 5, and 9 on a machine with two cores. Thirty
+// seconds is the difference between a suite people run before pushing and one
+// they do not.
+
 // sizeReporter is a shell loop that prints the terminal size it sees. It is the
 // instrument used to prove a resize really reached the program.
 const sizeReporter = `sh -c 'while :; do stty size; sleep 0.1; done'`
 
 func TestCaptureSeesProgramOutput(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, `sh -c 'echo HELLO-FROM-PROGRAM; sleep 30'`, Options{Width: 60, Height: 20})
 	tm.MustWaitFor("HELLO-FROM-PROGRAM", 5*time.Second)
 	if !tm.Alive() {
@@ -27,6 +38,7 @@ func TestCaptureSeesProgramOutput(t *testing.T) {
 // TestWaitForCanFail is the positive control for WaitFor: if this passes, a
 // successful WaitFor elsewhere means something.
 func TestWaitForCanFail(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, `sh -c 'echo something-else; sleep 30'`, Options{Width: 40, Height: 10})
 	_, err := tm.WaitFor("THIS-STRING-IS-NEVER-PRINTED", 700*time.Millisecond)
 	if err == nil {
@@ -44,6 +56,7 @@ func TestWaitForCanFail(t *testing.T) {
 // pass: a suite that succeeds because the program under test died at once and
 // every assertion was made against an empty screen.
 func TestDetectsImmediateExit(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, `sh -c 'exit 3'`, Options{Width: 40, Height: 10})
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -67,6 +80,7 @@ func TestDetectsImmediateExit(t *testing.T) {
 // TestSizeMatchesWhatTheProgramSees checks the harness reports the same size the
 // program is told, so width assertions are meaningful.
 func TestSizeMatchesWhatTheProgramSees(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, sizeReporter, Options{Width: 70, Height: 24})
 	tm.WaitSettled(5 * time.Second)
 	width, height := tm.Size()
@@ -87,6 +101,7 @@ func TestSizeMatchesWhatTheProgramSees(t *testing.T) {
 // on content that only the new size could produce, so a resize that was never
 // delivered fails the test instead of passing quietly.
 func TestResizeReachesTheProgram(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, sizeReporter, Options{Width: 100, Height: 30})
 	tm.WaitSettled(5 * time.Second)
 
@@ -111,6 +126,7 @@ func TestResizeReachesTheProgram(t *testing.T) {
 // TestResizeSmallerThenBackRestoresSize covers the shrink-and-regrow cycle a
 // herdr side pane produces.
 func TestResizeSmallerThenBackRestoresSize(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, sizeReporter, Options{Width: 90, Height: 28})
 	tm.WaitSettled(5 * time.Second)
 	originalW, originalH := tm.Size()
@@ -134,12 +150,14 @@ func TestResizeSmallerThenBackRestoresSize(t *testing.T) {
 // output. Scrollback captures do not contain alternate-screen output, so a
 // harness that read scrollback would show an empty screen for every TUI.
 func TestAlternateScreenIsCaptured(t *testing.T) {
+	t.Parallel()
 	prog := `sh -c 'printf "\033[?1049h\033[H"; printf "INSIDE-ALT-SCREEN"; sleep 30'`
 	tm := Start(t, prog, Options{Width: 50, Height: 12})
 	tm.MustWaitFor("INSIDE-ALT-SCREEN", 5*time.Second)
 }
 
 func TestSendTextAndKeys(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, `sh -c 'read line; echo "GOT:[$line]"; sleep 30'`, Options{Width: 50, Height: 12})
 	tm.WaitSettled(3 * time.Second)
 	tm.SendText("hjkl")
@@ -150,6 +168,7 @@ func TestSendTextAndKeys(t *testing.T) {
 // TestWaitSettledReturnsTheFinalFrame checks the settle detector waits for output
 // to stop rather than sampling mid-render.
 func TestWaitSettledReturnsTheFinalFrame(t *testing.T) {
+	t.Parallel()
 	prog := `sh -c 'for i in 1 2 3 4 5; do echo step-$i; sleep 0.08; done; echo FINAL; sleep 30'`
 	tm := Start(t, prog, Options{Width: 40, Height: 15})
 	screen := tm.WaitSettled(10 * time.Second)
@@ -159,17 +178,20 @@ func TestWaitSettledReturnsTheFinalFrame(t *testing.T) {
 }
 
 func TestEnvironmentIsPassedThrough(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, `sh -c 'echo "VAL=$TWIXTUI_TEST_VAR"; sleep 30'`,
 		Options{Width: 40, Height: 10, Env: []string{"TWIXTUI_TEST_VAR=marker-9137"}})
 	tm.MustWaitFor("VAL=marker-9137", 5*time.Second)
 }
 
 func TestNoColorIsSetByDefault(t *testing.T) {
+	t.Parallel()
 	tm := Start(t, `sh -c 'echo "NC=[$NO_COLOR]"; sleep 30'`, Options{Width: 40, Height: 10})
 	tm.MustWaitFor("NC=[1]", 5*time.Second)
 }
 
 func TestVisibleWidth(t *testing.T) {
+	t.Parallel()
 	cases := map[string]int{
 		"":       0,
 		"abc":    3,

@@ -12,6 +12,18 @@ import (
 // stepKey names a step the way the tables below refer to it.
 func stepKey(l Lesson, i int) string { return l.ID + "/" + strconv.Itoa(i) }
 
+// pointNames renders a set of holes in the sorted form the claim tests below
+// compare against, so a position the rules engine works out can be held up
+// against the holes a lesson actually names.
+func pointNames(ps []game.Point) []string {
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, p.String())
+	}
+	slices.Sort(out)
+	return out
+}
+
 // wrongAnswers is one move per task that the tutorial has to reject, together
 // with the substrings its feedback has to contain. The point is not that the
 // move is refused but that the learner is told the real reason, so each entry
@@ -92,9 +104,6 @@ func TestStepsCarryContent(t *testing.T) {
 		}
 		for i, s := range l.Steps {
 			key := stepKey(l, i)
-			if strings.TrimSpace(s.Text) == "" && s.Task == nil {
-				t.Errorf("%s: step has neither text nor a task", key)
-			}
 			if strings.TrimSpace(s.Text) == "" {
 				t.Errorf("%s: step text is empty", key)
 			}
@@ -324,8 +333,16 @@ func TestPuzzleClaims(t *testing.T) {
 	if !ok {
 		t.Fatal("no winning lesson")
 	}
-	if got, want := winners(t, winning.Steps[1]), []string{"F12", "J12"}; !slices.Equal(got, want) {
-		t.Errorf("winning lesson: winning moves are %v, but the step highlights %v", got, want)
+	// The step before poses the same position and marks the holes its prose
+	// names, so the claim is checked against the lesson rather than against a
+	// copy of it kept here: editing the highlight without editing the position
+	// used to leave this passing.
+	marked := pointNames(winning.Steps[0].Highlight)
+	if len(marked) == 0 {
+		t.Fatal("winning lesson: the opening step marks no holes, so there is no claim left to check")
+	}
+	if got := winners(t, winning.Steps[1]); !slices.Equal(got, marked) {
+		t.Errorf("winning lesson: winning moves are %v, but the step highlights %v", got, marked)
 	}
 	final, err := winning.Steps[2].Position()
 	if err != nil {
@@ -340,8 +357,9 @@ func TestPuzzleClaims(t *testing.T) {
 	if !ok {
 		t.Fatal("no practice lesson")
 	}
-	if got, want := winners(t, practice.Steps[0]), []string{"F7"}; !slices.Equal(got, want) {
-		t.Errorf("practice: winning moves are %v, want only %v", got, want)
+	// The model answer is the claim: the prompt says find *the* move that wins.
+	if got, want := winners(t, practice.Steps[0]), []string{practice.Steps[0].Task.Answer.String()}; !slices.Equal(got, want) {
+		t.Errorf("practice: winning moves are %v, want only the model answer %v", got, want)
 	}
 
 	save, err := practice.Steps[1].Position()
@@ -364,8 +382,8 @@ func TestPuzzleClaims(t *testing.T) {
 		}
 	}
 	slices.Sort(savers)
-	if got, want := savers, []string{"G6"}; !slices.Equal(got, want) {
-		t.Errorf("practice: moves that answer the threat are %v, want only %v", got, want)
+	if got, want := savers, []string{practice.Steps[1].Task.Answer.String()}; !slices.Equal(got, want) {
+		t.Errorf("practice: moves that answer the threat are %v, want only the model answer %v", got, want)
 	}
 	idle := save.Clone()
 	if _, err := idle.PlayPeg(game.Point{Col: 5, Row: 5}); err != nil {
@@ -404,9 +422,14 @@ func TestBlockingClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	c6 := game.Point{Col: 2, Row: 5}
-	before := borderReach(g, game.Horizontal, c6)
-	if names(before) != "A5 and A7" {
-		t.Errorf("C6 reaches %s, but the step's prose names A5 and A7", names(before))
+	before := pointNames(borderReach(g, game.Horizontal, c6))
+	// Step two marks the two routes its prose names, on the same position.
+	routes := pointNames(l.Steps[1].Highlight)
+	if len(routes) == 0 {
+		t.Fatal("the blocking lesson marks no routes, so there is no claim left to check")
+	}
+	if !slices.Equal(before, routes) {
+		t.Errorf("C6 reaches %v, but the step marks %v", before, routes)
 	}
 	var cutters []string
 	for _, p := range g.LegalPlacements(game.Vertical) {
@@ -419,8 +442,8 @@ func TestBlockingClaim(t *testing.T) {
 		}
 	}
 	slices.Sort(cutters)
-	if got, want := cutters, []string{"C7"}; !slices.Equal(got, want) {
-		t.Errorf("moves that cut C6 off are %v, want only %v", got, want)
+	if got, want := cutters, []string{step.Task.Answer.String()}; !slices.Equal(got, want) {
+		t.Errorf("moves that cut C6 off are %v, want only the model answer %v", got, want)
 	}
 }
 

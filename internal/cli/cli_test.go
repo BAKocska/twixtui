@@ -501,14 +501,35 @@ func TestProfileFlagCreatesTheFirstProfile(t *testing.T) {
 }
 
 // TestLeaderboardResetNeedsConfirmation checks a destructive command cannot be
-// triggered by a mistyped one.
+// triggered by a mistyped one. Reporting a refusal is not the guarantee: a
+// refusal that arrives after the log has already gone is exactly the defect, so
+// the standings have to survive the unconfirmed attempt. The confirmed one is
+// here as its own control, because a reset that never deletes anything would
+// otherwise satisfy the first half perfectly.
 func TestLeaderboardResetNeedsConfirmation(t *testing.T) {
 	dir := t.TempDir()
+	lbSeed(t, dir, "Balint", "Reka")
+
 	if _, err := run(t, dir, "leaderboard", "reset"); err == nil {
 		t.Error("reset should require confirmation")
 	}
+	out, err := run(t, dir, "leaderboard", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Balint") {
+		t.Errorf("the unconfirmed reset deleted the log it refused to delete:\n%s", out)
+	}
+
 	if _, err := run(t, dir, "leaderboard", "reset", "--yes"); err != nil {
 		t.Errorf("reset with confirmation: %v", err)
+	}
+	out, err = run(t, dir, "leaderboard", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "Balint") {
+		t.Errorf("the confirmed reset left the log behind:\n%s", out)
 	}
 }
 
@@ -673,17 +694,60 @@ func TestGameCommandsOnAnEmptyStore(t *testing.T) {
 
 // TestImportRefusesATamperedRecord checks the integrity check is wired into the
 // command, not merely present in the engine.
+//
+// A record that is merely malformed never reaches the digest: the parser
+// refuses it for the field it is missing, so a fixture like that says nothing
+// about whether the check is wired in at all. The case that does is a
+// well-formed record with one move changed under its own digest — and it only
+// says anything beside the same record untouched, which is why the sound one
+// goes in first. Without it, an import that refused everything would pass.
 func TestImportRefusesATamperedRecord(t *testing.T) {
-	dir := t.TempDir()
+	rs := game.Std
+	rs.Size = 6
+	g, err := game.ReplayTranscript(rs, "B1; C3; resign")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sound := rec.Encode()
+	tampered := strings.Replace(sound, "C3", "C4", 1)
+	if tampered == sound {
+		t.Fatal("the fixture does not contain the move being altered")
+	}
+
+	if out, err := importStdin(t, sound); err != nil {
+		t.Fatalf("a sound record read from standard input was refused: %v\n%s", err, out)
+	}
+
+	if _, err := importStdin(t, tampered); err == nil {
+		t.Error("a record with a move changed under its digest was imported")
+	} else if !strings.Contains(err.Error(), "digest") {
+		// The record cross-checks its final position too, so a refusal that
+		// does not mention the digest means something other than the integrity
+		// check caught this, and the check itself is still unproven.
+		t.Errorf("the refusal reads %q, which does not say the record no longer matches its digest", err)
+	}
+
+	if _, err := importStdin(t, "twixtui-record 1\nmoves D4\ndigest 0000\n"); err == nil {
+		t.Error("importing a malformed record should be refused")
+	}
+}
+
+// importStdin runs "game import -" with body on standard input, each call
+// against its own store so that one import cannot be recognised as another's.
+func importStdin(t *testing.T, body string) (string, error) {
+	t.Helper()
 	root := NewRootCommand()
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetIn(strings.NewReader("twixtui-record 1\nmoves D4\ndigest 0000\n"))
-	root.SetArgs([]string{"--config", dir, "game", "import", "-"})
-	if err := root.Execute(); err == nil {
-		t.Error("importing a malformed record should be refused")
-	}
+	root.SetIn(strings.NewReader(body))
+	root.SetArgs([]string{"--config", t.TempDir(), "game", "import", "-"})
+	err := root.Execute()
+	return out.String(), err
 }
 
 func TestVersionPrintsBuildInfo(t *testing.T) {
@@ -718,19 +782,35 @@ func TestPlayBotRequiresASideChoice(t *testing.T) {
 
 // TestUnknownRulesetAndTierAreRefused checks bad values fail before a game
 // starts rather than part way through one.
+//
+// Everything after the checks opens the interface, which a test has no terminal
+// for, so a fully specified game fails here too. "It returned an error" is
+// therefore true whether the value was inspected or not, and the assertions
+// have to be on the sentence: a refusal that names the flag and the value the
+// player typed can only have come from the check.
 func TestUnknownRulesetAndTierAreRefused(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := run(t, dir, "profile", "create", "Balint"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run(t, dir, "play", "bot", "--side", "vertical", "--ruleset", "nonsense"); err == nil {
-		t.Error("an unknown ruleset should be refused")
-	}
-	if _, err := run(t, dir, "play", "bot", "--side", "vertical", "--tier", "nonsense"); err == nil {
-		t.Error("an unknown tier should be refused")
-	}
-	if _, err := run(t, dir, "play", "bot", "--side", "vertical", "--size", "3"); err == nil {
-		t.Error("an impossible board size should be refused")
+	for _, tc := range []struct {
+		flag, value string
+	}{
+		{"ruleset", "nonsense"},
+		{"tier", "nonsense"},
+		{"size", "3"},
+	} {
+		_, err := run(t, dir, "play", "bot", "--side", "vertical", "--"+tc.flag, tc.value)
+		if err == nil {
+			t.Errorf("--%s %s was accepted", tc.flag, tc.value)
+			continue
+		}
+		for _, want := range []string{tc.flag, tc.value} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("--%s %s failed without naming %q, so the game got past the check: %v",
+					tc.flag, tc.value, want, err)
+			}
+		}
 	}
 }
 
