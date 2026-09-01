@@ -753,9 +753,17 @@ func onboardingContent() []onboardingStep {
 				"B8", "F9", "A10", "G11", "C9", "E12",
 			},
 			highlight: pointsNamed("F1", "E12"),
+			// This step said links form "as the peg goes down", which is the rule
+			// under the other linking convention, not the one the introduction
+			// runs on: here the player is offered each link and may decline it,
+			// which the links step says four screens later. A player who read
+			// both was told two different rules, and the first one is the one
+			// they would act on. The guard test now reads every step rather than
+			// only the step named after the topic, which is why this survived a
+			// fix to that step.
 			text: "TwixT is about joining your own two sides of the board. Each turn you put one peg into a hole; " +
-				"two of your own pegs a knight's move apart link up as the peg goes down, and the first unbroken " +
-				"chain of linked pegs from one of your own border lines to the other wins the game. " +
+				"pegs of yours a knight's move apart can then be linked, and the first unbroken chain of linked " +
+				"pegs from one of your own border lines to the other wins the game. " +
 				"Vertical has just finished one here: it runs from F1 in the top row down to E12 in the bottom.",
 		},
 		{

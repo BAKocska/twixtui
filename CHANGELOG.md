@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-01
+
+### Fixed
+
+- The introduction's first screen taught the wrong linking rule. It said pegs a
+  knight's move apart link up as the peg goes down, which is how the other
+  linking convention works; the introduction runs on the default rules, where
+  each link is offered and may be declined, and its own fourth screen said so.
+  A new player was told two different rules four screens apart and would have
+  acted on the first. The step now says pegs can be linked, and the test that
+  holds the introduction to the rules it runs on reads every step rather than
+  only the step named after the topic, which is how this survived an earlier fix
+  to the other screen.
+
 ## [0.2.0] - 2026-09-01
 
 ### Added
@@ -304,7 +318,8 @@ First release.
   succeeding silently, and the tutorial's prose is set to a readable measure on a wide
   terminal.
 
-[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/BAKocska/twixtui/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/BAKocska/twixtui/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/BAKocska/twixtui/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/BAKocska/twixtui/releases/tag/v0.1.0

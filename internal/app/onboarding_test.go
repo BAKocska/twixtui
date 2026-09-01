@@ -852,8 +852,26 @@ func onboardingCount(m *onboardingModel, pl game.Player) int {
 // ruleset the introduction uses cannot leave the prose behind.
 func TestTheIntroductionTeachesTheRulesItIsPlayedUnder(t *testing.T) {
 	rs := learn.Rules()
+	steps := onboardingContent()
+
+	// Every step, not only the one named after the topic. Scoping this to the
+	// links step let the goal step go on teaching that links form on their own,
+	// under a ruleset where the player is offered them — so the first screen and
+	// the fourth stated different rules, and the fix to one of them read as a fix
+	// to both.
+	if rs.DeliberateLinking {
+		for _, s := range steps {
+			for _, wrong := range []string{"link up as", "as the peg goes down", "made for you", "automatically"} {
+				if strings.Contains(s.text, wrong) {
+					t.Errorf("linking is deliberate under %s, yet step %q says %q:\n%s",
+						rs.Describe(), s.id, wrong, s.text)
+				}
+			}
+		}
+	}
+
 	var links string
-	for _, s := range onboardingContent() {
+	for _, s := range steps {
 		if s.id == "links" {
 			links = s.text
 		}
