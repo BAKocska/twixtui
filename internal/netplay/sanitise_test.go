@@ -1,6 +1,9 @@
 package netplay
 
 import (
+	"encoding/binary"
+	"encoding/hex"
+	"hash/crc32"
 	"strings"
 	"testing"
 	"unicode"
@@ -114,5 +117,58 @@ func TestRejectedMoveCodeCannotCarryEscapes(t *testing.T) {
 	// directly because a well-formed code cannot carry this field.
 	if got := safeText(mc.Move, maxMoveLen); containsControl(got) {
 		t.Errorf("a rejected move is echoed as %q, which still holds a control character", got)
+	}
+}
+
+// TestDecodedInviteNameCannotCarryEscapes checks the sanitiser runs when an
+// invite is read, not only when one is written.
+//
+// The encoder filters the name it writes, so a hostile invite cannot be produced
+// through it. That is exactly why the decoder has to filter too: the sender is
+// not obliged to use our encoder. The code below is forged the way such a sender
+// would forge one, with a correct checksum over an unfiltered name.
+func TestDecodedInviteNameCannotCarryEscapes(t *testing.T) {
+	rs := game.Std
+	rs.Size = 12
+	fingerprint, err := hex.DecodeString(rs.Fingerprint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "abcd1234"
+
+	var flags byte
+	for _, f := range []struct {
+		on   bool
+		mask byte
+	}{
+		{rs.DeliberateLinking, flagDeliberate},
+		{rs.LinkRemoval, flagLinkRemoval},
+		{rs.PegRemoval, flagPegRemoval},
+		{rs.OwnLinksMayCross, flagOwnCross},
+		{rs.Swap, flagSwap},
+	} {
+		if f.on {
+			flags |= f.mask
+		}
+	}
+
+	payload := []byte{codeVersion, byte(rs.Size), flags, byte(game.Vertical)}
+	payload = append(payload, fingerprint...)
+	payload = append(payload, byte(len(id)))
+	payload = append(payload, id...)
+	payload = append(payload, byte(len(hostile)))
+	payload = append(payload, hostile...)
+	payload = binary.BigEndian.AppendUint32(payload, crc32.ChecksumIEEE(payload))
+	code := formatCode(invitePrefix, payload)
+
+	got, err := DecodeInvite(code)
+	if err != nil {
+		t.Fatalf("the forged invite should still decode: %v", err)
+	}
+	if containsControl(got.HostName) {
+		t.Errorf("decoded host name = %q, which still holds a control character", got.HostName)
+	}
+	if got.HostName == "" {
+		t.Error("the whole name was thrown away rather than filtered")
 	}
 }

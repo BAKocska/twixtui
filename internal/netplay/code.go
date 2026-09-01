@@ -542,6 +542,11 @@ func DecodeInvite(code string) (Invite, error) {
 	if err != nil {
 		return inv, fmt.Errorf("%w: the invite's host name is cut short", ErrBadCode)
 	}
+	// The name is chosen by whoever made the invite and is drawn on this
+	// player's terminal, so it is sanitised on the way in as well as on the way
+	// out. Filtering only when encoding would leave every caller of this
+	// function responsible for remembering, and there is more than one.
+	name = safeText(name, maxNameLen)
 	if len(rest) != 0 {
 		return inv, fmt.Errorf("%w: the invite carries %d bytes more than it should", ErrBadCode, len(rest))
 	}
