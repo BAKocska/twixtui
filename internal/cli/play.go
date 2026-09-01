@@ -324,7 +324,7 @@ The address to share is printed before the wait begins.`,
 				session, err = listener.Wait(ctx, hostOpts)
 			}
 			if err != nil {
-				return err
+				return gaveUp(ctx, "an opponent", err)
 			}
 			defer session.Close()
 
@@ -362,19 +362,38 @@ starts rather than going wrong later.`,
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
+			// Say what is being waited for before waiting for it. A relay that
+			// is reachable but has nobody in the room accepts the connection
+			// and then says nothing at all, so a joiner that prints nothing is
+			// indistinguishable from a hung one. This is the ordinary path for
+			// a mistyped code, which is why the code is echoed back: it is the
+			// one thing the player can check without the host on the phone.
+			// The banner goes out before the call rather than after it because
+			// the wait happens inside the call; a relay that cannot be reached
+			// prints its own error a moment later and supersedes it.
+			out := cmd.OutOrStdout()
 			guestOpts := netplay.GuestOptions{Name: player}
 			var session netplay.Session
 			if f.relay != "" {
+				fmt.Fprintf(out, "Pairing code: %s\n", args[0])
+				fmt.Fprintf(out, "Joining through the relay at %s.\n\n", f.relay)
+				fmt.Fprintln(out, "Waiting for the host. Press ctrl+c to give up.")
 				session, err = netplay.JoinViaRelay(ctx, f.relay, args[0], guestOpts)
 			} else {
-				session, err = netplay.Dial(ctx, netplay.NormalizeAddr(args[0]), guestOpts)
+				// A direct join usually connects or fails within a round trip,
+				// so it gets one line rather than the relay's three; a filtered
+				// port is the case where it too sits there, and then this is
+				// what says so.
+				addr := netplay.NormalizeAddr(args[0])
+				fmt.Fprintf(out, "Connecting to %s. Press ctrl+c to give up.\n", addr)
+				session, err = netplay.Dial(ctx, addr, guestOpts)
 			}
 			if err != nil {
-				return err
+				return gaveUp(ctx, "the host", err)
 			}
 			defer session.Close()
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Connected to %s. You play %s.\n",
+			fmt.Fprintf(out, "Connected to %s. You play %s.\n",
 				session.OpponentName(), session.Side())
 			return runRemoteGame(cmd, deps, player, session)
 		},
@@ -382,6 +401,21 @@ starts rather than going wrong later.`,
 	cmd.Flags().StringVar(&f.relay, "relay", "",
 		"join through a relay at this address, using a pairing code instead of an address")
 	return cmd
+}
+
+// gaveUp turns a cancelled wait into a sentence a player can act on.
+//
+// Cancelling the context closes the socket out from under the read that is
+// blocked on it, so what the network layer reports is a use-of-closed-connection
+// error naming an ephemeral port: accurate, and no use to somebody who has just
+// pressed ctrl+c on purpose. The original error is dropped rather than wrapped
+// because it describes the cancellation this function is already naming, not a
+// reason for it. The status stays non-zero: no game was played.
+func gaveUp(ctx context.Context, waitingFor string, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("gave up waiting for %s", waitingFor)
+	}
+	return err
 }
 
 // runRemoteGame builds the game screen for an established session.

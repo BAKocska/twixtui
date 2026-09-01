@@ -394,12 +394,28 @@ func (r *Relay) Serve(ctx context.Context, l net.Listener) error {
 	}
 }
 
-// Serve runs a relay on addr until ctx is cancelled.
-func Serve(ctx context.Context, addr string) error {
+// BindRelay opens a relay's listening socket. The address may be a bare port
+// (":4271"), a host and port, or a bare host, which takes DefaultRelayPort.
+//
+// Binding is a step of its own so that a caller can announce the relay after it
+// holds the address rather than before it asks for it. That log line is what an
+// operator — or a readiness probe watching for it — reads to know the relay is
+// up, and a taken port or a host that does not resolve is exactly when the
+// announcement must not appear.
+func BindRelay(addr string) (net.Listener, error) {
 	target := addPort(addr, DefaultRelayPort)
 	l, err := net.Listen("tcp", target)
 	if err != nil {
-		return fmt.Errorf("listening on %s: %w", target, err)
+		return nil, fmt.Errorf("listening on %s: %w", target, err)
+	}
+	return l, nil
+}
+
+// Serve runs a relay on addr until ctx is cancelled.
+func Serve(ctx context.Context, addr string) error {
+	l, err := BindRelay(addr)
+	if err != nil {
+		return err
 	}
 	return ServeOn(ctx, l)
 }

@@ -260,6 +260,98 @@ func TestLeavingTheOnlyScreenEndsTheProgram(t *testing.T) {
 	}
 }
 
+// TestLeavingAMenuStartedGameSaysSoWhereThePlayerLands is the note's other half.
+// Deferring it to the command line was right while leaving a game ended the
+// program, because anything drawn on the way out goes with the alternate screen.
+// Once a game opened from the menu came back to the menu instead, the deferral
+// told the player nothing at the moment the save happened, and the notes queued
+// up until the program finally exited: a player who left three games read three
+// notices at once, several screens away from the act each describes.
+func TestLeavingAMenuStartedGameSaysSoWhereThePlayerLands(t *testing.T) {
+	var notes []string
+	d := shellTestDeps(t)
+	d.Note = func(line string) { notes = append(notes, line) }
+	if _, err := d.Profiles.Create("ada"); err != nil {
+		t.Fatal(err)
+	}
+	shell := NewShell(d, NewMenu(d, "ada"))
+	shell.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd := shell.Push(screen); cmd != nil {
+		cmd()
+	}
+	// Play a move, so there is a game in progress worth saving.
+	gsCommitAt(t, screen.(*gameScreen), game.Point{Col: 5, Row: 5})
+
+	shellRun(t, shell, gsKeyMsg(t, "q"))
+
+	saved := d.Games.List()
+	if len(saved) != 1 {
+		t.Fatalf("%d games stored, want 1", len(saved))
+	}
+	if _, ok := shell.top().(*Menu); !ok {
+		t.Fatalf("leaving the game landed on %T, want the menu", shell.top())
+	}
+	frame := shell.View().Content
+	if !strings.Contains(frame, "saved") || !strings.Contains(frame, saved[0].ID) {
+		t.Errorf("the screen the player lands on does not say the game was saved as %s:\n%s",
+			saved[0].ID, frame)
+	}
+	if len(notes) != 0 {
+		t.Errorf("the note was left for the command line, which prints it only when the program ends: %q", notes)
+	}
+}
+
+// TestLeavingTheOnlyGameLeavesTheNoteForTheCommandLine is the departure the
+// deferred print was written for: a game started from the command line has no
+// screen to come back to, so the line has to outlive the interface.
+func TestLeavingTheOnlyGameLeavesTheNoteForTheCommandLine(t *testing.T) {
+	var notes []string
+	d := gsTestDeps(t)
+	d.Note = func(line string) { notes = append(notes, line) }
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := NewShell(d, screen)
+	shell.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	gsCommitAt(t, screen.(*gameScreen), game.Point{Col: 5, Row: 5})
+
+	if !shellRun(t, shell, gsKeyMsg(t, "q")) {
+		t.Fatal("leaving the only screen did not end the program")
+	}
+	saved := d.Games.List()
+	if len(saved) != 1 {
+		t.Fatalf("%d games stored, want 1", len(saved))
+	}
+	joined := strings.Join(notes, "\n")
+	if !strings.Contains(joined, "saved") || !strings.Contains(joined, saved[0].ID) {
+		t.Errorf("the command line was not told the game was saved as %s: %q", saved[0].ID, joined)
+	}
+}
+
+// shellRun drives the shell the way Bubble Tea does: the message goes in, and
+// whatever command comes back is run and its message fed in again, until the
+// loop settles. It reports whether the program ended.
+func shellRun(t *testing.T, shell *Shell, msg tea.Msg) bool {
+	t.Helper()
+	for i := 0; msg != nil && i < 8; i++ {
+		if _, ok := msg.(tea.QuitMsg); ok {
+			return true
+		}
+		_, cmd := shell.Update(msg)
+		if cmd == nil {
+			return false
+		}
+		msg = cmd()
+	}
+	return false
+}
+
 // TestAFinishedGameIsNotOfferedAgain reproduces a sequence a reviewer found by
 // playing: open the saved-game list, resume a game, finish it by resignation,
 // leave, and the list underneath still offers the game it had read before the
@@ -397,5 +489,55 @@ func gsCommitAt(t *testing.T, s *gameScreen, p game.Point) {
 			cmd()
 		}
 		s.autosave()
+	}
+}
+
+// TestAnImportedGameIsNotOfferedForResumption covers a game read in from
+// elsewhere with "game import". Its two players are named in the record and
+// neither of them is this machine's player, so playing on in it would mean
+// taking a seat that belongs to one of them and then claiming the result. An
+// imported record can be unfinished, so it does reach the list of games waiting
+// for a move; it is listed there to be found and replayed, not resumed.
+func TestAnImportedGameIsNotOfferedForResumption(t *testing.T) {
+	d := shellTestDeps(t)
+	if _, err := d.Profiles.Create("Ann"); err != nil {
+		t.Fatal(err)
+	}
+	imported := mnSaveGame(t, d, gamestore.Imported, "Cyd", "Dov")
+	mine := mnSaveGame(t, d, gamestore.Hotseat, "Ann", "Ben")
+
+	menu := NewMenu(d, "Ann")
+	if cmd := menu.openSaved(); cmd != nil {
+		cmd()
+	}
+	ch, ok := menu.form.(*chooser)
+	if !ok {
+		t.Fatalf("the saved-game list did not open: %T", menu.form)
+	}
+
+	var sawImported, sawMine bool
+	for _, o := range ch.opts {
+		sv, ok := o.value.(gamestore.Saved)
+		if !ok {
+			continue
+		}
+		switch sv.ID {
+		case imported.ID:
+			sawImported = true
+			if !o.disabled {
+				t.Error("an imported game is offered for resumption")
+			}
+			if !strings.Contains(savedHelp(sv), "not") {
+				t.Errorf("the row does not say it cannot be played on: %q", savedHelp(sv))
+			}
+		case mine.ID:
+			sawMine = true
+			if o.disabled {
+				t.Error("this machine's own unfinished game is not offered")
+			}
+		}
+	}
+	if !sawImported || !sawMine {
+		t.Fatalf("the list is missing rows: imported=%v mine=%v", sawImported, sawMine)
 	}
 }

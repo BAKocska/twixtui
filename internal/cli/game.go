@@ -215,7 +215,11 @@ receives it can check it arrived intact and replays to the game it claims to be.
 		Long: `Read a game record in, checking it as it goes.
 
 A record that has been altered or truncated is refused, naming what went wrong,
-rather than being loaded as a different game. Use - to read standard input.`,
+rather than being loaded as a different game. Use - to read standard input.
+
+A record names no players and says nothing about how it was played, so an
+imported game is listed by its two sides rather than under your profile. A
+record already held here is recognised and named rather than saved twice.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var body []byte
@@ -228,7 +232,7 @@ rather than being loaded as a different game. Use - to read standard input.`,
 			if err != nil {
 				return err
 			}
-			g, _, err := game.LoadRecord(string(body))
+			g, rec, err := game.LoadRecord(string(body))
 			if err != nil {
 				return err
 			}
@@ -236,22 +240,37 @@ rather than being loaded as a different game. Use - to read standard input.`,
 			if err != nil {
 				return err
 			}
-			_, player, err := opts.requireProfile()
-			if err != nil {
+			out := cmd.OutOrStdout()
+			// One record read in twice is one game, not two. Recognising the
+			// repeat rather than refusing it leaves the command idempotent,
+			// which is what a script that re-runs an import wants, and naming
+			// the game that already holds it is more use than a refusal.
+			if had, ok := savedWithDigest(store, rec.Digest); ok {
+				_, err = fmt.Fprintf(out, "already saved as %s: %d moves, %s\n",
+					had.ID, g.Ply(), describeResult(g.Result()))
 				return err
 			}
+			// A record holds a ruleset, the moves and the result, and no names
+			// at all. Filing it under the importing profile as a hotseat game
+			// asserts two things the file does not say: that this machine's
+			// player was in it, and that it was played here. The two sides are
+			// the only participants the record does name, so they are who the
+			// listing shows, and the kind says where the game came from, which
+			// is what lets a list of games to carry on with tell an imported
+			// record from one of this machine's own. The importing profile is
+			// not consulted at all: it has nothing to do with this game.
 			sv := gamestore.Saved{
 				ID:       gamestore.NewID(),
-				Kind:     gamestore.Hotseat,
-				Player:   player,
-				Opponent: "imported",
+				Kind:     gamestore.Imported,
+				Player:   game.Vertical.String(),
+				Opponent: game.Horizontal.String(),
 				Record:   string(body),
 				Finished: g.Result().Over(),
 			}
 			if err := store.Put(sv); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(),
+			_, err = fmt.Fprintf(out,
 				"imported as %s: %d moves, %s\n", sv.ID, g.Ply(), describeResult(g.Result()))
 			return err
 		},
@@ -305,6 +324,30 @@ func describeResult(r game.Result) string {
 	return "unknown"
 }
 
+// savedWithDigest finds the stored game holding a given record, if there is one.
+//
+// Records are compared by the digest they carry rather than by their bytes: the
+// digest covers the ruleset, the moves, the result and the final position, so
+// two records with the same one are the same game however the file was
+// line-wrapped or re-encoded on the way here. A stored record that no longer
+// loads is skipped, as the listing skips it, rather than failing the import of
+// an unrelated game.
+func savedWithDigest(store *gamestore.Store, digest string) (gamestore.Saved, bool) {
+	if digest == "" {
+		return gamestore.Saved{}, false
+	}
+	for _, sv := range store.List() {
+		rec, err := game.DecodeRecord(sv.Record)
+		if err != nil {
+			continue
+		}
+		if rec.Digest == digest {
+			return sv, true
+		}
+	}
+	return gamestore.Saved{}, false
+}
+
 func newServeCommand(opts *options) *cobra.Command {
 	var addr string
 	cmd := &cobra.Command{
@@ -328,8 +371,19 @@ move. Run one for people who are content for you to see their games.
   twixtui play join --relay relay.example:4271 <pairing code>`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			fmt.Fprintf(cmd.OutOrStdout(), "relay listening on %s; press ctrl+c to stop\n", addr)
-			return netplay.Serve(cmd.Context(), addr)
+			// Announce the relay once it is listening, not before. This line is
+			// what an operator, or a readiness probe watching the log for it,
+			// reads to know the relay is up; printed ahead of the bind it
+			// asserts a relay that a taken port or an unresolvable host is
+			// about to prevent from existing. The address printed is the one
+			// actually bound, so a bare port and a port of 0 both name what a
+			// client should connect to.
+			l, err := netplay.BindRelay(addr)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "relay listening on %s; press ctrl+c to stop\n", l.Addr())
+			return netplay.ServeOn(cmd.Context(), l)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", ":4271", "address to listen on")

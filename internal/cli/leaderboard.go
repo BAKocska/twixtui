@@ -64,8 +64,14 @@ for more than beating the beginner.`,
 				w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 				fmt.Fprintln(w, "WHEN\tOPPONENT\tSIDE\tRESULT\tMOVES")
 				for _, r := range history {
+					// Stored in UTC, which is what keeps two machines' logs
+					// comparable, but read here by one person on one machine:
+					// shown in the same local time as the saved-game picker
+					// and "game list". Rendering the stored value as it stands
+					// dates every game an offset away from when the player
+					// remembers playing it, with nothing on the row to say so.
 					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n",
-						r.Played.Format("2006-01-02 15:04"),
+						r.Played.Local().Format("2006-01-02 15:04"),
 						leaderboard.DisplayName(r.Opponent),
 						r.Side, r.Outcome, r.Moves)
 				}

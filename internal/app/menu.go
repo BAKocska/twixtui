@@ -301,9 +301,15 @@ func (m *Menu) openSaved() tea.Cmd {
 	opts := make([]menuOption, 0, len(saved))
 	for _, sv := range saved {
 		o := menuOption{label: savedRow(now, sv), value: sv, help: savedHelp(sv)}
-		if sv.Kind == gamestore.Remote {
+		switch sv.Kind {
+		case gamestore.Remote:
 			// A live network game cannot be picked up without reconnecting,
 			// and the game screen refuses a remote seat with no session.
+			o.disabled = true
+		case gamestore.Imported:
+			// Somebody else's game, read in to be looked at. Its players are
+			// not this machine's players, so playing on in it would mean taking
+			// a seat that belongs to one of them and then claiming the result.
 			o.disabled = true
 		}
 		opts = append(opts, o)
@@ -358,8 +364,11 @@ func savedRow(now time.Time, sv gamestore.Saved) string {
 }
 
 func savedHelp(sv gamestore.Saved) string {
-	if sv.Kind == gamestore.Remote {
+	switch sv.Kind {
+	case gamestore.Remote:
 		return "A network game needs the connection back: host or join again from the network menu."
+	case gamestore.Imported:
+		return "A game imported from elsewhere. It can be replayed and looked at, but not played on: the seats belong to the two players named in it."
 	}
 	return fmt.Sprintf("A %s game, last played %s. It resumes exactly where it was left.",
 		sv.Kind, sv.Updated.Local().Format("2 January 2006 at 15:04"))

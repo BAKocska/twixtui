@@ -36,6 +36,11 @@ const (
 	Remote Kind = "remote"
 	// Correspondence is a game played by exchanging move codes.
 	Correspondence Kind = "correspondence"
+	// Imported is a record read in from elsewhere with "game import". The
+	// record format carries no names and no kind, so nobody on this machine is
+	// known to have played it: it is kept to be shown and replayed, and a
+	// listing that offers games to carry on with should leave it alone.
+	Imported Kind = "imported"
 )
 
 // Saved is one stored game.
