@@ -25,25 +25,25 @@ genuinely disagree, and where every rule comes from are written up in
 
 ## The board
 
-A 24×24 game in progress, drawn at the compact scale. The renderer switches to a
-larger scale, which draws every link with three-cell strokes, when the terminal is
-big enough for it.
+A 24×24 game in progress, drawn at the compact scale, which puts neighbouring holes
+two columns and one row apart. The renderer switches to a larger scale, four
+columns and two rows, when the terminal is big enough for it.
 
 ```
     A B C D E F G H I J K L M N O P Q R S T U V W X
  1    · · · · · · · · · · ● · · · · · · · · · · ·
  2  · · · · · · · · · · ·╱· · · · · · · · · · · · ·
- 3  · · · · · · · · · · ●⎼· · · · · · · · · · · · ·
- 4  · · · · · · · · · · · ·⎻● · · · · · · · · · · ·
+ 3  · · · · · · · · · · ●──╮· · · · · · · · · · · ·
+ 4  · · · · · · · · · · · ·╰● · · · · · · · · · · ·
  5  · · · · · · · · · · · ·╱· · · · · · · · · · · ·
- 6  · · · · · · · · · · · ●⎼· · · · · · · · · · · ·
- 7  · · · · · · · · · · · · ·⎻● · · · · · · · · · ·
+ 6  · · · · · · · · · · · ●──╮· · · · · · · · · · ·
+ 7  · · · · · · · · · · · · ·╰● · · · · · · · · · ·
  8  · · · · · · · · · · · · ·╱· · · · · · · · · · ·
- 9  · · · · · · · · · · · · ●⎼· · · · · · · · · · ·
-10  · · · · · · · · · · · · · ·⎻● · · · · · · · · ·
-11  · ·⎼○⎼· · ·⎼○⎼· · ·⎼○⎼· · ·╱○⎼· · ·⎼○ · · · · ·
-12  ○⎻· · ·⎻○⎻· · ·⎻○⎻· · ·⎻○ ●⎼· ·⎻○⎻· · · · · · ·
-13  · · · · · · · · · · · · · · ·⎻● · · · · · · · ·
+ 9  · · · · · · · · · · · · ●──╮· · · · · · · · · ·
+10  · · · · · · · · · · · · · ·╰● · · · · · · · · ·
+11  · ·╭○──╮· ·╭○──╮· ·╭○──╮· ·╱○──╮· ·╭◎ · · · · ·
+12  ○──╯· ·╰○──╯· ·╰○──╯· ·╰○ ●──╮·╰○──╯· · · · · ·
+13  · · · · · · · · · · · · · · ·╰● · · · · · · · ·
 14  · · · · · · · · · · · · · · ·╱· · · · · · · · ·
 15  · · · · · · · · · · · · · · ● · · · · · · · · ·
 16  · · · · · · · · · · · · · · · · · · · · · · · ·
@@ -59,7 +59,23 @@ big enough for it.
 
 `●` is the vertical player, who connects the top border row to the bottom one;
 `○` is the horizontal player, connecting left to right. `·` is an empty hole,
-the strokes between pegs are links, and `[·]` is the cursor.
+`[·]` is the cursor, and `◎` is the peg just played — `◉` when it is vertical's.
+
+The strokes between pegs are links. A link one column across and two rows deep is
+steep enough for a plain diagonal, `╱` or `╲`. One that goes two columns across and
+only one row down covers four screen columns for every row it descends, far
+shallower than any diagonal a cell can draw, so it is drawn as a connected run of
+`─` with corners `╭ ╮ ╰ ╯`, and a tee or a cross — `├ ┤ ┬ ┴ ┼` — where two links
+leave a peg on the same side and share a run. Two links that cross without meeting
+get `╳`, and a peg a run has to pass through is drawn as `⊕` or `⊖`, which says
+both things at once and still names its owner.
+
+The cursor and a highlight sit as brackets either side of a hole, `[ ]` and `( )`.
+Where a link already owns those cells a bracket would erase it, so the mark goes on
+the hole itself instead: `◇ ◆ ◈` for the cursor, `□ ■ ▣` for a highlight, `△ ▲ ▽`
+for a highlighted hole with the cursor on it. Outline is an empty hole, solid is
+vertical and the third form is horizontal, so a mark never hides what the hole
+holds.
 
 Vertical has an unbroken chain from L1 all the way down to O15. Horizontal's runs
 from the left edge at A12 as far as M12 and then stops: the link it wants from M12
@@ -117,18 +133,22 @@ Downloading with `curl -LO` instead of a browser avoids the attribute altogether
 ## Quick start
 
 ```
-twixtui                                  interactive: asks for a profile, then a menu
-twixtui play bot --tier intermediate     one game against the bot
-twixtui play local                       two players, one keyboard
-twixtui learn                            the interactive tutorial
-twixtui help                             every command, with what it is for
+twixtui                                               # the menu, and a name the first time
+twixtui play bot --tier intermediate --side vertical  # one game against the bot
+twixtui play local                                    # two players, one keyboard
+twixtui learn                                         # the interactive tutorial
+twixtui help                                          # every command, with what it is for
 ```
+
+Start with the first line. Playing a game needs a profile to record it against,
+and the bare command takes a name when the machine has none; on a machine with no
+profiles `--profile NAME` will make one too.
 
 ## Commands
 
 | Command | What it is for |
 | --- | --- |
-| `twixtui` | Interactive mode: asks which profile you are, then offers a menu. No flags to remember. |
+| `twixtui` | Interactive mode: the menu, and a profile first if none has been chosen yet. No flags to remember. |
 | `twixtui play bot` | Play the built-in bot at one of three strengths. |
 | `twixtui play local` | Hotseat: two players taking turns at the same terminal. |
 | `twixtui play host` | Offer a live game to a remote opponent. |
@@ -137,8 +157,8 @@ twixtui help                             every command, with what it is for
 | `twixtui learn` | Interactive lessons: the rules, then the ideas behind them. |
 | `twixtui profile` | `list`, `create`, `use`, `rename`, `delete`, `whoami` — the local usernames games are recorded against. |
 | `twixtui leaderboard` | `show`, `reset` — standings and per-player history. |
-| `twixtui game` | `list`, `show`, `replay`, `export`, `import` — saved games: browse them, step through them, move them between machines. |
-| `twixtui rules show` | Print the rules in force, or one topic of them, for any ruleset. |
+| `twixtui game` | `list`, `show`, `replay`, `export`, `import`, `delete` — saved games: browse them, step through them, move them between machines. |
+| `twixtui rules show` | Print the rules, or one topic of them, and the sources behind them. |
 | `twixtui serve` | Run the relay that pairs two remote players. |
 | `twixtui theme` | `list`, `set`, `show` — colour schemes. |
 | `twixtui completion` | Emit a completion script for `bash`, `zsh`, `fish` or `powershell`. |
@@ -148,7 +168,7 @@ Every command accepts these:
 
 | Flag | Effect |
 | --- | --- |
-| `--profile NAME` | Use this profile instead of asking. |
+| `--profile NAME` | Play this one command as that profile, without changing the stored choice. |
 | `--config DIR` | Read and write state under `DIR`. Also settable as `TWIXTUI_CONFIG_DIR`. |
 | `--theme NAME` | Theme for this run only; does not change the saved choice. |
 | `--no-color` | No colour. `NO_COLOR` in the environment does the same. |
@@ -156,9 +176,9 @@ Every command accepts these:
 ## Playing a bot
 
 ```
-twixtui play bot --tier beginner
-twixtui play bot --tier intermediate
-twixtui play bot --tier pro
+twixtui play bot --tier beginner --side vertical
+twixtui play bot --tier intermediate --side horizontal
+twixtui play bot --tier pro --side random
 ```
 
 | Tier | What it does |
@@ -175,29 +195,39 @@ transposition table and extends forced lines. The beginner and intermediate tier
 capped by depth rather than by clock and answer instantly — only the pro tier actually
 takes time to think.
 
-The gaps are measured rather than assumed. Over 60 games each on a 10×10 board, colour
-balanced and with swap off, `intermediate` beat `beginner` 58–2 and `pro` beat
-`intermediate` 43–13 with 4 draws.
+The gaps are measured rather than assumed, by a tournament the test suite runs:
+every opening played twice, once from each side, with the swap option off. Over 60
+games on a 10×10 board, `intermediate` beat `beginner` 58–2.
+
+How much stronger `pro` is depends on the board, so there is no single figure for
+it. Deeper search is not reliably better on a small board, and the measurement
+that runs on every build asks only that `pro` not do materially worse than
+`intermediate` there — a floor of 0.45 of the points available. The size
+dependence is measured separately, with the per-move time budgets removed so that
+each tier reaches its own depth ceiling: `pro` scores 0.250 against `intermediate`
+on 8×8, 0.458 on 9×9, and 0.938 on the 24×24 board the game ships with. Those
+figures are recorded with the measurement, in `internal/bot/strength_test.go`.
 
 | Flag | Effect |
 | --- | --- |
 | `--tier beginner\|intermediate\|pro` | How hard the bot tries. |
-| `--side vertical\|horizontal\|random` | Which connection you take. |
+| `--side vertical\|horizontal\|random` | Which connection you take. Required: there is no default. |
 | `--ruleset std\|pp\|classic` | Which ruleset to play under. |
 | `--size N` | Board side length, 6 to 48. |
 | `--seed N` | Fix the bot's random seed. |
-| `--hints` | Make hints available on your own turns. |
+| `--hints` | Whether `?` may ask for advice on your turn. On by default. |
 
-You pick your side before the first move. `--side random` is there for players who
-would rather not choose and would rather not be asked either.
+You pick your side before the first move, and on the command line `play bot` will
+not start without it: leave `--side` out and it says so. The menu asks instead.
+`--side random` is there for players who would rather not choose.
 
 `--seed N` makes a bot game reproducible: the same seed, ruleset and moves produce the
 same bot replies every time. That is how the bot's own tests pin its behaviour, and it
 is useful for replaying a position that went wrong.
 
-With `--hints`, asking for a hint runs that same search at full strength and gives you
-the move it would play, a line on why, and the holes that reason is about, marked on
-the board.
+Asking for a hint runs that same search at full strength and gives you the move it
+would play, a line on why, and the holes that reason is about, marked on the board.
+It is available by default; `--hints=false` takes it away.
 
 ## Hotseat
 
@@ -247,6 +277,15 @@ twixtui play host --relay relay.example:4271
 twixtui play join K7MDPQ-3FHJ8TWZ-Q2XVNR5B --relay relay.example:4271
 ```
 
+Both live transports behave the same once the two ends are talking. The host
+chooses the ruleset, the board size and its own side — `--ruleset`, `--size`,
+`--side`, with `--port` for a direct game on a port other than 4270 — and the
+joining copy takes them from the handshake. Protocol version and ruleset are
+compared as part of that handshake, so mismatched builds or mismatched rules are
+refused before the first move rather than desyncing halfway through a game. If a
+live connection drops, reconnecting replays the missing moves — and refuses to
+continue if the two transcripts disagree.
+
 **Correspondence.** No live connection at all, and no network requirement whatsoever.
 Each move produces a short checksummed code beginning `TWX-`, which you send to your
 opponent over any channel you like — chat, email, read out over the phone — and they
@@ -257,14 +296,14 @@ several running at once.
 # start a game and print an invitation to send
 twixtui play correspondence --new
 
-# accept an invitation
-twixtui play correspondence --join TWXI-...
+# accept an invitation, which is a code beginning TWXI-
+twixtui play correspondence --join <code>
 
 # open the game it is your turn in
 twixtui play correspondence
 
 # or name one, when several are waiting
-twixtui play correspondence --game a88srf81
+twixtui play correspondence --game <id>
 ```
 
 Inside the game, committing a move prints the code to send on a line of its own, and
@@ -274,18 +313,14 @@ twice, or mangled on the way is refused — and tells you which of those happene
 rather than corrupting the game. Codes can be re-sent: the same one applied twice is
 refused the second time, so a lost message costs nothing.
 
-The host chooses the ruleset, the board size and its own side — `--ruleset`, `--size`,
-`--side`, and `--port` for a port other than the default — and the joining copy takes
-them from the handshake. Protocol version and ruleset are compared as part of that
-handshake, so mismatched builds or mismatched rules are refused before the first move
-rather than desyncing halfway through a game. If a live connection drops, reconnecting
-replays the missing moves — and refuses to continue if the two transcripts disagree.
+There is no handshake and no port here. The invitation carries the ruleset, the
+board size and the side the host took, and the joining copy takes them from it.
 
 ## The tutorial
 
 ```
-twixtui learn                 the lesson list
-twixtui learn blocking        straight to one lesson
+twixtui learn           # the lesson list
+twixtui learn blocking  # straight to one lesson
 ```
 
 Lessons put a real position on a real board and then ask you to play into it. The rules
@@ -298,41 +333,59 @@ The lessons are `board`, `links`, `blocking`, `double-threat`, `winning`, `swap`
 
 ## Profiles
 
-Games are recorded against a local username. There are no passwords and no accounts —
-a profile is a name plus when it was created and last used.
+Games played on this machine are recorded against a local username. There are no
+passwords and no accounts — a profile is a name plus when it was created and last
+used.
 
 ```
-twixtui profile list                 all profiles, most recently used first
+twixtui profile list                 # all profiles, most recently used first
 twixtui profile create ada
 twixtui profile use ada
-twixtui profile whoami               which profile is in force
+twixtui profile whoami               # which profile is in force
 twixtui profile rename ada ada.l
 twixtui profile delete ada.l
 ```
 
-On launch, `twixtui` asks which profile you are. The prompt is both a fuzzy search over
-the profiles you already have and a browsable list of them, so a half-remembered name or
-a typo still finds the right one. `--profile NAME` skips the question.
+`twixtui` asks which profile you are when no profile has been chosen on this
+machine yet; otherwise it opens the menu as whoever played last. The prompt is both
+a fuzzy search over the profiles you already have and a browsable list of them, so
+a half-remembered name or a typo still finds the right one. `profile use`, and
+Switch profile in the menu, change who that is.
+
+`--profile NAME` plays one command as that profile. It resolves the name by exactly
+the rules `profile use` applies and is refused wherever `profile use` would refuse
+it, so a typo cannot split your history across two identities. It records that the
+profile has played, but it does not change the stored choice: a scripted game
+cannot retarget the next interactive one. The one profile it may create is the
+first, on a machine that has none — there is no stored choice to retarget there and
+no other name you could have meant, which is what lets a new player go from install
+to a game in a single command.
 
 ## The leaderboard
 
-Every finished game is recorded: who played, which side they took, the ruleset, how many
-moves, how long it took and how it ended.
+Every game finished on this machine is recorded: who played, which side they took,
+the ruleset, how many moves, how long it took and how it ended. A record read in
+with `game import` is not, since nobody here played it: it is kept to be shown and
+replayed, and it does not reach the standings.
 
 ```
-twixtui leaderboard show --limit 20      standings, best first
-twixtui leaderboard reset                wipe the record
+twixtui leaderboard show --limit 20      # standings, best first
+twixtui leaderboard reset --yes          # wipe the record
 ```
 
 Saved games are kept too, and can be moved between machines:
 
 ```
 twixtui game list --limit 20
-twixtui game show 7
-twixtui game replay 7
-twixtui game export 7 --out ada-vs-pro.twixt
+twixtui game show <id>
+twixtui game replay <id>
+twixtui game export <id> --out ada-vs-pro.twixt
 twixtui game import ada-vs-pro.twixt
+twixtui game delete <id>
 ```
+
+The identifier is the short string `game list` prints in its first column, such
+as `zrh7y174`.
 
 ## Rulesets
 
@@ -350,9 +403,10 @@ Board size is chosen independently of the preset: 24×24 by default, anything fr
 to 48×48.
 
 ```
-twixtui rules show --ruleset pp
+twixtui rules show
 twixtui rules show crossing
-twixtui play bot --ruleset classic --size 12
+twixtui rules show --provenance
+twixtui play bot --ruleset classic --size 12 --side vertical
 ```
 
 Which sources support which reading, and what the primary 1962 text does and does not
@@ -362,14 +416,14 @@ settle, is in [docs/rules.md](docs/rules.md) and
 ## Themes
 
 ```
-twixtui theme list                   the four built-in themes
-twixtui theme show                   the one in force
+twixtui theme list                   # the four built-in themes
+twixtui theme show                   # the one in force
 twixtui theme set slate
 ```
 
 | Theme | Description |
 | --- | --- |
-| `classic` (default) | Red and black, as the printed board game. |
+| `classic` (default) | Red and indigo, after the printed board game, for a dark terminal. The printed game's second player is black, which cannot be seen on a dark terminal, so indigo stands in for it. |
 | `slate` | Muted blue and amber, for dark terminals. |
 | `paper` | Dark ink on a light background. |
 | `mono` | No colour, distinguishes players by shape alone. |
@@ -426,9 +480,11 @@ Put that line in your PowerShell profile to make it permanent.
 
 ## Keybindings
 
-The board is driven from the keyboard, vim-style. Every binding is an unmodified key
-or a plain uppercase letter: modified arrows and protocol-dependent combinations are
-not reliable inside a terminal multiplexer, so the keymap does not use any.
+The board is driven from the keyboard, vim-style. The bindings are unmodified
+printable keys, plain uppercase letters, and the basic special keys — the arrows,
+space, enter, escape and ctrl+c. Modified arrows and protocol-dependent
+combinations are not reliable inside a terminal multiplexer, so the keymap uses
+none of those.
 
 | Key | Action |
 | --- | --- |
@@ -442,6 +498,10 @@ not reliable inside a terminal multiplexer, so the keymap does not use any.
 | `1`-`8` | Only in link mode: toggle the link in that direction. |
 | `esc` | Leave link mode. |
 | `a` | Abort the turn: the board goes back to how it stood when your turn began. |
+| `?` | In a bot game: the move the bot would play, and why. |
+| `s` | Take the swap option, while it is on offer. |
+| `d` | Offer a draw, or accept the one on offer. |
+| `r` | Resign. |
 | `q`, `ctrl+c` | Quit. |
 
 Placing a peg offers every link that peg can legally make, and link mode is where you

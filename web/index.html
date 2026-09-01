@@ -35,23 +35,24 @@
           <h2>A game in progress</h2>
           <pre class="board">
     A B C D E F G H I J K L
- 1    · · · · ● · · · · ·
- 2  · · · · ·╱· · · · · · ·
- 3  · · · · ●⎼· · · · · · ·
- 4  · · · · · ·⎻● · · · · ·
- 5  · · · · · ·╱· · · · · ·
- 6  · · · · · ● · · · · · ·
- 7  · ○⎼· · · · · · · · · ·
- 8  · · ·⎻○⎼· · ·⎼○ · · · ·
- 9  · · · · ·⎻○⎻· · · · · ·
-10  · · · · · ·[·]· · · · ·
-11  · · · · · · · · · · · ·
+ 1    · · · · · · · · · ·
+ 2  · · · · · · · · · · · ·
+ 3  · · · · ● · ◎ · · · · ·
+ 4  · · · · ·╲· ·╲· ·╭○ · ·
+ 5  · · · · · ● · ○──╯· · ·
+ 6  · · · ·╭○ ·╲· · · · · ·
+ 7  · · ○──┤· · ● · · · · ·
+ 8  · · · ·╰○ ·╱· · · · · ·
+ 9  · · · · ·╭● · ·[·]· · ·
+10  · · · ●──╯·╲· · · · · ·
+11  · · · · · · ● · · · · ·
 12    · · · · · · · · · ·</pre>
           <p class="caption">
             <code>●</code> connects top to bottom, <code>○</code> connects left
             to right, <code>·</code> is an empty hole, the strokes between pegs
-            are links and <code>[·]</code> is the cursor. This board is 12×12;
-            the standard size is 24×24, and anything from 6×6 to 48×48 works.
+            are links, <code>◎</code> is the peg just played and
+            <code>[·]</code> is the cursor. This board is 12×12; the standard
+            size is 24×24, and anything from 6×6 to 48×48 works.
           </p>
         </div>
       </section>
@@ -61,13 +62,15 @@
           <h2>What it does</h2>
           <ul class="features">
             <li>
-              <h3>A bot with three real strengths</h3>
+              <h3>A bot with three search depths</h3>
               <p>
-                Beginner, intermediate and pro differ in how hard the bot
-                actually searches, not in how they are labelled: over 60 games
-                on a 10×10 board, pro beat intermediate 43–13. Ask for a hint on
-                your own turn and it explains the move it would play, on the
-                board.
+                Beginner, intermediate and pro search to different depths. The
+                test suite requires intermediate to score at least 65% against
+                beginner over 60 games on 10×10. Pro's advantage over
+                intermediate depends on board size: with time budgets removed,
+                its recorded scores are 0.250 on 8×8, 0.458 on 9×9 and 0.938 on
+                the standard 24×24 board. Ask for a hint on your own turn and
+                it explains the move it would play, on the board.
               </p>
             </li>
             <li>
@@ -91,10 +94,11 @@
             <li>
               <h3>Profiles, standings and honest rulesets</h3>
               <p>
-                Usernames with no passwords, a leaderboard of every finished
-                game, and the three historical rulesets kept apart as explicit
-                options: the printed box rules, the paper-and-pencil rules
-                played online, and the original 1962 edition without swap.
+                Usernames with no passwords, a leaderboard of finished games
+                played here, and the three historical rulesets kept apart as
+                explicit options: the printed box rules, the paper-and-pencil
+                rules played online, and the original 1962 edition without
+                swap. Imported records can be replayed but are not rated.
               </p>
             </li>
           </ul>
@@ -110,8 +114,8 @@
 
           <h3>Or download a binary</h3>
           <p class="note">
-            Static, dependency-free builds for macOS and Linux, on arm64 and
-            x86-64, are attached to every
+            Prebuilt archives for macOS and Linux, on arm64 and x86-64, are
+            attached to each
             <a href="https://github.com/BAKocska/twixtui/releases/latest"
               >release</a
             >, together with a checksums file.
@@ -122,10 +126,10 @@ sudo install -m 755 twixtui /usr/local/bin/twixtui
 twixtui version</pre
           >
           <p class="note">
-            On macOS, a file downloaded through a browser is quarantined and
-            Gatekeeper will refuse to run it. These binaries are not notarised,
-            so clear the attribute yourself — or download with
-            <code>curl -LO</code>, which never sets it.
+            On macOS, a file downloaded through a browser may be quarantined and
+            refused by Gatekeeper. These binaries are not notarised, so clear
+            the attribute yourself — or download from the command line with
+            <code>curl -LO</code>, which does not set it.
           </p>
           <pre class="cmd">xattr -d com.apple.quarantine ./twixtui</pre>
 
@@ -133,10 +137,10 @@ twixtui version</pre
           <ul class="cmdlist">
             <li>
               <code>twixtui</code>
-              <span>interactive: a profile, then a menu</span>
+              <span>the menu; asks who you are on the first run</span>
             </li>
             <li>
-              <code>twixtui play bot --tier intermediate</code>
+              <code>twixtui play bot --tier intermediate --side random</code>
               <span>one game against the bot</span>
             </li>
             <li>
