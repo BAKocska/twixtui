@@ -102,6 +102,10 @@ type onboardingModel struct {
 
 	steps []onboardingStep
 	step  int
+	// placed records that this step's invitation has been answered. The engine
+	// alternates the mover, so a second peg would be the opponent's while the
+	// prose still says "you".
+	placed bool
 	// done marks the last step as behind us: the panel says so and the pager
 	// key leaves.
 	done bool
@@ -195,7 +199,16 @@ func (m *onboardingModel) markSeen() {
 // Depart implements Departing: the shell answers the control form of the quit
 // key itself, so without this the introduction would be seen and not recorded
 // by exactly the player who wanted out of it most.
-func (m *onboardingModel) Depart() { m.markSeen() }
+// Depart is the program-wide quit path, which the shell calls without collecting
+// a note. So the note is delivered here, the way the game screen delivers its
+// own: the line naming the tutorial exists for the player who skipped, and
+// ctrl+c is a way of skipping, so it was the one route out that never got it.
+func (m *onboardingModel) Depart() {
+	m.markSeen()
+	if note := m.DepartNote(); note != "" {
+		m.deps.note("%s", note)
+	}
+}
 
 // DepartNote implements Noting.
 func (m *onboardingModel) DepartNote() string {
@@ -364,6 +377,7 @@ func (m *onboardingModel) loadStep(i int) error {
 	m.step = i
 	m.g = g
 	m.told = ""
+	m.placed = false
 	m.scroll = 0
 	m.board = ui.BoardView{ShowCursor: true, Cursor: onboardingStartCursor(s, g.Size())}
 	return nil
@@ -405,14 +419,25 @@ func (m *onboardingModel) moveCursor(dCol, dRow int) {
 // newcomers actually make — reaching into the opponent's border line and
 // reaching for a corner — are illegal moves, and a player stopped without being
 // told why has learned nothing from being stopped.
+//
+// One peg per step. The engine alternates the mover, and every line of prose
+// here addresses the player as Vertical: "Vertical moves first", your top and
+// bottom rows, a peg of yours a knight's move away. A second peg therefore
+// played for Horizontal while the text still said "you", the refusal named
+// Vertical's forbidden columns for a hole in Horizontal's forbidden rows, and
+// the caption congratulated the player on a hole that had just been taken by
+// somebody else. Allowing several pegs was meant to let a newcomer feel the
+// links form; what it actually did was hand them the opposite side without
+// saying so. So the invitation is answered once, and after that the key pages
+// on, which is what it does on every step that invites nothing.
 func (m *onboardingModel) place() tea.Cmd {
 	s := m.steps[m.step]
-	if m.done || s.invite == "" {
+	if m.done || s.invite == "" || m.placed {
 		return m.forward()
 	}
 	picked := m.board.Cursor
 	if err := m.g.CanPlace(m.g.Turn(), picked); err != nil {
-		m.told = onboardingRefusal(picked, err)
+		m.told = onboardingRefusal(m.g.Turn(), picked, err)
 		m.scrollToTold()
 		return nil
 	}
@@ -423,6 +448,7 @@ func (m *onboardingModel) place() tea.Cmd {
 		m.scrollToTold()
 		return nil
 	}
+	m.placed = true
 	if s.told != nil {
 		m.told = s.told(m.g, picked)
 	}
@@ -432,12 +458,21 @@ func (m *onboardingModel) place() tea.Cmd {
 
 // onboardingRefusal names the rule that stopped a peg, in the terms of the
 // three or four rules the introduction has room to teach.
-func onboardingRefusal(p game.Point, err error) string {
+func onboardingRefusal(mover game.Player, p game.Point, err error) string {
 	switch {
 	case errors.Is(err, game.ErrCornerHole):
 		return fmt.Sprintf("%s is one of the four missing corners: a corner would sit in a border line of each player at once, so the board leaves it out and no peg can ever stand there. Try another hole.", p)
 	case errors.Is(err, game.ErrOpponentBorder):
-		return fmt.Sprintf("%s is in the left or right column, and those two columns are Horizontal's border lines. You may use your own top and bottom rows as much as you like, and never your opponent's. Try another hole.", p)
+		// Named from the mover's own side rather than assumed. The introduction
+		// only ever hands the player Vertical, but a refusal that names the wrong
+		// pair of edges is worse than one that names none, and this sentence had
+		// already been caught telling a player that a hole in the top row was in
+		// the left or right column.
+		mine, theirs := "top and bottom rows", "left and right columns"
+		if mover == game.Horizontal {
+			mine, theirs = "left and right columns", "top and bottom rows"
+		}
+		return fmt.Sprintf("%s is in one of the %s, which are your opponent's border lines. You may use your own %s as much as you like, and never theirs. Try another hole.", p, theirs, mine)
 	case errors.Is(err, game.ErrOccupied):
 		return fmt.Sprintf("%s already holds a peg, and a hole only ever holds one. Try an empty one.", p)
 	default:

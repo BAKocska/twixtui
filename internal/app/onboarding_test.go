@@ -627,7 +627,10 @@ func TestAnIllegalHoleIsExplainedRatherThanRefused(t *testing.T) {
 		hole, says string
 	}{
 		{"A1", "missing corners"},
-		{"A6", "Horizontal's border lines"},
+		// A6 is in a border column, so the refusal must name columns. Naming the
+		// rows instead was a real defect: the sentence was written from Vertical's
+		// point of view and used whatever side happened to be on the move.
+		{"A6", "left and right columns"},
 	}
 	for _, c := range cases {
 		t.Run(c.hole, func(t *testing.T) {
@@ -786,4 +789,52 @@ func onboardingPoint(t *testing.T, name string) game.Point {
 		t.Fatalf("parsing %q: %v", name, err)
 	}
 	return p
+}
+
+// TestTheInvitationIsAnsweredOnceSoThePlayerStaysVertical is the regression for a
+// defect a review found by pressing the advertised key twice. The engine
+// alternates the mover, so the second peg was played for Horizontal while every
+// line of the introduction still addressed the player as Vertical: the caption
+// congratulated them on a hole somebody else had just taken, and the refusal named
+// Vertical's forbidden columns for a hole in Horizontal's forbidden rows.
+func TestTheInvitationIsAnsweredOnceSoThePlayerStaysVertical(t *testing.T) {
+	d := onboardingTestDeps(t)
+	m := newOnboardingTest(t, d, onboardingRoomy[0], onboardingRoomy[1])
+	onboardingWalkToStep(t, m, "peg")
+	step := m.step
+	theirs := onboardingCount(m, game.Horizontal)
+
+	// The invitation, answered. It is the player's own peg and it does not hand
+	// the turn over: the prose addresses the player as Vertical throughout.
+	onboardingPlaceAt(t, m, "F6")
+	if got := m.g.At(onboardingPoint(t, "F6")); got != game.Vertical {
+		t.Fatalf("the invited peg is %v, want the player's own colour", got)
+	}
+	if got := onboardingCount(m, game.Horizontal); got != theirs {
+		t.Fatalf("answering the invitation changed the opponent's pegs from %d to %d", theirs, got)
+	}
+	if m.step != step {
+		t.Fatalf("answering the invitation left the step")
+	}
+
+	// A second press must page on rather than place again. Placing again was the
+	// defect: the engine had moved the turn to Horizontal, so the player was
+	// handed the other side while the text still said "you".
+	onboardingPress(t, m, "space")
+	if m.step == step {
+		t.Errorf("a second press stayed on the step; it either placed for the opponent or did nothing")
+	}
+}
+
+// onboardingCount counts a player's pegs on the step's board.
+func onboardingCount(m *onboardingModel, pl game.Player) int {
+	n := 0
+	for row := range m.g.Size() {
+		for col := range m.g.Size() {
+			if m.g.At(game.Point{Col: col, Row: row}) == pl {
+				n++
+			}
+		}
+	}
+	return n
 }
