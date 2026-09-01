@@ -31,8 +31,17 @@ type Menu struct {
 	deps   Deps
 	player string
 
-	nav  navKeys
-	list *chooser
+	nav navKeys
+	// listUp and listDown are the letters the board moves by. Every list on
+	// this screen answers them as well as the arrows, because the board is
+	// driven h/j/k/l and its panel teaches that: a hand coming off the board
+	// should not have to find the arrow keys to work the menu. navKeys narrows
+	// the same bindings to their arrow forms (see arrowKeys) for the screens
+	// that carry a text field, where the letters are characters being typed.
+	// Nothing on this screen carries one; the profile picker does, and
+	// deliberately keeps the letters as search characters.
+	listUp, listDown []string
+	list             *chooser
 	// form is the question on top of the list, nil when the list has focus.
 	form menuForm
 	// moveHint and quitHint are the status-line fragments naming the keys, built
@@ -79,7 +88,8 @@ type gameSetup struct {
 func NewMenu(d Deps, player string) *Menu {
 	km := shellKeymap(d)
 	m := &Menu{deps: d, player: player, nav: newNavKeys(km)}
-	m.moveHint = keyLabel(m.nav.up...) + "/" + keyLabel(m.nav.down...)
+	m.listUp, m.listDown = letterKeys(km, ui.ActMoveUp), letterKeys(km, ui.ActMoveDown)
+	m.moveHint = m.movementHint()
 	m.quitHint = keyLabel(globalQuitKeys(km)...) + " quit"
 	m.list = &chooser{
 		title: "twixtui — " + player,
@@ -436,8 +446,11 @@ func standingsLines(d Deps) []string {
 	return out
 }
 
-// openThemes offers the colour schemes.
+// openThemes offers the colour schemes, each shown rather than only named: a
+// player used to have to adopt a scheme, start a game and look at the board
+// before finding out what it did.
 func (m *Menu) openThemes() tea.Cmd {
+	sample := newThemeSample()
 	all := theme.All()
 	opts := make([]menuOption, 0, len(all))
 	sel := 0
@@ -456,6 +469,13 @@ func (m *Menu) openThemes() tea.Cmd {
 		opts:   opts,
 		sel:    sel,
 		cancel: closeForm,
+		preview: func(_ *Menu, st *ui.Styles, o menuOption, width, height int) []string {
+			t, ok := o.value.(theme.Theme)
+			if !ok {
+				return nil
+			}
+			return sample.lines(st, t, width, height)
+		},
 		pick: func(m *Menu, i int) tea.Cmd {
 			t, ok := m.form.(*chooser).opts[i].value.(theme.Theme)
 			if !ok {
@@ -475,6 +495,91 @@ func (m *Menu) openThemes() tea.Cmd {
 		},
 	}
 	return nil
+}
+
+// themeSample is the position the colour previews are drawn from. It is built
+// once per visit to the chooser rather than per frame, since building it means
+// playing moves through the engine.
+//
+// The preview is drawn by the real board renderer from a real position, which
+// is what stops it drifting from what adopting the scheme produces: a
+// hand-drawn strip of swatches would be a second, unverified picture of the
+// same colours, and could go on looking right after the board stopped agreeing
+// with it.
+type themeSample struct {
+	g  *game.Game
+	bv ui.BoardView
+}
+
+// newThemeSample plays the sample position: two pegs and a link for each
+// player, an empty hole under the cursor, a highlighted hole and a last move.
+// Between them those use every colour a scheme names for the board, which is
+// the point — a preview that left one out would be a preview of something else.
+//
+// The board is the smallest legal size so that the whole of it fits under the
+// list without scrolling. A sample that cannot be built returns nil and the
+// chooser simply shows no preview: a menu that would not open because a
+// decoration failed is worse than a menu without the decoration.
+func newThemeSample() *themeSample {
+	rs := game.Std
+	rs.Size = game.MinSize
+	g, err := game.New(rs)
+	if err != nil {
+		return nil
+	}
+	// Vertical moves first, so the moves alternate V, H, V, H. The second peg
+	// of each pair is a knight's move from the first, which is what makes the
+	// link appear, and the two links do not cross.
+	for _, p := range []game.Point{
+		{Col: 2, Row: 1}, {Col: 1, Row: 3}, {Col: 3, Row: 3}, {Col: 3, Row: 4},
+	} {
+		if _, err := g.PlayPeg(p); err != nil {
+			return nil
+		}
+	}
+	return &themeSample{
+		g: g,
+		bv: ui.BoardView{
+			Scale:        ui.Compact,
+			ShowCursor:   true,
+			Cursor:       game.Point{Col: 1, Row: 1},
+			ShowLastMove: true,
+			LastMove:     game.Point{Col: 3, Row: 4},
+			Highlights:   []game.Point{{Col: 4, Row: 2}},
+		},
+	}
+}
+
+// lines draws the sample in scheme t, in at most height rows.
+//
+// active is the style set the rest of the screen is drawn in, and it decides
+// whether any colour is emitted at all: with colour off — --no-color, NO_COLOR,
+// output that is not a terminal, or the monochrome scheme chosen — this screen
+// emits none either, because a preview that answered --no-color with escape
+// sequences would be a worse fault than the one it fixes. Every scheme then
+// draws the identical board, which is the truth about them rather than a
+// failure of the preview: they differ in colour alone, and the note says so.
+func (ts *themeSample) lines(active *ui.Styles, t theme.Theme, width, height int) []string {
+	if ts == nil || active == nil || width < 1 || height < 1 {
+		return nil
+	}
+	st := ui.StylesFor(t)
+	var note []string
+	if active.Plain {
+		st = ui.PlainStyles()
+		note = appendWrapped(nil, active, &active.Label,
+			"Colour is off, so every scheme draws this same board; your choice applies wherever colour is on.", width)
+	}
+	// The sample is drawn whole or not at all. Cropping it takes rows off the
+	// bottom, which is where the links are, and the links are most of what a
+	// scheme is judged on; a note reading "this same board" beside no board at
+	// all is worse still. A panel with no room for both shows the list alone,
+	// which is the same order of preference the panel itself applies.
+	w, h := ts.bv.Scale.BlockSize(ts.g.Size())
+	if width < w || height < h+len(note) {
+		return nil
+	}
+	return clampLines(append(ts.bv.Render(ts.g, &st, width, h), note...), height)
 }
 
 // the new-game form.
@@ -1054,6 +1159,52 @@ func (m *Menu) start(cfg GameConfig) tea.Cmd {
 
 // forms.
 
+// listMove is the movement every list on this screen shares: whatever navKeys
+// answers, plus the board's letters.
+//
+// The letters are translated into the pair navKeys already treats as one step
+// rather than being given their own arithmetic, so what a step means — where it
+// wraps, what it does to an empty list — stays defined in exactly one place.
+func (m *Menu) listMove(key string, sel, n int) (int, bool) {
+	switch {
+	case matchesKey(key, m.listUp):
+		key = keyPrev
+	case matchesKey(key, m.listDown):
+		key = keyNext
+	}
+	return m.nav.move(key, sel, n)
+}
+
+// letterKeys returns the letter forms of a movement binding, which is the
+// complement of what arrowKeys takes. Both read the shared keymap rather than
+// naming keys of their own, so rebinding the board's movement moves the menu's
+// with it and no hint can describe a key the screen does not answer.
+func letterKeys(km ui.Keymap, a ui.Action) []string {
+	b, ok := km.ByAction(ui.CtxBoard, a)
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(b.Keys))
+	for _, k := range b.Keys {
+		if len([]rune(k)) == 1 {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// movementHint names the keys a list moves by. The letters are named only when
+// the bindings really have them, since a keymap without them would leave the
+// arrows as the whole answer.
+func (m *Menu) movementHint() string {
+	hint := keyLabel(m.nav.up...) + "/" + keyLabel(m.nav.down...)
+	up, down := keyLabel(m.listUp...), keyLabel(m.listDown...)
+	if up != "" && down != "" {
+		hint += " or " + up + "/" + down
+	}
+	return hint
+}
+
 // menuForm is a question drawn on top of the menu list.
 type menuForm interface {
 	// key handles a keypress; the command it returns goes straight up.
@@ -1090,11 +1241,15 @@ type chooser struct {
 	sel    int
 	pick   func(m *Menu, i int) tea.Cmd
 	cancel func(m *Menu) tea.Cmd
+	// preview shows the highlighted option instead of only naming it, for a
+	// question whose answers can be shown at all. It is asked for at most
+	// height rows and may return fewer or none. Nil on every other chooser.
+	preview func(m *Menu, st *ui.Styles, o menuOption, width, height int) []string
 }
 
 func (c *chooser) key(m *Menu, press tea.KeyPressMsg) tea.Cmd {
 	key := press.String()
-	if sel, moved := m.nav.move(key, c.sel, len(c.opts)); moved {
+	if sel, moved := m.listMove(key, c.sel, len(c.opts)); moved {
 		c.sel = sel
 		m.message = ""
 		return nil
@@ -1131,10 +1286,17 @@ func (c *chooser) lines(m *Menu, st *ui.Styles, width, height int) []string {
 		rows = append(rows, marker+paint(st, style, label))
 	}
 	help := ""
+	var preview func(width, height int) []string
 	if c.sel >= 0 && c.sel < len(c.opts) {
 		help = c.opts[c.sel].help
+		if c.preview != nil {
+			sel := c.opts[c.sel]
+			preview = func(width, height int) []string {
+				return c.preview(m, st, sel, width, height)
+			}
+		}
 	}
-	return listPanel(st, c.title, rows, c.sel, m.message, help, width, height)
+	return listPanel(st, c.title, rows, c.sel, preview, m.message, help, width, height)
 }
 
 func (c *chooser) hints(m *Menu) []string {
@@ -1263,7 +1425,7 @@ func (f *scrollForm) key(m *Menu, press tea.KeyPressMsg) tea.Cmd {
 	if m.nav.isCancel(key) || m.nav.isConfirm(key) {
 		return closeForm(m)
 	}
-	if focus, moved := m.nav.move(key, f.focus, len(f.body)); moved {
+	if focus, moved := m.listMove(key, f.focus, len(f.body)); moved {
 		f.focus = focus
 	}
 	return nil
@@ -1307,10 +1469,10 @@ func (f *pickerForm) hints(*Menu) []string { return nil }
 func (f *pickerForm) frame(m *Menu) string { return f.p.View().Content }
 
 // listPanel is the shared shape of every list on this screen: a title, the
-// list, and a fixed-height explanation of the highlighted entry underneath.
-// The explanation's height is fixed so that the list does not shift up and
-// down as the selection moves.
-func listPanel(st *ui.Styles, title string, rows []string, sel int, message, help string, width, height int) []string {
+// list, an optional preview of the highlighted entry, and a fixed-height
+// explanation of it underneath. The explanation's height is fixed so that the
+// list does not shift up and down as the selection moves.
+func listPanel(st *ui.Styles, title string, rows []string, sel int, preview func(width, height int) []string, message, help string, width, height int) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -1331,8 +1493,26 @@ func listPanel(st *ui.Styles, title string, rows []string, sel int, message, hel
 	if height >= 6 {
 		out = append(out, "")
 	}
-	listH := max(1, height-len(out)-helpH)
+	// The preview is asked for whatever is left once the list has all its rows,
+	// the explanation its own, and one blank line separates the two blocks. It
+	// is the block a short panel gives up, because an entry can still be chosen
+	// by name with nothing shown, and it is asked for its size rather than
+	// clipped afterwards so that what it draws is what fits.
+	var shown []string
+	previewH := 0
+	if preview != nil {
+		if room := height - len(out) - helpH - len(rows) - 1; room > 0 {
+			if shown = preview(width, room); len(shown) > 0 {
+				previewH = len(shown) + 1
+			}
+		}
+	}
+	listH := max(1, height-len(out)-helpH-previewH)
 	out = append(out, window(rows, listH, sel)...)
+	if previewH > 0 {
+		out = append(out, "")
+		out = append(out, shown...)
+	}
 	if helpH > 0 {
 		for len(out) < height-helpH {
 			out = append(out, "")

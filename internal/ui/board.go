@@ -295,23 +295,28 @@ func (cv *canvas) set(x, y int, r rune, id styleID) {
 	cv.ids[y*cv.w+x] = id
 }
 
-// bracket draws an overlay's two marks either side of a hole and reports how
-// many of them it could place. It writes into an empty cell only: a cell
-// holding a link stroke belongs to the link, and a cell holding an earlier
-// overlay's bracket belongs to that overlay.
-func (cv *canvas) bracket(x, y int, left, right rune, id styleID) int {
-	placed := 0
-	for _, m := range [2]struct {
-		x int
-		r rune
-	}{{x - 1, left}, {x + 1, right}} {
-		if !cv.in(m.x, y) || cv.runes[y*cv.w+m.x] != ' ' {
-			continue
-		}
-		cv.set(m.x, y, m.r, id)
-		placed++
+// bracket draws an overlay's two marks either side of a hole and reports
+// whether it placed them. It writes into an empty cell only: a cell holding a
+// link stroke belongs to the link, and a cell holding an earlier overlay's
+// bracket belongs to that overlay.
+//
+// It writes both marks or neither. A lone bracket points at its hole from one
+// side, and beside another mark it reads as a pair enclosing the hole between
+// the two, which is how a run of adjacent highlights came out: "(·)·)·)", one
+// hole named by a pair and the rest apparently half-marked. An overlay left
+// without both marks says the same thing on the hole's own cell instead.
+func (cv *canvas) bracket(x, y int, left, right rune, id styleID) bool {
+	if !cv.free(x-1, y) || !cv.free(x+1, y) {
+		return false
 	}
-	return placed
+	cv.set(x-1, y, left, id)
+	cv.set(x+1, y, right, id)
+	return true
+}
+
+// free reports whether a cell is on the canvas and still empty.
+func (cv *canvas) free(x, y int) bool {
+	return cv.in(x, y) && cv.runes[y*cv.w+x] == ' '
 }
 
 // hasPeg reports whether a peg occupies a cell.
@@ -772,39 +777,39 @@ func (bv *BoardView) paint(g *game.Game) *canvas {
 	// claims an edge nothing joins is worse than a plainer cursor, so a bracket
 	// goes into an empty cell or not at all.
 	//
-	// An overlay that could place neither bracket falls back to the hole's own
-	// cell, which it may take for the reason a peg may: a link that merely
+	// An overlay that cannot have both of its brackets falls back to the hole's
+	// own cell, which it may take for the reason a peg may: a link that merely
 	// passes a cell stays legible from the cells either side. The fallback
 	// glyph names the overlay and says what the hole holds, so nothing is
 	// hidden by it.
 	//
 	// The cursor claims the bracket cells before the highlights, which is the
-	// old precedence, and a highlight that loses both of its brackets falls
-	// back to the hole's cell instead of vanishing under the cursor. That is
-	// the ordinary turn: the staged peg is highlighted and under the cursor at
-	// once, and both facts show as [■]. Where a link owns both bracket cells of
-	// that one hole there is a single writable cell for two overlays, and the
-	// fallback glyph then has to mean both; that is what the third mark family
-	// is for.
+	// old precedence, and a highlight that loses them falls back to the hole's
+	// cell instead of vanishing under the cursor. That is the ordinary turn:
+	// the staged peg is highlighted and under the cursor at once, and both
+	// facts show as [■]. Where a link owns both bracket cells of that one hole
+	// there is a single writable cell for two overlays, and the fallback glyph
+	// then has to mean both; that is what the third mark family is for.
 	cursorX, cursorY := bv.Scale.holeX(bv.Cursor.Col), bv.Scale.holeY(bv.Cursor.Row)
-	cursorBrackets := 0
+	cursorBracketed := false
 	if bv.ShowCursor {
-		cursorBrackets = cv.bracket(cursorX, cursorY, glyphCursorLeft, glyphCursorRight, styCursor)
+		cursorBracketed = cv.bracket(cursorX, cursorY, glyphCursorLeft, glyphCursorRight, styCursor)
 	}
+	crowded := bv.crowdedHighlights()
 	cursorMarked := false
 	for _, p := range bv.Highlights {
 		if bv.ShowCursor && p == bv.Cursor {
 			cursorMarked = true
 		}
 		x, y := bv.Scale.holeX(p.Col), bv.Scale.holeY(p.Row)
-		if cv.bracket(x, y, glyphMarkLeft, glyphMarkRight, styHighlight) == 0 && g.Exists(p) {
+		if (crowded[p] || !cv.bracket(x, y, glyphMarkLeft, glyphMarkRight, styHighlight)) && g.Exists(p) {
 			cv.set(x, y, highlightMarks.pick(g.At(p)), styHighlight)
 		}
 	}
 	for p, digit := range bv.Digits {
 		cv.set(bv.Scale.holeX(p.Col), bv.Scale.holeY(p.Row), digit, styLinkDigit)
 	}
-	if bv.ShowCursor && cursorBrackets == 0 && g.Exists(bv.Cursor) {
+	if bv.ShowCursor && !cursorBracketed && g.Exists(bv.Cursor) {
 		marks := cursorMarks
 		if cursorMarked {
 			marks = cursorHighlightMarks
@@ -812,6 +817,50 @@ func (bv *BoardView) paint(g *game.Game) *canvas {
 		cv.set(cursorX, cursorY, marks.pick(g.At(bv.Cursor)), styCursor)
 	}
 	return cv
+}
+
+// crowdedHighlights returns the highlighted holes whose bracket cells another
+// highlight wants as well. A bracket sits one cell from its hole and holes are
+// colStep apart, so at the compact scale two highlighted neighbours both claim
+// the single cell between them — and neighbours are marked often, since a hint
+// marks a route and a lesson marks a whole border row.
+//
+// One cell cannot serve both claims, and handing it to whichever arrived first
+// drew a run as a chain of unbalanced marks. Neither claimant takes it: every
+// hole in a contended run is marked on its own cell, so the run reads as a row
+// of like marks with the empty cell between two of them keeping them apart. It
+// costs the run its brackets, which are the clearer mark for a hole on its own;
+// a hole that cannot be told from an unmarked one costs more.
+func (bv *BoardView) crowdedHighlights() map[game.Point]bool {
+	if len(bv.Highlights) < 2 {
+		return nil
+	}
+	type cell struct{ x, y int }
+	claims := make(map[cell]int, 2*len(bv.Highlights))
+	seen := make(map[game.Point]bool, len(bv.Highlights))
+	for _, p := range bv.Highlights {
+		// The same hole named twice is one claim: a staged peg that a hint
+		// marks as well must not crowd itself out of its own brackets.
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		x, y := bv.Scale.holeX(p.Col), bv.Scale.holeY(p.Row)
+		claims[cell{x - 1, y}]++
+		claims[cell{x + 1, y}]++
+	}
+	var out map[game.Point]bool
+	for p := range seen {
+		x, y := bv.Scale.holeX(p.Col), bv.Scale.holeY(p.Row)
+		if claims[cell{x - 1, y}] < 2 && claims[cell{x + 1, y}] < 2 {
+			continue
+		}
+		if out == nil {
+			out = make(map[game.Point]bool, len(seen))
+		}
+		out[p] = true
+	}
+	return out
 }
 
 // overlayMarks is the glyph set one overlay uses on a hole's own cell, for the
@@ -879,41 +928,65 @@ func clamp(v, lo, hi int) int {
 
 // lettersRow renders the column-letter header for the visible columns, with
 // horizontal overflow arrows when the board extends beyond the viewport.
+//
+// The outer two columns are the horizontal player's own borders — the lines
+// that player has to reach — so their letters carry that player's colour.
+// Without it every label on all four edges is one colour, and which edges are
+// yours is something the board never says; a player reads it off the panel
+// instead. An overflow arrow is not a coordinate and keeps the neutral label
+// style even where it lands on a border column's cell.
 func (bv *BoardView) lettersRow(n, gutter, vw, cw int, st *Styles) string {
 	row := make([]rune, gutter+vw)
+	ids := make([]styleID, gutter+vw)
 	for i := range row {
 		row[i] = ' '
+		ids[i] = styLabel
 	}
 	for col := range n {
 		x := bv.Scale.holeX(col)
+		id := styLabel
+		if col == 0 || col == n-1 {
+			id = styLabelHorizontal
+		}
 		for j, r := range game.ColumnName(col) {
 			pos := x - bv.left + j
 			if pos >= 0 && pos < vw {
 				row[gutter+pos] = r
+				ids[gutter+pos] = id
 			}
 		}
 	}
 	if bv.left > 0 {
-		row[gutter] = glyphLeft
+		row[gutter], ids[gutter] = glyphLeft, styLabel
 	}
 	if bv.left+vw < cw {
-		row[gutter+vw-1] = glyphRight
+		row[gutter+vw-1], ids[gutter+vw-1] = glyphRight, styLabel
 	}
-	return st.apply(styLabel, strings.TrimRight(string(row), " "))
+	end := len(row)
+	for end > 0 && row[end-1] == ' ' {
+		end--
+	}
+	return emitRuns(st, row[:end], ids[:end])
 }
 
 // boardRow renders one visible canvas row with its gutter label. The topmost
 // and bottommost visible rows show overflow arrows in the gutter when rows are
 // hidden beyond them.
 func (bv *BoardView) boardRow(cv *canvas, y, n, gutter, vw, vh, ch int, st *Styles) string {
-	label := strings.Repeat(" ", gutter)
+	label, labelID := strings.Repeat(" ", gutter), styLabel
 	switch {
 	case y == bv.top && bv.top > 0:
 		label = pad(string(glyphUp), gutter)
 	case y == bv.top+vh-1 && bv.top+vh < ch:
 		label = pad(string(glyphDown), gutter)
 	case y%bv.Scale.rowStep == 0:
-		label = pad(strconv.Itoa(y/bv.Scale.rowStep+1), gutter)
+		row := y / bv.Scale.rowStep
+		label = pad(strconv.Itoa(row+1), gutter)
+		// The top and bottom rows are the vertical player's own borders; see
+		// lettersRow for the judgement, which is the same one.
+		if row == 0 || row == n-1 {
+			labelID = styLabelVertical
+		}
 	}
 
 	// Trim trailing blanks before emitting styled runs.
@@ -921,16 +994,21 @@ func (bv *BoardView) boardRow(cv *canvas, y, n, gutter, vw, vh, ch int, st *Styl
 	for end > bv.left && cv.runes[y*cv.w+end-1] == ' ' {
 		end--
 	}
+	i := y * cv.w
+	return st.apply(labelID, label) + emitRuns(st, cv.runes[i+bv.left:i+end], cv.ids[i+bv.left:i+end])
+}
 
+// emitRuns renders parallel runes and style tags as one string, styling each
+// run of cells that share a tag in one call.
+func emitRuns(st *Styles, runes []rune, ids []styleID) string {
 	var b strings.Builder
-	b.WriteString(st.apply(styLabel, label))
-	runStart := bv.left
-	for x := bv.left; x <= end; x++ {
-		if x < end && cv.ids[y*cv.w+x] == cv.ids[y*cv.w+runStart] {
-			continue
+	for i := 0; i < len(runes); {
+		j := i + 1
+		for j < len(runes) && ids[j] == ids[i] {
+			j++
 		}
-		b.WriteString(st.apply(cv.ids[y*cv.w+runStart], string(cv.runes[y*cv.w+runStart:y*cv.w+x])))
-		runStart = x
+		b.WriteString(st.apply(ids[i], string(runes[i:j])))
+		i = j
 	}
 	return b.String()
 }

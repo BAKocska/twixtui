@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,6 +113,14 @@ func newGSHarness(t *testing.T, d Deps, cfg GameConfig, w, h int) *gsHarness {
 	if !ok {
 		t.Fatalf("NewGameScreen returned %T, which the tests cannot drive", screen)
 	}
+	return gsAdopt(t, gs, w, h)
+}
+
+// gsAdopt drives a screen the test already holds rather than one it configured.
+// That is how a rematch is followed: the finished game hands the shell its
+// successor, and the test picks it up from there exactly as the shell would.
+func gsAdopt(t *testing.T, gs *gameScreen, w, h int) *gsHarness {
+	t.Helper()
 	hr := &gsHarness{
 		t:      t,
 		s:      gs,
@@ -1195,6 +1204,531 @@ func TestDrawOfferSurvivesTheMoveAndIsAccepted(t *testing.T) {
 	}
 	if other := d.Board.History("linus", 0); len(other) != 1 {
 		t.Fatalf("%d rows for linus, want 1", len(other))
+	}
+}
+
+// --- the rematch ------------------------------------------------------------
+
+// gsPlayOutAWin plays the whole win script and waits for the result. It is the
+// position every game-over test starts from.
+func gsPlayOutAWin(h *gsHarness) {
+	h.t.Helper()
+	for _, p := range gsWinScript {
+		h.playTurn(p)
+	}
+	h.waitFor("the game to end", func() bool { return h.s.g.Result().Over() })
+}
+
+// gsStatusLine is the one line that is always on screen, which is where a
+// player looks for what the keys do now.
+func gsStatusLine(h *gsHarness) string {
+	h.t.Helper()
+	return ansi.Strip(h.s.statusLine(ui.Arrange(h.width, h.height, h.s.g.Size())))
+}
+
+// gsRematchScreen presses the rematch key and returns the game the screen hands
+// back, which is what the shell would put in its place.
+func gsRematchScreen(h *gsHarness) *gameScreen {
+	h.t.Helper()
+	before := len(h.done)
+	h.press("R")
+	if len(h.done) != before+1 {
+		h.t.Fatalf("the rematch key produced %d departures, want 1: message %q",
+			len(h.done)-before, h.s.message)
+	}
+	handed := h.done[len(h.done)-1].Next
+	next, ok := handed.(*gameScreen)
+	if !ok {
+		h.t.Fatalf("the rematch handed back %T, want a game screen", handed)
+	}
+	return next
+}
+
+// TestRematchStartsAFreshGameWithTheSameSettingsAndTheSeatsSwapped is the
+// substance of the feature: two people who have just finished a game get
+// another one on the spot, on the same board under the same rules, and with the
+// sides exchanged so that the side which moves first is not the same side
+// twice.
+func TestRematchStartsAFreshGameWithTheSameSettingsAndTheSeatsSwapped(t *testing.T) {
+	d := gsTestDeps(t)
+	h := newGSHarness(t, d, gsHotseat(6), 120, 40)
+	gsPlayOutAWin(h)
+	first := h.s
+
+	// The footer, specifically: the help panel is the first thing a short
+	// terminal drops, and it is not where a player looks for what to do next.
+	footer := gsStatusLine(h)
+	if !strings.Contains(footer, "rematch") {
+		t.Fatalf("the game-over footer does not say a rematch is there: %q", footer)
+	}
+	if !strings.Contains(footer, "swap") {
+		t.Errorf("the footer offers a rematch without saying the sides swap: %q", footer)
+	}
+	next := gsRematchScreen(h)
+
+	if next.g.Entries() != 0 || next.g.Result().Over() {
+		t.Fatalf("the rematch is not a fresh game: %d entries, result %v",
+			next.g.Entries(), next.g.Result())
+	}
+	if got, want := next.g.Rules().Canonical(), first.g.Rules().Canonical(); got != want {
+		t.Errorf("the rematch plays %q, want the settings of the game just finished, %q", got, want)
+	}
+	if got, want := next.g.Size(), first.g.Size(); got != want {
+		t.Errorf("the rematch board is %d holes a side, want %d", got, want)
+	}
+	if got, want := next.cfg.Kind, first.cfg.Kind; got != want {
+		t.Errorf("the rematch is a %q game, want %q", got, want)
+	}
+	if next.storeID == first.storeID {
+		t.Fatalf("the rematch reuses the identifier %q, so it would be saved over the game just played",
+			next.storeID)
+	}
+	for side, want := range map[game.Player]string{game.Vertical: "linus", game.Horizontal: "ada"} {
+		if got := next.cfg.Seats[side].Profile; got != want {
+			t.Errorf("%v is played by %q, want %q: the seats did not swap", side, got, want)
+		}
+	}
+	// And it says so on arrival. The footer warned before the key was pressed;
+	// this is the same fact at the moment the board changes hands.
+	if !strings.Contains(next.message, "swap") {
+		t.Errorf("the rematch opens saying %q, which does not say the sides changed", next.message)
+	}
+
+	// A rematch is a game, not a description of one: it plays, and it is stored
+	// beside the finished game rather than over it.
+	rh := gsAdopt(t, next, 120, 40)
+	rh.playTurn(game.Point{Col: 1, Row: 0})
+	rh.waitFor("the rematch to be saved", func() bool {
+		_, err := d.Games.Get(next.storeID)
+		return err == nil
+	})
+	done, err := d.Games.Get(first.storeID)
+	if err != nil {
+		t.Fatalf("the finished game is gone from the store: %v", err)
+	}
+	if !done.Finished {
+		t.Error("the game just played is no longer stored as finished")
+	}
+}
+
+// TestRematchAgainstTheEngineKeepsTheOpponentAndGivesTheOtherAxis covers the
+// other kind of game a rematch has to work for. The opponent is the engine that
+// played the first game rather than a fresh one, and the swap puts it on the
+// side that moves first, which is the case where the exchange matters most.
+func TestRematchAgainstTheEngineKeepsTheOpponentAndGivesTheOtherAxis(t *testing.T) {
+	d := gsTestDeps(t)
+	engine := &stubBot{tier: bot.Beginner, moves: []game.Point{{Col: 2, Row: 2}}}
+	h := newGSHarness(t, d, gsVersusBot(6, engine), 120, 40)
+	served := h.s.cfg.Seats[game.Horizontal].Bot
+	h.press("r")
+	h.press("y")
+	h.waitFor("the resignation to end the game", func() bool { return h.s.g.Result().Over() })
+
+	next := gsRematchScreen(h)
+	if got := next.cfg.Seats[game.Horizontal].Profile; got != "ada" {
+		t.Errorf("horizontal is played by %q, want the player who had vertical", got)
+	}
+	seat := next.cfg.Seats[game.Vertical]
+	if seat.Bot == nil {
+		t.Fatal("the engine did not take the seat the player vacated")
+	}
+	// The very same serialiser, not a fresh one around the same engine: its
+	// lock is what keeps a search left over from the first game from running
+	// beside this game's, which TestARematchDoesNotLetTwoSearchesIntoOneEngine
+	// exercises. Handing it on unchanged is also what stops the wrappers
+	// stacking, so the engine underneath must still be the bare one.
+	if seat.Bot != served {
+		t.Errorf("the rematch searches through a different serialiser (%p), want the one the first game used (%p)",
+			seat.Bot, served)
+	}
+	sb, ok := seat.Bot.(*serialBot)
+	if !ok {
+		t.Fatalf("the engine seat holds %T, which is not serialised at all", seat.Bot)
+	}
+	if sb.engine != bot.Bot(engine) {
+		t.Errorf("the serialiser wraps %T, want the engine from the first game with nothing stacked on it", sb.engine)
+	}
+
+	// It really plays, and the engine now opens: a fresh game starts moving
+	// without the player touching a key.
+	rh := gsAdopt(t, next, 120, 40)
+	rh.waitFor("the engine's opening move", func() bool { return rh.s.g.Ply() > 0 })
+	if got := rh.s.g.Turn(); got != game.Horizontal {
+		t.Errorf("after the engine's opening it is %v to play, want the player on horizontal", got)
+	}
+}
+
+// TestRematchOfAResumedGameLeavesTheStoredGameBehind covers the one
+// configuration that carries the previous game inside it. A game picked up from
+// the store holds both the record it was resumed from and the identifier it is
+// saved under, so a rematch that kept either would deal the finished position
+// out again, or write the new game over the old one.
+func TestRematchOfAResumedGameLeavesTheStoredGameBehind(t *testing.T) {
+	d := gsTestDeps(t)
+	first := newGSHarness(t, d, gsHotseat(6), 120, 40)
+	first.playTurn(gsWinScript[0])
+	first.playTurn(gsWinScript[1])
+	first.press("q")
+	saved, err := d.Games.Get(first.s.storeID)
+	if err != nil {
+		t.Fatalf("the game was not stored: %v", err)
+	}
+
+	cfg := gsHotseat(6)
+	cfg.Resume, cfg.StoreID = &saved, saved.ID
+	h := newGSHarness(t, d, cfg, 120, 40)
+	if got := h.s.g.Entries(); got != 2 {
+		t.Fatalf("the resumed game holds %d entries, want the 2 that were played", got)
+	}
+	h.press("r")
+	h.press("y")
+	h.waitFor("the resignation to end the game", func() bool { return h.s.g.Result().Over() })
+
+	next := gsRematchScreen(h)
+	if got := next.g.Entries(); got != 0 {
+		t.Errorf("the rematch opens on the resumed position (%d entries), want an empty board", got)
+	}
+	if next.storeID == saved.ID {
+		t.Errorf("the rematch is saved under %q, the identifier of the game it followed", next.storeID)
+	}
+}
+
+// TestRematchIsNotOfferedWhereItCannotWork holds the other half of the promise.
+// A second game against a live opponent needs a new connection, and a second
+// correspondence game needs a new invitation; neither can be conjured from this
+// screen, so the key is absent rather than present and broken, and pressing it
+// anyway says what to do instead.
+func TestRematchIsNotOfferedWhereItCannotWork(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  func() GameConfig
+		want string
+	}{
+		{
+			name: "a live game over a connection",
+			cfg: func() GameConfig {
+				return gsRemoteConfig(6, newGSFakeSession(game.Vertical, gsRules(6)), game.Vertical)
+			},
+			want: "connection",
+		},
+		{
+			name: "a game played by codes",
+			cfg: func() GameConfig {
+				return GameConfig{
+					Kind:  gamestore.Correspondence,
+					Rules: gsRules(6),
+					Seats: map[game.Player]Seat{
+						game.Vertical:   {Profile: "ada"},
+						game.Horizontal: {Remote: true, Label: "linus"},
+					},
+					Codes:   true,
+					StoreID: gamestore.NewID(),
+				}
+			},
+			want: "invitation",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := gsTestDeps(t)
+			h := newGSHarness(t, d, c.cfg(), 120, 40)
+			h.press("r")
+			h.press("y")
+			h.waitFor("the resignation to end the game", func() bool { return h.s.g.Result().Over() })
+			if h.s.corr != nil && h.s.corr.open {
+				// The last code opens the exchange over the board. The player
+				// closes it to look at the finished position, and that is the
+				// screen the rematch key would be pressed on.
+				h.press("esc")
+			}
+
+			if h.s.rematchOffered() {
+				t.Error("a rematch is offered on a game this screen cannot start again")
+			}
+			for _, e := range h.s.helpEntries() {
+				if e.Label == "R" {
+					t.Errorf("the help panel offers the rematch key: %q", e.Help)
+				}
+			}
+			if strings.Contains(ansi.Strip(h.frame()), "rematch") {
+				t.Errorf("the game-over screen advertises a rematch:\n%s", h.frame())
+			}
+
+			before := len(h.done)
+			h.press("R")
+			if len(h.done) != before {
+				t.Fatal("the rematch key left the screen on a game it cannot start again")
+			}
+			if !strings.Contains(h.s.message, c.want) {
+				t.Errorf("pressing the key answered %q, which does not say how another game is arranged (%q)",
+					h.s.message, c.want)
+			}
+		})
+	}
+}
+
+// TestAStoppedButUnfinishedGameOffersNoRematch covers the other reason play can
+// halt. When the engine fails there is no result, and the game is saved exactly
+// as it stands: the useful answer is the game already in the store, not a third
+// one started beside it and the half-played one quietly left behind.
+func TestAStoppedButUnfinishedGameOffersNoRematch(t *testing.T) {
+	d := gsTestDeps(t)
+	h := newGSHarness(t, d, gsVersusBot(6, &stubBot{tier: bot.Beginner}), 120, 40)
+	h.playTurn(game.Point{Col: 1, Row: 0})
+	h.waitFor("the engine to give up", func() bool { return h.s.stopped })
+	if h.s.g.Result().Over() {
+		t.Fatal("the engine's failure ended the game, so this is not the case under test")
+	}
+
+	if h.s.rematchOffered() {
+		t.Error("a rematch is offered on a game that has not ended and can still be resumed")
+	}
+	if footer := gsStatusLine(h); strings.Contains(footer, "rematch") {
+		t.Errorf("the footer of a stalled game offers a rematch: %q", footer)
+	}
+	before := len(h.done)
+	h.press("R")
+	if len(h.done) != before {
+		t.Fatal("the rematch key left a game that has not ended")
+	}
+	if !strings.Contains(h.s.message, "over") {
+		t.Errorf("pressing the key answered %q, which does not say why there is no rematch yet", h.s.message)
+	}
+}
+
+// gsHeldBot is an engine that stays inside its search until the test lets it
+// out, cancelled or not, and counts how many calls are inside it at once.
+//
+// A real search notices a cancelled context but does not return the instant it
+// is cancelled, and leaving a game cancels its searches without waiting for
+// them. That window is what this reproduces: it is the only time two games can
+// be asking one engine for a move.
+type gsHeldBot struct {
+	release chan struct{}
+	move    game.Point
+
+	calls  atomic.Int32
+	inside atomic.Int32
+	peak   atomic.Int32
+}
+
+func (b *gsHeldBot) Tier() bot.Tier { return bot.Beginner }
+
+func (b *gsHeldBot) Move(ctx context.Context, g *game.Game) (game.Point, error) {
+	b.calls.Add(1)
+	n := b.inside.Add(1)
+	for {
+		peak := b.peak.Load()
+		if n <= peak || b.peak.CompareAndSwap(peak, n) {
+			break
+		}
+	}
+	<-b.release
+	b.inside.Add(-1)
+	return b.move, nil
+}
+
+func (b *gsHeldBot) Hint(ctx context.Context, g *game.Game) (bot.Hint, error) {
+	return bot.Hint{Move: b.move}, nil
+}
+
+// TestARematchDoesNotLetTwoSearchesIntoOneEngine covers the handover itself.
+// The rematch plays the same engine the last game played, and the last game's
+// search is cancelled on the way out but not waited for, so for a moment two
+// games have a claim on one bot.Bot — which is documented as not safe for
+// concurrent use. They have to keep taking turns across that moment.
+func TestARematchDoesNotLetTwoSearchesIntoOneEngine(t *testing.T) {
+	d := gsTestDeps(t)
+	engine := &gsHeldBot{release: make(chan struct{}), move: game.Point{Col: 2, Row: 2}}
+	var once sync.Once
+	stop := func() { once.Do(func() { close(engine.release) }) }
+	t.Cleanup(stop)
+
+	h := newGSHarness(t, d, gsVersusBot(6, engine), 120, 40)
+	h.playTurn(game.Point{Col: 1, Row: 0})
+	h.waitFor("the engine to start searching", func() bool { return engine.calls.Load() >= 1 })
+
+	// Resigning without waiting for the engine is an ordinary thing to do, and
+	// it is what leaves a search running behind a finished game.
+	h.press("r")
+	h.press("y")
+	h.waitFor("the resignation to end the game", func() bool { return h.s.g.Result().Over() })
+	if got := engine.inside.Load(); got != 1 {
+		t.Fatalf("%d searches are inside the engine, want the one this test needs held there", got)
+	}
+
+	// The rematch puts the same engine on the side that moves first, so it is
+	// asked for a move the moment the new game opens.
+	next := gsRematchScreen(h)
+	rh := gsAdopt(t, next, 120, 40)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && engine.peak.Load() < 2 {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := engine.peak.Load(); got > 1 {
+		t.Errorf("%d searches were inside the engine at once; a bot.Bot may only be asked one thing at a time", got)
+	}
+
+	stop()
+	rh.pump()
+}
+
+// --- what the panel counts --------------------------------------------------
+
+// gsCountPattern matches a panel line that is nothing but a count of moves.
+var gsCountPattern = regexp.MustCompile(`^(move \d+|\d+ moves?)$`)
+
+// gsMoveCountLines returns the panel lines that count moves, so a test can
+// require exactly one and say what it should be.
+func gsMoveCountLines(h *gsHarness) []string {
+	h.t.Helper()
+	arr := ui.Arrange(h.width, h.height, h.s.g.Size())
+	var out []string
+	for _, line := range h.s.panelLines(arr) {
+		if l := strings.TrimSpace(ansi.Strip(line)); gsCountPattern.MatchString(l) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// TestThePanelStopsCountingAMoveNobodyWillPlay covers the panel's one number.
+// While the game runs it is the move about to be played; once the game is over
+// there is no such move, and a finished game that still advertised one put two
+// counts of itself one apart on the same screen.
+func TestThePanelStopsCountingAMoveNobodyWillPlay(t *testing.T) {
+	d := gsTestDeps(t)
+	h := newGSHarness(t, d, gsHotseat(6), 120, 40)
+	h.playTurn(gsWinScript[0])
+	h.playTurn(gsWinScript[1])
+
+	if got := gsMoveCountLines(h); len(got) != 1 || got[0] != "move 3" {
+		t.Errorf("the panel of a running game counts %q, want exactly [\"move 3\"]", got)
+	}
+
+	for _, p := range gsWinScript[2:] {
+		h.playTurn(p)
+	}
+	h.waitFor("the game to end", func() bool { return h.s.g.Result().Over() })
+
+	played := h.s.g.Ply()
+	if got, want := gsMoveCountLines(h), plural(played, "move"); len(got) != 1 || got[0] != want {
+		t.Errorf("the finished game's panel counts %q, want exactly [%q]", got, want)
+	}
+	if next := fmt.Sprintf("move %d", played+1); strings.Contains(ansi.Strip(h.frame()), next) {
+		t.Errorf("the finished game still announces %q, which nobody will play:\n%s", next, h.frame())
+	}
+}
+
+// --- the winning chain ------------------------------------------------------
+
+// gsCheckChain requires a marked run to be what it claims: the winner's pegs,
+// each linked to the next, running from one of that side's borders to the
+// other. It checks the property rather than a remembered list of holes, so it
+// holds for whatever position the script grows into.
+func gsCheckChain(t *testing.T, g *game.Game, winner game.Player, chain []game.Point) {
+	t.Helper()
+	if len(chain) < 2 {
+		t.Fatalf("the marked chain is %v, which cannot join two borders", chain)
+	}
+	n := g.Size()
+	borders := func(p game.Point) (near, far bool) {
+		if winner == game.Vertical {
+			return p.Row == 0, p.Row == n-1
+		}
+		return p.Col == 0, p.Col == n-1
+	}
+	for i, p := range chain {
+		if got := g.At(p); got != winner {
+			t.Errorf("marked hole %s holds %v, want a peg of %v's", p, got, winner)
+		}
+		if i == 0 {
+			continue
+		}
+		l, ok := game.NewLink(chain[i-1], p)
+		if !ok || !g.HasLink(l) {
+			t.Errorf("%s and %s follow each other in the marked chain but are not linked", chain[i-1], p)
+		}
+	}
+	firstNear, firstFar := borders(chain[0])
+	lastNear, lastFar := borders(chain[len(chain)-1])
+	if !(firstNear && lastFar) && !(firstFar && lastNear) {
+		t.Errorf("the marked chain runs %s..%s, which does not join %v's two borders",
+			chain[0], chain[len(chain)-1], winner)
+	}
+}
+
+// gsSpareWinScript is the win script with one peg added for the winner that
+// takes no part in the connection: C6 is vertical's, sits on vertical's own
+// border row, and is a knight's move from none of its other pegs. A marking
+// that simply named the winner's pegs would sweep it in, and a script where
+// every one of the winner's pegs is in the chain could not tell the difference.
+var gsSpareWinScript = []game.Point{
+	{Col: 1, Row: 0}, {Col: 5, Row: 1},
+	{Col: 2, Row: 5}, {Col: 5, Row: 2},
+	{Col: 2, Row: 2}, {Col: 5, Row: 3},
+	{Col: 3, Row: 4}, {Col: 5, Row: 4},
+	{Col: 1, Row: 5},
+}
+
+// TestTheWinningChainIsMarkedOnTheBoard covers the last thing a game says. The
+// player is told who won; on a full-size board, finding the connection that won
+// it by eye is the work the board exists to save.
+func TestTheWinningChainIsMarkedOnTheBoard(t *testing.T) {
+	d := gsTestDeps(t)
+	h := newGSHarness(t, d, gsHotseat(6), 120, 40)
+	spare := gsSpareWinScript[2]
+	for _, p := range gsSpareWinScript[:len(gsSpareWinScript)-1] {
+		h.playTurn(p)
+	}
+	_ = h.frame()
+	if marks := h.s.board.Highlights; len(marks) != 0 {
+		t.Fatalf("holes are called out before anything has been won: %v", marks)
+	}
+
+	h.playTurn(gsSpareWinScript[len(gsSpareWinScript)-1])
+	h.waitFor("the game to end", func() bool { return h.s.g.Result().Over() })
+	res := h.s.g.Result()
+	if res.Reason != game.Connection {
+		t.Fatalf("the script ended the game by %v, so there is no chain to mark", res.Reason)
+	}
+	_ = h.frame()
+	chain := h.s.board.Highlights
+	gsCheckChain(t, h.s.g, res.Winner(), chain)
+	for _, p := range chain {
+		if p == spare {
+			t.Errorf("%s is marked, but it is a peg of the winner's that connects nothing", spare)
+		}
+	}
+
+	// And the marks reach the picture. Rendering the same view with them taken
+	// out is the control: if the two agree, the chain was worked out and then
+	// dropped on the way to the board.
+	marked := h.s.board
+	plain := marked
+	plain.Highlights = nil
+	withMarks := strings.Join(marked.Render(h.s.g, h.s.styles, 80, 30), "\n")
+	without := strings.Join(plain.Render(h.s.g, h.s.styles, 80, 30), "\n")
+	if withMarks == without {
+		t.Errorf("marking the winning chain makes no difference to the board:\n%s", without)
+	}
+	gsCheckFrame(t, "the won game", h.frame(), h.width, h.height)
+}
+
+// TestAGameThatEndedWithoutAConnectionMarksNothing is the control the marking
+// needs: a resignation ends the game with no chain on the board, and inventing
+// one would point the player at pegs that won nothing.
+func TestAGameThatEndedWithoutAConnectionMarksNothing(t *testing.T) {
+	d := gsTestDeps(t)
+	h := newGSHarness(t, d, gsHotseat(6), 120, 40)
+	h.playTurn(gsWinScript[0])
+	h.ready()
+	h.press("r")
+	h.press("y")
+	h.waitFor("the resignation to end the game", func() bool { return h.s.g.Result().Over() })
+	_ = h.frame()
+	if marks := h.s.board.Highlights; len(marks) != 0 {
+		t.Errorf("a game won by resignation marks %v as the winning chain", marks)
 	}
 }
 

@@ -163,6 +163,16 @@ func (p *Picker) key(m tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	// Whatever is left is text. The menu's lists answer the board's movement
+	// letters, and this one deliberately does not: the query is what the list
+	// is for, so "j" has to be the first letter of a name and not a step down
+	// the list. Both failures are possible, and they are not equally bad — a
+	// letter that filters when a step was wanted shows a shorter list the
+	// player can undo with backspace, whereas a letter that steps when a name
+	// was being typed silently searches for the rest of it and leaves no clue
+	// why the right profile has gone. The keys that move here are therefore the
+	// arrows and the emacs pair, which no text field claims, and the status
+	// line names both.
 	if p.edit.key(m) {
 		p.retype()
 	}

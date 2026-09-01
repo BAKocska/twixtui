@@ -9,6 +9,14 @@ import (
 // hollow peg), empty holes, absent corners (blank), the cursor (square
 // brackets), highlights (round brackets) and the eight link directions.
 //
+// One distinction is deliberately colour-only: which of the four borders
+// belong to which player. Its labels take their owner's colour, and with
+// colour off the frame is exactly what it was. There is no glyph to spare — the
+// gutter is one column wider than the row number, and a marker squeezed in
+// there reads as debris against the board rather than as a fact about it — and
+// the board is not the only place the fact is available: the panel names each
+// player's axis in words, which is where a player without colour reads it.
+//
 // A shallow link (column ±2, row ±1) is far shallower than any diagonal a
 // terminal cell can draw: four screen columns for every row. Drawn as a ramp of
 // scan lines at differing heights it read as a row of detached dashes rather
@@ -93,6 +101,11 @@ const (
 	styLinkDigit
 	styLastMove
 	styLabel
+	// A coordinate label for a border that belongs to a player: the gutter
+	// numbers of the top and bottom rows for vertical, the outer column letters
+	// for horizontal.
+	styLabelVertical
+	styLabelHorizontal
 	numStyleIDs
 )
 
@@ -178,6 +191,17 @@ func (st *Styles) apply(id styleID, s string) string {
 		style = &st.LastMove
 	case styLabel:
 		style = &st.Label
+	// A border label takes its owner's colour from that player's peg style, so
+	// no scheme can colour a peg in one colour and that player's own edges in
+	// another, and none has to name a colour it has not already named. The
+	// peg's weight is dropped: a label is a coordinate, not a piece, and a bold
+	// gutter competes with the board it is labelling.
+	case styLabelVertical:
+		label := st.PegVertical.UnsetBold()
+		style = &label
+	case styLabelHorizontal:
+		label := st.PegHorizontal.UnsetBold()
+		style = &label
 	default:
 		return s
 	}

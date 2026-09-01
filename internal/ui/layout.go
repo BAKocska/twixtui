@@ -95,7 +95,12 @@ func Arrange(width, height, n int) Arrangement {
 	if width-arr.BoardW >= panelGap+panelMinWidth {
 		arr.Panel = PanelSide
 		arr.PanelW = min(width-arr.BoardW-panelGap, panelMaxWidth)
-		arr.PanelH = arr.BoardH
+		// A side panel is a column of its own and may use every row above the
+		// status line, not only the rows the board happens to occupy. Tying it
+		// to the board's height cut the key help off in the middle of the list
+		// while blank rows went unused below the board — eleven of them at
+		// 130x38 — which makes a cut that is merely tidy look like a fault.
+		arr.PanelH = availH
 		arr.BoardAvailW = width - panelGap - arr.PanelW
 	} else if availH-arr.BoardH >= panelMinHeight {
 		arr.Panel = PanelBottom
@@ -117,14 +122,14 @@ func Compose(arr Arrangement, board, panel []string, status string, st *Styles) 
 	lines := make([]string, 0, arr.Height)
 	switch arr.Panel {
 	case PanelSide:
-		rows := max(len(board), min(len(panel), arr.BoardH))
+		rows := max(len(board), min(len(panel), arr.PanelH))
 		for i := range rows {
 			var b, p string
 			if i < len(board) {
 				b = board[i]
 			}
 			if i < len(panel) {
-				p = panel[i]
+				p = wholeWords(panel[i], arr.PanelW)
 			}
 			if p == "" {
 				lines = append(lines, b)
@@ -140,7 +145,7 @@ func Compose(arr Arrangement, board, panel []string, status string, st *Styles) 
 			if free == 0 {
 				break
 			}
-			lines = append(lines, p)
+			lines = append(lines, wholeWords(p, arr.PanelW))
 			free--
 		}
 	default:
@@ -154,7 +159,7 @@ func Compose(arr Arrangement, board, panel []string, status string, st *Styles) 
 	if len(lines) > arr.Height-1 {
 		lines = lines[:arr.Height-1]
 	}
-	lines = append(lines, status)
+	lines = append(lines, wholeWords(status, arr.Width))
 
 	for i, l := range lines {
 		if ansi.StringWidth(l) > arr.Width {
@@ -162,6 +167,71 @@ func Compose(arr Arrangement, board, panel []string, status string, st *Styles) 
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// The mark a shortened line ends with. It is the same character the screens
+// that build those lines use; this package only recognises it, and recognising
+// it is the whole of the contract between them.
+const truncationMark = "…"
+
+// itemSep separates the hint items a status line is a list of.
+const itemSep = " · "
+
+// wholeWords pulls a line's truncation mark back to a boundary a reader can
+// trust. A line that reaches its width and ends in the mark was cut to fit, and
+// the cut fell wherever the width fell: "○ horizontal intermedia…", or a status
+// line ending "r r…" where the resign key was. Nothing here knows what was
+// dropped, but it can refuse to show a piece of a word.
+//
+// What the cut landed on is readable from what it left. A cut inside the
+// separator between two items left the item before it whole, and only the
+// remnant goes; a cut anywhere else may have landed inside a word, so a list of
+// hint items gives up its last item and any other line its last word. Saying
+// less properly beats saying more in pieces, and what is given up is the part
+// that carried no information anyway. A line with nothing whole in front of the
+// mark keeps its cut: one shortened word still names something, a bare mark
+// names nothing.
+//
+// A line whose author wrote a mark of their own and which happens to fill the
+// width exactly cannot be told from a cut one, and loses its last word to this.
+// That is the price: a word fewer on a line that already ended in a mark, which
+// is a smaller wrong than a word the program made up.
+//
+// Board lines are not offered here. They are a grid of glyphs, they carry no
+// mark, and their overflow is clipped rather than shortened.
+func wholeWords(line string, width int) string {
+	// Every line of every frame comes through here, and almost none of them
+	// carry a mark. Rule those out with a scan before anything is copied: the
+	// mark cannot be the tail of a styled line, which ends in a reset, so the
+	// cheap test is for the character anywhere in it.
+	if width <= 0 || !strings.Contains(line, truncationMark) {
+		return line
+	}
+	plain := strings.TrimRight(ansi.Strip(line), " ")
+	body, marked := strings.CutSuffix(plain, truncationMark)
+	if !marked || ansi.StringWidth(plain) < width {
+		return line
+	}
+	keep := ""
+	// The remnants a cut can leave of the separator, longest first. They are
+	// derived from it so the two cannot drift apart.
+	for _, remnant := range []string{itemSep, strings.TrimRight(itemSep, " "), " "} {
+		if after, cut := strings.CutSuffix(body, remnant); cut {
+			keep = after
+			break
+		}
+	}
+	if keep == "" {
+		if i := strings.LastIndex(body, itemSep); i > 0 {
+			keep = body[:i]
+		} else if i := strings.LastIndexByte(body, ' '); i > 0 {
+			keep = strings.TrimRight(body[:i], " ")
+		}
+	}
+	if keep == "" {
+		return line
+	}
+	return ansi.Truncate(line, ansi.StringWidth(keep)+1, truncationMark)
 }
 
 // composeTooSmall renders the explicit too-small notice. It never panics,

@@ -50,6 +50,7 @@ const (
 	gaResign
 	gaLiftPeg
 	gaCode
+	gaRematch
 	gaYes
 	gaNo
 )
@@ -84,6 +85,11 @@ var gameBindings = []gameBinding{
 	{gaResign, []string{"r"}, phasePlay, "r", "resign"},
 	{gaLiftPeg, []string{"p"}, phasePlay, "p", "lift one of your pegs"},
 	{gaCode, []string{"c"}, phasePlay, "c", "the exchange: your code and theirs"},
+	// Upper case, because the obvious mnemonic is taken by resign and the two
+	// would be one slip apart on a screen where resign is refused anyway. The
+	// board already uses the shifted letters for its own second family of
+	// keys, so a capital is a key players here have met before.
+	{gaRematch, []string{"R"}, phasePlay, "R", "rematch: another game, sides swapped"},
 	{gaYes, []string{"y"}, phaseConfirm, "y", "yes"},
 	{gaNo, []string{"n", "esc"}, phaseConfirm, "n", "no, carry on"},
 }
@@ -169,6 +175,12 @@ type gameScreen struct {
 	savedAt    int
 	saveFailed bool
 
+	// winning is the border-to-border run of the winner's pegs, empty until a
+	// game ends by making one. It is worked out when the game ends rather than
+	// while drawing, because the position it describes cannot change after
+	// that and a frame should not pay for a search it can only repeat.
+	winning []game.Point
+
 	botGen      int
 	botThinking bool
 	botCancel   context.CancelFunc
@@ -192,6 +204,20 @@ type gameScreen struct {
 // either by a live session or, in a correspondence game, by the move codes the
 // players exchange by hand; it needs exactly one of the two.
 func NewGameScreen(d Deps, cfg GameConfig) (Screen, error) {
+	// Not a bare forwarding return: a typed nil pointer in a Screen is not a
+	// nil Screen, and a caller checking the interface would then miss the
+	// refusal entirely.
+	s, err := newGameScreen(d, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// newGameScreen is the constructor proper. A rematch builds its successor here
+// rather than through the exported form, because it has something to say to the
+// screen it is handing the player to.
+func newGameScreen(d Deps, cfg GameConfig) (*gameScreen, error) {
 	humans, remote := 0, game.NoPlayer
 	for _, side := range []game.Player{game.Vertical, game.Horizontal} {
 		seat, ok := cfg.Seats[side]
@@ -251,18 +277,32 @@ func NewGameScreen(d Deps, cfg GameConfig) (Screen, error) {
 	// goes through the same serialiser, so a hint search and a move search take
 	// turns instead of corrupting each other. The wait is short because the
 	// hint's context is cancelled as soon as the position changes.
+	//
+	// An engine that already carries a serialiser keeps the one it has. That
+	// happens when a finished game hands its opponent to a rematch: leaving a
+	// game cancels its searches but does not wait for them, so one may still be
+	// inside the engine when the next game asks for its opening move. A second
+	// wrapper around a new lock would let those two calls run at once, which is
+	// the thing the serialiser exists to prevent; keeping the one lock makes
+	// them take turns across the handover, and not stacking a wrapper stops an
+	// evening of rematches growing a chain of them.
 	lock := new(sync.Mutex)
+	serialise := func(engine bot.Bot) bot.Bot {
+		if engine == nil {
+			return nil
+		}
+		if _, already := engine.(*serialBot); already {
+			return engine
+		}
+		return &serialBot{lock: lock, engine: engine}
+	}
 	seats := make(map[game.Player]Seat, len(cfg.Seats))
 	for side, seat := range cfg.Seats {
-		if seat.Bot != nil {
-			seat.Bot = &serialBot{lock: lock, engine: seat.Bot}
-		}
+		seat.Bot = serialise(seat.Bot)
 		seats[side] = seat
 	}
 	cfg.Seats = seats
-	if cfg.HintFor != nil {
-		cfg.HintFor = &serialBot{lock: lock, engine: cfg.HintFor}
-	}
+	cfg.HintFor = serialise(cfg.HintFor)
 
 	styles := d.Styles
 	if styles == nil {
@@ -303,6 +343,7 @@ func NewGameScreen(d Deps, cfg GameConfig) (Screen, error) {
 		s.recorded = true
 		s.stopped = true
 		s.notice = s.resultText(res)
+		s.winning = s.winningChain()
 	}
 	return s, nil
 }
@@ -538,6 +579,8 @@ func (s *gameScreen) handleGameAction(a gameAction) tea.Cmd {
 		return s.takeSwap()
 	case gaDraw:
 		return s.draw()
+	case gaRematch:
+		return s.rematch()
 	case gaLiftPeg:
 		s.liftPeg()
 	case gaCode:
@@ -1191,6 +1234,7 @@ func (s *gameScreen) finish() tea.Cmd {
 	s.cancelBot()
 	s.botThinking = false
 	s.notice = s.resultText(res)
+	s.winning = s.winningChain()
 	s.message = ""
 
 	var problems []string
@@ -1365,6 +1409,100 @@ func (s *gameScreen) quitProgram() tea.Cmd {
 	return Done(DoneMsg{Quit: true, Err: s.depart()})
 }
 
+// --- the rematch ------------------------------------------------------------
+
+// rematch replaces this screen with another game between the same two players.
+//
+// It exists because the only way out of a finished game was to leave it: a
+// second game meant walking back through the menu, or remembering the command
+// line that started the first. That is a lot of ceremony to ask of two people
+// who have just agreed to play again.
+func (s *gameScreen) rematch() tea.Cmd {
+	if why := s.rematchRefusal(); why != "" {
+		s.message = why
+		return nil
+	}
+	if !s.g.Result().Over() {
+		s.message = "a rematch starts when this game is over"
+		return nil
+	}
+	// Built before the current game is torn down, so that a configuration the
+	// constructor refuses leaves the player looking at the game they had
+	// rather than at nothing.
+	next, err := newGameScreen(s.deps, s.rematchConfig())
+	if err != nil {
+		s.message = "the rematch could not be started: " + err.Error()
+		return nil
+	}
+	if err := s.depart(); err != nil {
+		return Fail(err)
+	}
+	next.message = "rematch: the sides are swapped"
+	return Replace(next)
+}
+
+// rematchRefusal says why this game cannot be played again from here, and is
+// empty when it can.
+//
+// A rematch is a game started on the spot by one side, which only works when
+// this end can fill both seats: two people at this keyboard, or a player and an
+// engine. A remote opponent has to agree to a second game and be connected for
+// it, and a correspondence game is bound to an identifier both ends already
+// share, so neither can be conjured from a finished game's screen. The key is
+// withheld in those two cases rather than offered and refused, and the sentence
+// here is for the player who presses it anyway.
+func (s *gameScreen) rematchRefusal() string {
+	if s.remoteSide == game.NoPlayer {
+		return ""
+	}
+	if s.corr != nil {
+		return "a rematch by codes needs a new invitation: twixtui play correspondence --new"
+	}
+	return "a rematch over the network needs a new connection: host or join again"
+}
+
+// rematchOffered reports whether the key is live now, which is what the footer
+// and the help panel show.
+//
+// A game that has stopped without ending — a search that failed, say — does not
+// count. It is saved and can be resumed, so the useful answer there is the game
+// already in the store, not a third one started beside it.
+func (s *gameScreen) rematchOffered() bool {
+	return s.g.Result().Over() && s.rematchRefusal() == ""
+}
+
+// rematchConfig is the next game: the same ruleset on the same board against
+// the same opponent, with the two seats exchanged.
+//
+// Exchanging them is a judgement, not an accident of the code. Vertical moves
+// first, and the opening advantage in TwixT is real enough that the pie rule
+// exists to blunt it, so a second game on the same seats hands the same side
+// the same edge twice; alternating is what two people across a physical board
+// do without discussing it, and it is what makes a pair of games worth
+// comparing. Against an engine it is also the more interesting game, since the
+// player meets the other axis instead of replaying their own opening. The cost
+// is that a player who chose a side deliberately does not keep it, which is
+// why the key, the help row and the first line of the new game all say the
+// sides swap.
+func (s *gameScreen) rematchConfig() GameConfig {
+	cfg := s.cfg
+	// Neither the record this game was resumed from nor the identifier it is
+	// stored under belongs to the next one: keeping the record would deal the
+	// finished position out again, and keeping the identifier would save the
+	// new game over the one just played.
+	cfg.Resume = nil
+	cfg.StoreID = ""
+	// The seats travel exactly as they are, serialiser and all. The engine is
+	// the one that played the last game, and its lock is what keeps a search
+	// left over from that game out of this one's; the constructor knows not to
+	// wrap it twice.
+	cfg.Seats = map[game.Player]Seat{
+		game.Vertical:   s.cfg.Seats[game.Horizontal],
+		game.Horizontal: s.cfg.Seats[game.Vertical],
+	}
+	return cfg
+}
+
 // --- panel and status -------------------------------------------------------
 
 func (s *gameScreen) highlights() []game.Point {
@@ -1372,7 +1510,82 @@ func (s *gameScreen) highlights() []game.Point {
 	if st := s.g.Staged(); st.PegPlaced {
 		out = append(out, st.Peg)
 	}
+	// The three are disjoint in practice — a finished game has no staged turn
+	// and its advice has been cleared — so they are appended rather than
+	// merged.
+	out = append(out, s.winning...)
 	return append(out, s.hint.highlights()...)
+}
+
+// winningChain is the run of the winner's linked pegs that joins their two
+// borders, empty unless the game was won by making one.
+//
+// A player is told who won and then has to find the connection by eye; on a
+// full-size board that means tracing a wire through a couple of hundred pegs,
+// which is exactly the work the board is there to save. The engine does not
+// publish the chain it found — its own test for a win is only that one exists —
+// so it is recovered here by breadth-first search from the near border over the
+// link graph, keeping each peg's predecessor. Any border-to-border run will do:
+// where several exist they are all genuinely the win, and the search returns
+// the shortest, which is the one a player would have drawn.
+//
+// The run comes back from the far border towards the near one, which is the
+// order the predecessors give and which nothing downstream cares about: the
+// caller marks holes, not a path.
+func (s *gameScreen) winningChain() []game.Point {
+	res := s.g.Result()
+	winner := res.Winner()
+	if !res.Over() || res.Reason != game.Connection || winner == game.NoPlayer {
+		return nil
+	}
+	n := s.g.Size()
+	at := func(p game.Point) int { return p.Row*n + p.Col }
+	prev := make([]int, n*n)
+	for i := range prev {
+		prev[i] = -1
+	}
+	seen := make([]bool, n*n)
+	var queue []game.Point
+	for i := range n {
+		p := game.Point{Col: i, Row: 0}
+		if winner == game.Horizontal {
+			p = game.Point{Col: 0, Row: i}
+		}
+		if s.g.At(p) != winner {
+			continue
+		}
+		seen[at(p)] = true
+		queue = append(queue, p)
+	}
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		if (winner == game.Vertical && p.Row == n-1) || (winner == game.Horizontal && p.Col == n-1) {
+			var chain []game.Point
+			for cur := p; ; {
+				chain = append(chain, cur)
+				i := prev[at(cur)]
+				if i < 0 {
+					return chain
+				}
+				cur = game.Point{Col: i % n, Row: i / n}
+			}
+		}
+		mask := s.g.LinkMask(p)
+		for d := game.Dir(0); d < game.NumDirs; d++ {
+			if mask&(1<<d) == 0 {
+				continue
+			}
+			q := p.Add(d)
+			if !s.g.InBounds(q) || s.g.At(q) != winner || seen[at(q)] {
+				continue
+			}
+			seen[at(q)] = true
+			prev[at(q)] = at(p)
+			queue = append(queue, q)
+		}
+	}
+	return nil
 }
 
 // panelLines builds the information panel, most useful line first.
@@ -1439,7 +1652,16 @@ func (s *gameScreen) panelLines(arr ui.Arrangement) []string {
 	}
 
 	blank()
-	add(fmt.Sprintf("move %d", s.g.Ply()+1))
+	// While the game runs this is the move about to be played. Once it is over
+	// there is no such move, and advertising one put "move 10" on the same
+	// screen as "after 9 moves": two counts of one game, one apart, which reads
+	// as an error rather than as the answers to two different questions. A
+	// finished game is counted by what was played.
+	if s.g.Result().Over() {
+		add(plural(s.g.Ply(), "move"))
+	} else {
+		add(fmt.Sprintf("move %d", s.g.Ply()+1))
+	}
 	if last := s.lastMoveText(); last != "" {
 		add("last " + last)
 	}
@@ -1512,6 +1734,9 @@ func (s *gameScreen) helpEntries() []ui.HelpEntry {
 			continue
 		}
 		if b.action == gaCode && s.corr == nil {
+			continue
+		}
+		if b.action == gaRematch && !s.rematchOffered() {
 			continue
 		}
 		out = append(out, ui.HelpEntry{Label: b.label, Help: b.help})
@@ -1839,6 +2064,12 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 			// The last code still has to reach the opponent, or their copy of
 			// the game never ends.
 			parts = append(parts, s.gameKeyLabel(gaCode)+" the code to send")
+		}
+		if s.rematchOffered() {
+			// The swap is named here and not only in the help panel: it is the
+			// one part of a rematch a player would not predict, and a footer
+			// that says only "rematch" would spring it on them.
+			parts = append(parts, s.gameKeyLabel(gaRematch)+" rematch, sides swapped")
 		}
 		parts = append(parts, s.keyLabel(ui.ActQuit)+" leave")
 	case s.handover:

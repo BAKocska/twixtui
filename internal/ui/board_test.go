@@ -7,8 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	lipgloss "charm.land/lipgloss/v2"
 
 	"github.com/BAKocska/twixtui/internal/game"
 )
@@ -1531,4 +1534,205 @@ func linkedPairWith(t *testing.T, from, to game.Point, owner game.Player, blocke
 		t.Fatalf("no vertical link formed between %v and %v with pegs at %v", from, to, blocked)
 	}
 	return g
+}
+
+// unpairedBrackets lists every overlay bracket in a frame that has no partner.
+// A pair encloses its hole, so a left mark's partner stands two cells to its
+// right. Half a pair is not a smaller version of a mark: it points at a hole
+// from one side, and next to another mark it reads as a pair enclosing the hole
+// between the two, which is the wrong hole.
+func unpairedBrackets(t *testing.T, sc Scale, n int, lines []string) []string {
+	t.Helper()
+	partner := map[rune]struct {
+		want rune
+		at   int
+	}{
+		glyphCursorLeft:  {glyphCursorRight, 2},
+		glyphCursorRight: {glyphCursorLeft, -2},
+		glyphMarkLeft:    {glyphMarkRight, 2},
+		glyphMarkRight:   {glyphMarkLeft, -2},
+	}
+	cw, ch := sc.CanvasSize(n)
+	var bad []string
+	for y := range ch {
+		for x := range cw {
+			got := cellAt(t, lines, n, x, y)
+			p, ok := partner[got]
+			if !ok {
+				continue
+			}
+			if cellAt(t, lines, n, x+p.at, y) != p.want {
+				bad = append(bad, fmt.Sprintf("%q at (%d,%d) with no %q beside it", got, x, y, p.want))
+			}
+		}
+	}
+	return bad
+}
+
+// TestAdjacentHighlightsEachCarryTheirOwnMark is the run-of-highlights defect
+// made precise. Holes are two cells apart at the compact scale, so the pair
+// around one highlighted hole wants the cell the next hole's pair wants, and
+// adjacent highlights are ordinary: a lesson marks a whole border row, a hint
+// marks a route.
+//
+// Three properties. Every marked hole reads as marked — the run may not contain
+// a hole that looks untouched. No bracket stands without its partner, whatever
+// the marks had to give up. And where there is room for pairs, pairs are still
+// what a highlight gets: the detail scale's holes are four cells apart and
+// contend for nothing, so falling back to a mark there would be throwing away
+// the clearer form for no reason.
+func TestAdjacentHighlightsEachCarryTheirOwnMark(t *testing.T) {
+	rs := game.Std
+	rs.Size = 12
+	g := game.MustNew(rs)
+	var run []game.Point
+	for col := 1; col < 11; col++ {
+		run = append(run, game.Point{Col: col, Row: 0})
+	}
+	// One cursor inside the run, competing for the same cells, and one well
+	// away from it.
+	for _, cursor := range []game.Point{{Col: 3, Row: 0}, {Col: 5, Row: 5}} {
+		for _, sc := range []Scale{Compact, Detail} {
+			bv := &BoardView{Scale: sc, ShowCursor: true, Cursor: cursor, Highlights: run}
+			lines := renderPlain(t, bv, g)
+			frame := strings.Join(lines, "\n")
+			for _, p := range run {
+				if !highlightShown(t, lines, g.Size(), sc, p) {
+					t.Errorf("%s, cursor on %v: nothing marks the highlighted hole %v:\n%s",
+						sc, cursor, p, frame)
+				}
+			}
+			if bad := unpairedBrackets(t, sc, g.Size(), lines); len(bad) != 0 {
+				t.Errorf("%s, cursor on %v: %v:\n%s", sc, cursor, bad, frame)
+			}
+
+			// A run reads as a run only if it is drawn one way throughout.
+			// Handing the contended cell to whichever mark asked first drew
+			// alternate holes as pairs and the rest as marks, which is two
+			// kinds of highlight in one row and no help to anybody.
+			forms := map[string][]game.Point{}
+			for _, p := range run {
+				if p == cursor {
+					continue // the cursor has taken the pair, by precedence
+				}
+				form := "a mark on the hole"
+				if cellAt(t, lines, g.Size(), sc.holeX(p.Col)-1, sc.holeY(p.Row)) == glyphMarkLeft {
+					form = "a bracket pair"
+				}
+				forms[form] = append(forms[form], p)
+			}
+			if len(forms) > 1 {
+				t.Errorf("%s, cursor on %v: the run is drawn two ways at once, %v:\n%s",
+					sc, cursor, forms, frame)
+			}
+			if sc != Detail {
+				continue
+			}
+			for _, p := range run {
+				if p == cursor {
+					continue // the cursor has precedence over the pair there
+				}
+				x, y := sc.holeX(p.Col), sc.holeY(p.Row)
+				if cellAt(t, lines, g.Size(), x-1, y) != glyphMarkLeft ||
+					cellAt(t, lines, g.Size(), x+1, y) != glyphMarkRight {
+					t.Errorf("detail, cursor on %v: %v lost its brackets although its neighbours' are two cells clear:\n%s",
+						cursor, p, frame)
+				}
+			}
+		}
+	}
+}
+
+// TestBorderLabelsCarryTheirOwnersColour holds the board to what the panel
+// says in words: vertical joins the top and bottom rows, horizontal the left
+// and right columns. Those four labels are the only ones that name an edge
+// somebody has to reach, and each takes its owner's colour — the colour that
+// owner's pegs carry, so a scheme cannot say one thing with its pegs and
+// another with its edges. Every other label keeps the neutral one.
+//
+// The colours here are the test's own, not a scheme's: what is asserted is
+// which label gets whose colour, not what the colours are.
+func TestBorderLabelsCarryTheirOwnersColour(t *testing.T) {
+	g := hubGame(t)
+	n := g.Size()
+	st := Styles{
+		Hole:          lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		PegVertical:   lipgloss.NewStyle().Foreground(lipgloss.Color("201")).Bold(true),
+		PegHorizontal: lipgloss.NewStyle().Foreground(lipgloss.Color("202")).Bold(true),
+		Label:         lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
+	}
+	bv := &BoardView{Scale: Compact}
+	cw, ch := Compact.CanvasSize(n)
+	lines := bv.Render(g, &st, cw+gutterWidth(n), ch+1)
+
+	// Each label is looked up by the text it is, which no escape sequence can
+	// contain: the gutter numbers keep their padding, the letters are letters.
+	letters := lines[0]
+	last := game.ColumnName(n - 1)
+	for _, c := range []struct {
+		what  string
+		line  string
+		text  string
+		owner string
+	}{
+		{"the top row's number", lines[1], " 1 ", "201"},
+		{"the bottom row's number", lines[len(lines)-1], strconv.Itoa(n) + " ", "201"},
+		{"an inner row's number", lines[5], " 5 ", "203"},
+		{"the left column's letter", letters, "A", "202"},
+		{"the right column's letter", letters, last, "202"},
+		{"an inner column's letter", letters, "F", "203"},
+	} {
+		i := strings.Index(c.line, c.text)
+		if i < 0 {
+			t.Fatalf("%s (%q) is not on the frame: %q", c.what, c.text, c.line)
+		}
+		sgr := sgrBefore(c.line, i)
+		if !strings.Contains(sgr, c.owner) {
+			t.Errorf("%s is styled %q, want the colour %s", c.what, sgr, c.owner)
+		}
+		if strings.Contains(sgr, "\x1b[1m") {
+			t.Errorf("%s is bold: a label is a coordinate, not a peg", c.what)
+		}
+	}
+}
+
+// TestBorderOwnershipAddsNoGlyphs is the other half of the same change. Border
+// ownership is the one distinction on this board carried by colour alone, which
+// is a debt: with colour off it is not there. What must not happen in exchange
+// is noise — a marker pressed into the one spare gutter column, or a label
+// bracketed — so with colour off every label is exactly the coordinate it
+// names and nothing else.
+func TestBorderOwnershipAddsNoGlyphs(t *testing.T) {
+	g := hubGame(t)
+	n := g.Size()
+	gutter := gutterWidth(n)
+	bv := &BoardView{Scale: Compact}
+	lines := renderPlain(t, bv, g)
+
+	var want strings.Builder
+	want.WriteString(strings.Repeat(" ", gutter))
+	for col := range n {
+		for want.Len() < gutter+Compact.holeX(col) {
+			want.WriteByte(' ')
+		}
+		want.WriteString(game.ColumnName(col))
+	}
+	if got := lines[0]; got != strings.TrimRight(want.String(), " ") {
+		t.Errorf("letters row is %q, want just the column names %q", got, want.String())
+	}
+	for y, line := range lines[1:] {
+		label := line
+		if len(label) > gutter {
+			label = label[:gutter]
+		}
+		if y%Compact.rowStep != 0 {
+			if strings.TrimSpace(label) != "" {
+				t.Errorf("canvas row %d carries the gutter text %q, want blank", y, label)
+			}
+			continue
+		}
+		if got, want := label, pad(strconv.Itoa(y/Compact.rowStep+1), gutter); got != want {
+			t.Errorf("gutter of board row %d is %q, want just the number %q", y/Compact.rowStep+1, got, want)
+		}
+	}
 }

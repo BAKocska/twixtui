@@ -1,12 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"net"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/BAKocska/twixtui/internal/bot"
 	"github.com/BAKocska/twixtui/internal/game"
@@ -14,6 +16,7 @@ import (
 	"github.com/BAKocska/twixtui/internal/leaderboard"
 	"github.com/BAKocska/twixtui/internal/netplay"
 	"github.com/BAKocska/twixtui/internal/theme"
+	"github.com/BAKocska/twixtui/internal/ui"
 )
 
 func mnMenu(t *testing.T, d Deps, width, height int) *Menu {
@@ -1083,5 +1086,356 @@ func TestMenuSurvivesShrinkAndRegrow(t *testing.T) {
 	}
 	if got := m.list.opts[m.list.sel].label; got != want {
 		t.Errorf("the selection is %q after regrow, want %q", got, want)
+	}
+}
+
+// The lists on this screen answer the keys the rest of the program teaches. The
+// board is driven h/j/k/l and its panel says so, but every chooser here used to
+// take the arrows alone, and the cost was not only a hand movement: coming off
+// the board, "j j j enter" launched whatever was highlighted instead of choosing
+// the fourth entry. These tests are the ones that would have caught it.
+
+// mnHighlighted returns the entry the frame marks as chosen, which is what the
+// player can see, rather than the index the model happens to hold. The marker
+// itself is styled, so the line is read with the styling taken off.
+func mnHighlighted(t *testing.T, m *Menu) string {
+	t.Helper()
+	frame := m.View().Content
+	for _, line := range strings.Split(frame, "\n") {
+		if rest, ok := strings.CutPrefix(ansi.Strip(line), "> "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	t.Fatalf("nothing on screen is marked as chosen:\n%s", frame)
+	return ""
+}
+
+// mnMovementHint returns the status-line fragment naming the keys that move the
+// list, found by what it does rather than by its position in the line.
+func mnMovementHint(t *testing.T, m *Menu) string {
+	t.Helper()
+	hints := mnChooser(t, m).hints(m)
+	for _, h := range hints {
+		if strings.HasSuffix(h, " move") && strings.Contains(h, "↑") {
+			return h
+		}
+	}
+	t.Fatalf("no hint names the arrow keys that move the list: %v", hints)
+	return ""
+}
+
+func TestMenuListsMoveWithTheBoardsLetters(t *testing.T) {
+	d := shellTestDeps(t)
+	mnSaveGame(t, d, gamestore.VersusBot, "Balint", leaderboard.BotName("beginner"))
+	m := mnMenu(t, d, 100, 30)
+
+	// The reported failure, key for key.
+	first := mnHighlighted(t, m)
+	for range 3 {
+		shellSend(t, m, "j")
+	}
+	if got, want := mnHighlighted(t, m), m.list.opts[3].label; got != want {
+		t.Fatalf("three presses of j selected %q, want the fourth entry %q", got, want)
+	}
+	shellSend(t, m, "enter")
+	if got := mnChooser(t, m).title; got != "Continue a saved game" {
+		t.Errorf("j j j enter opened %q, want the fourth entry's own list", got)
+	}
+	shellSend(t, m, "esc")
+
+	// k moves back, and a step off the top wraps as the arrows do, so holding a
+	// key never looks like a screen that has stopped answering.
+	for range 3 {
+		shellSend(t, m, "k")
+	}
+	if got := mnHighlighted(t, m); got != first {
+		t.Errorf("k did not walk back to %q, stopped at %q", first, got)
+	}
+	shellSend(t, m, "k")
+	if got, want := mnHighlighted(t, m), m.list.opts[len(m.list.opts)-1].label; got != want {
+		t.Errorf("k off the top selected %q, want the last entry %q", got, want)
+	}
+	shellSend(t, m, "j")
+
+	// A question with a fixed set of answers is the same widget, and has to
+	// answer the same keys.
+	mnPick(t, m, "Play the computer")
+	tier := mnHighlighted(t, m)
+	shellSend(t, m, "j")
+	moved := mnHighlighted(t, m)
+	if moved == tier {
+		t.Errorf("j does not move the tier chooser, still on %q", tier)
+	}
+	shellSend(t, m, "k")
+	if got := mnHighlighted(t, m); got != tier {
+		t.Errorf("k in the tier chooser went to %q, want back to %q", got, tier)
+	}
+
+	if hint := mnMovementHint(t, m); !strings.Contains(hint, "k/j") {
+		t.Errorf("the status line says %q, which does not name the letters the list answers", hint)
+	}
+}
+
+// TestMenuScrollingPanelMovesWithTheBoardsLetters covers the other list shape on
+// this screen: the standings, which scroll rather than select. The assertion is
+// on the frame, so it is about what the panel shows and not about the field that
+// remembers where it is.
+func TestMenuScrollingPanelMovesWithTheBoardsLetters(t *testing.T) {
+	d := shellTestDeps(t)
+	for i, name := range []string{
+		"Anna", "Bernadett", "Csilla", "Dora", "Emese", "Fanni",
+		"Gabor", "Hajni", "Ildi", "Jozsef", "Kati", "Laci",
+	} {
+		if err := d.Board.Record(leaderboard.Result{
+			Played: time.Date(2026, 2, 1, 9, i, 0, 0, time.UTC), Player: name,
+			Opponent: leaderboard.BotName("pro"), Outcome: leaderboard.Win,
+			Side: "vertical", Moves: 40, Ruleset: game.Std.Canonical(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Short enough that the standings cannot all fit, which is what makes
+	// scrolling visible at all.
+	m := mnMenu(t, d, 80, 14)
+	mnPick(t, m, "Leaderboard")
+	f, ok := m.form.(*scrollForm)
+	if !ok {
+		t.Fatalf("the leaderboard opened %T, not a scrolling panel", m.form)
+	}
+	top := m.View().Content
+
+	// The first steps only move the line the panel keeps visible, which is
+	// already on screen; the frame changes once that line reaches the bottom.
+	// Pressing until it does keeps the assertion about the panel scrolling
+	// rather than about how many rows this terminal happened to fit.
+	presses, scrolled := 0, top
+	for range len(f.body) {
+		shellSend(t, m, "j")
+		presses++
+		if scrolled = m.View().Content; scrolled != top {
+			break
+		}
+	}
+	if scrolled == top {
+		t.Fatalf("j never scrolled the standings in %d presses:\n%s", presses, top)
+	}
+	for range presses {
+		shellSend(t, m, "k")
+	}
+	if back := m.View().Content; back != top {
+		t.Errorf("k did not scroll back to the top of the standings:\n%s", back)
+	}
+}
+
+// TestMenuMovementLettersFollowTheKeymap is the difference between answering the
+// keymap and hardcoding two letters that happen to match it today.
+func TestMenuMovementLettersFollowTheKeymap(t *testing.T) {
+	d := shellTestDeps(t)
+	km := ui.DefaultKeymap()
+	for i := range km {
+		switch km[i].Action {
+		case ui.ActMoveUp:
+			km[i].Keys, km[i].Label = []string{"y", "up"}, "y/↑"
+		case ui.ActMoveDown:
+			km[i].Keys, km[i].Label = []string{"z", "down"}, "z/↓"
+		}
+	}
+	d.Keymap = km
+	m := mnMenu(t, d, 100, 30)
+
+	first := mnHighlighted(t, m)
+	shellSend(t, m, "z")
+	if got := mnHighlighted(t, m); got == first {
+		t.Errorf("the list ignores %q, which this keymap binds to moving down", "z")
+	}
+	shellSend(t, m, "y")
+	if got := mnHighlighted(t, m); got != first {
+		t.Errorf("%q did not move back up: now on %q", "y", got)
+	}
+	shellSend(t, m, "j")
+	if got := mnHighlighted(t, m); got != first {
+		t.Errorf("j still moves the list although this keymap binds it to nothing: now on %q", got)
+	}
+	hint := mnMovementHint(t, m)
+	if !strings.Contains(hint, "y/z") {
+		t.Errorf("the status line says %q, which does not name this keymap's letters", hint)
+	}
+	if strings.Contains(hint, "j") {
+		t.Errorf("the status line %q still offers j, which does nothing here", hint)
+	}
+}
+
+// A colour scheme could only be seen by adopting it, starting a game and
+// looking at the board. The chooser now draws a sample position in the scheme
+// under the cursor.
+
+func mnTheme(t *testing.T, name string) theme.Theme {
+	t.Helper()
+	th, err := theme.Get(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return th
+}
+
+// mnSampleLine returns the frame line carrying the sample board's pegs. Pegs
+// appear nowhere else on this screen, so the line is the sample's own drawing
+// and not the list's.
+func mnSampleLine(t *testing.T, frame, what string) string {
+	t.Helper()
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.Contains(line, gsPegVertical) && strings.Contains(line, gsPegHorizontal) {
+			return line
+		}
+	}
+	t.Fatalf("the chooser draws no sample board for %s:\n%s", what, frame)
+	return ""
+}
+
+func TestThemeChooserShowsTheSchemeUnderTheCursor(t *testing.T) {
+	d := shellTestDeps(t)
+	// A run with colour available. The plain style set the other tests use is
+	// the colour-off case, which the next test covers.
+	d.Theme = mnTheme(t, "classic")
+	styles := ui.StylesFor(d.Theme)
+	d.Styles = &styles
+
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Colours")
+	c := mnChooser(t, m)
+
+	drawn := map[string]string{}
+	for range c.opts {
+		name := strings.Fields(mnHighlighted(t, m))[0]
+		line := mnSampleLine(t, m.View().Content, name)
+		if other, ok := drawn[line]; ok {
+			t.Errorf("%q and %q draw the sample identically, so the preview is not the scheme under the cursor:\n%q",
+				other, name, line)
+		}
+		drawn[line] = name
+		coloured := strings.Contains(line, "\x1b[")
+		if want := !mnTheme(t, name).Monochrome(); coloured != want {
+			t.Errorf("the sample for %q carries colour = %v, want %v:\n%q", name, coloured, want, line)
+		}
+		shellSend(t, m, "j")
+	}
+	if len(drawn) != len(c.opts) {
+		t.Errorf("%d of %d schemes drew a distinguishable sample", len(drawn), len(c.opts))
+	}
+}
+
+// TestThemeChooserPreviewObeysColourOff is the doctrine the rest of the program
+// keeps: with colour off nothing emits an escape sequence, and a screen whose
+// whole subject is colour is where that is most tempting to break. Every scheme
+// then draws the same sample, which is the truth about them — they differ in
+// colour alone — so the chooser has to say so rather than leave the player
+// comparing four identical boards.
+func TestThemeChooserPreviewObeysColourOff(t *testing.T) {
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Colours")
+	c := mnChooser(t, m)
+
+	samples := map[string]bool{}
+	for range c.opts {
+		name := strings.Fields(mnHighlighted(t, m))[0]
+		frame := m.View().Content
+		if strings.Contains(frame, "\x1b[") {
+			t.Errorf("the chooser emitted colour for %q although colour is off:\n%q", name, frame)
+		}
+		samples[mnSampleLine(t, frame, name)] = true
+		if !strings.Contains(frame, "olour is off") {
+			t.Errorf("nothing on the screen explains why %q looks like every other scheme:\n%s", name, frame)
+		}
+		shellSend(t, m, "j")
+	}
+	if len(samples) != 1 {
+		t.Errorf("the schemes drew %d different samples with colour off, want one", len(samples))
+	}
+}
+
+// TestThemePreviewNeverCostsTheListARow pins the order the panel gives space
+// away in: a scheme can still be chosen by name with nothing shown, so the
+// preview is what a short panel drops.
+func TestThemePreviewNeverCostsTheListARow(t *testing.T) {
+	visible := func(m *Menu, c *chooser) int {
+		frame := m.View().Content
+		n := 0
+		for _, o := range c.opts {
+			if strings.Contains(frame, strings.Fields(o.label)[0]) {
+				n++
+			}
+		}
+		return n
+	}
+	// The sizes that matter are the ones where the two blocks compete: the
+	// sample is eight rows with its note, the list four, and between about
+	// fourteen and seventeen rows of terminal only one of them can be had. Below
+	// that band neither fits and above it both do, so a size matrix that skips
+	// it never asks the question.
+	sizes := append([][2]int{{60, 14}, {100, 15}, {80, 16}, {100, 17}}, shellSizes...)
+	for _, size := range sizes {
+		w, h := size[0], size[1]
+		d := shellTestDeps(t)
+		m := mnMenu(t, d, w, h)
+		mnPick(t, m, "Colours")
+		c := mnChooser(t, m)
+		with := visible(m, c)
+		c.preview = nil
+		without := visible(m, c)
+		if with != without {
+			t.Errorf("at %dx%d the list shows %d schemes with the preview and %d without", w, h, with, without)
+		}
+		shellAssertFits(t, "colours chooser", m.View().Content, w, h)
+	}
+}
+
+// TestThemeSampleIsWholeOrAbsent covers what a panel too short for the sample
+// does. It used to draw the first lines of whatever it had room for, which at
+// 40x12 was two lines of a sentence saying "every scheme draws this same board"
+// with no board under it. Half a sample is worth less than none: the rows a crop
+// takes are the ones carrying the links, which is most of what a scheme is
+// judged on.
+func TestThemeSampleIsWholeOrAbsent(t *testing.T) {
+	sample := newThemeSample()
+	if sample == nil {
+		t.Fatal("the sample position could not be played")
+	}
+	plain := ui.PlainStyles()
+	coloured := ui.StylesFor(mnTheme(t, "classic"))
+	for _, active := range []*ui.Styles{&plain, &coloured} {
+		for _, th := range theme.All() {
+			for width := 1; width <= 100; width += 3 {
+				for height := 1; height <= 20; height++ {
+					lines := sample.lines(active, th, width, height)
+					if len(lines) == 0 {
+						continue
+					}
+					what := fmt.Sprintf("%s at %dx%d (plain=%v)", th.Name, width, height, active.Plain)
+					if len(lines) > height {
+						t.Errorf("%s: %d lines, more than the %d it was given", what, len(lines), height)
+					}
+					// The letters row and the last row of holes: both ends of
+					// the board, so nothing in between can be missing either.
+					if !strings.Contains(ansi.Strip(lines[0]), "A B C D E F") {
+						t.Errorf("%s: the sample does not start with the column letters:\n%s", what, strings.Join(lines, "\n"))
+					}
+					last := false
+					for _, l := range lines {
+						if strings.HasPrefix(ansi.Strip(l), "6 ") {
+							last = true
+						}
+					}
+					if !last {
+						t.Errorf("%s: the sample is cut before its last row:\n%s", what, strings.Join(lines, "\n"))
+					}
+					// With colour off the note is what explains the sample, so
+					// one may not appear without the other.
+					if active.Plain && !strings.Contains(ansi.Strip(strings.Join(lines, " ")), "colour is on.") {
+						t.Errorf("%s: the sample is shown without the whole explanation:\n%s", what, strings.Join(lines, "\n"))
+					}
+				}
+			}
+		}
 	}
 }
