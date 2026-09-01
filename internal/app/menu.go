@@ -11,6 +11,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/BAKocska/twixtui/docs"
+
 	"github.com/BAKocska/twixtui/internal/bot"
 	"github.com/BAKocska/twixtui/internal/game"
 	"github.com/BAKocska/twixtui/internal/gamestore"
@@ -46,13 +48,27 @@ type Menu struct {
 	form menuForm
 	// moveHint and quitHint are the status-line fragments naming the keys, built
 	// once because the keys they name cannot change while the screen is up.
-	moveHint, quitHint string
+	// frontQuitHint is the front screen's own, naming the plain quit letter the
+	// board teaches, which only the front list is free to answer.
+	moveHint, quitHint, frontQuitHint string
+	// quitLetters are the letter forms of the keymap's quit binding. Only the
+	// front list answers them: a form one level down is a question being asked,
+	// and escape already leaves it, so a letter that ended the whole program
+	// from there would be a trap rather than an exit.
+	quitLetters []string
 
 	// pending is the answers collected so far for a game that has not started,
 	// and steps the questions still to ask.
 	pending gameSetup
 	steps   []stepFn
 	stepIdx int
+
+	// defaults are the stored choices a new game's form starts from, and what
+	// the settings panel edits.
+	defaults gameDefaults
+	// settingsSel keeps the settings list's position while a sub-question is
+	// open, so answering one lands back on the row it was asked from.
+	settingsSel int
 
 	// message is the last thing that went wrong or was decided, shown under
 	// the list until the player moves on.
@@ -88,9 +104,16 @@ type gameSetup struct {
 func NewMenu(d Deps, player string) *Menu {
 	km := shellKeymap(d)
 	m := &Menu{deps: d, player: player, nav: newNavKeys(km)}
+	m.defaults = loadDefaults(d.ConfigDir)
 	m.listUp, m.listDown = letterKeys(km, ui.ActMoveUp), letterKeys(km, ui.ActMoveDown)
 	m.moveHint = m.movementHint()
 	m.quitHint = keyLabel(globalQuitKeys(km)...) + " quit"
+	m.quitLetters = letterKeys(km, ui.ActQuit)
+	if len(m.quitLetters) > 0 {
+		m.frontQuitHint = keyLabel(m.quitLetters...) + " quit"
+	} else {
+		m.frontQuitHint = m.quitHint
+	}
 	m.list = &chooser{
 		title: "twixtui — " + player,
 		opts:  menuEntries(),
@@ -110,24 +133,28 @@ func NewMenu(d Deps, player string) *Menu {
 	return m
 }
 
-// menuEntries is the whole of what the interface can do. Each entry explains
-// itself in one line, which is what the player sees while it is highlighted.
+// menuEntries is the front screen: what a player does with a game, one entry
+// per act, each explaining itself in the line shown while it is highlighted.
+//
+// The grouping is by how often an act happens, not by what mechanism serves
+// it. Playing is the common thing, so it is first, and it is one entry rather
+// than one per opponent kind: who is on the other side is the first question
+// of a new game, and it is asked the way every other question is, one at a
+// time with escape walking backwards. Continuing and watching come next, being
+// what a returning player does with games that already exist. Learning — the
+// tutorial, the written rules, the introduction again — is one entry, visited
+// rarely and usually early. The leaderboard stays on the front screen because
+// glancing at the standings is a habit, not a configuration. Everything a
+// player sets once and forgets — colours, the rules and board a new game
+// starts from, hints, who is playing — is gathered under Settings, one level
+// down, where it no longer stands between the player and a game. Quit is last,
+// where a reader's eye expects the exit.
 func menuEntries() []menuOption {
 	return []menuOption{
 		{
-			label: "Play the computer",
-			help:  "Three engine tiers, beginner to pro. Press ? on your turn for a hint.",
-			value: (*Menu).startVersusBot,
-		},
-		{
-			label: "Play someone at this keyboard",
-			help:  "Two players taking turns on one machine, on one board.",
-			value: (*Menu).startHotseat,
-		},
-		{
-			label: "Play someone over the network",
-			help:  "A direct connection, or a relay when neither of you can accept one.",
-			value: (*Menu).startNetwork,
+			label: "Play",
+			help:  "A new game: against the computer, at this keyboard, or over the network.",
+			value: (*Menu).startPlay,
 		},
 		{
 			label: "Continue a saved game",
@@ -135,9 +162,14 @@ func menuEntries() []menuOption {
 			value: (*Menu).openSaved,
 		},
 		{
+			label: "Watch a finished game",
+			help:  "Step through a finished or imported game move by move.",
+			value: (*Menu).openWatch,
+		},
+		{
 			label: "Learn to play",
-			help:  "The rules and the moves, taught on a real board you play on.",
-			value: (*Menu).openTutorial,
+			help:  "The tutorial, the written rules, and the introduction again.",
+			value: (*Menu).openLearn,
 		},
 		{
 			label: "Leaderboard",
@@ -145,14 +177,9 @@ func menuEntries() []menuOption {
 			value: (*Menu).openLeaderboard,
 		},
 		{
-			label: "Colours",
-			help:  "Choose the colour scheme the board and the panels are drawn in.",
-			value: (*Menu).openThemes,
-		},
-		{
-			label: "Switch profile",
-			help:  "Play as somebody else on this machine.",
-			value: (*Menu).switchProfile,
+			label: "Settings",
+			help:  "Colours, what a new game starts from, hints, and who is playing.",
+			value: (*Menu).openSettings,
 		},
 		{
 			label: "Quit",
@@ -162,8 +189,24 @@ func menuEntries() []menuOption {
 	}
 }
 
-// Init implements tea.Model.
-func (m *Menu) Init() tea.Cmd { return nil }
+// Init implements tea.Model. On the first run — of this profile, on this
+// machine — the introduction opens on top of the menu, so that finishing or
+// skipping it lands the player here, where everything else is. The check
+// belongs in Init and not in revealed(): Init runs once, when the menu is
+// built, so a player coming back from a game cannot be handed the tour a
+// second time.
+func (m *Menu) Init() tea.Cmd {
+	if OnboardingSeen(m.deps) {
+		return nil
+	}
+	sc, err := NewOnboarding(m.deps)
+	if err != nil {
+		// A menu that would not open because its introduction failed to build
+		// is worse than a menu whose introduction has to be found under Learn.
+		return nil
+	}
+	return Open(sc)
+}
 
 // Update implements tea.Model.
 func (m *Menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -196,6 +239,12 @@ func (m *Menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.form != nil {
 			return m, m.form.key(m, t)
 		}
+		if matchesKey(t.String(), m.quitLetters) {
+			// The plain quit letter works on the front list, where no letter
+			// is a character being typed and none of the questions a form asks
+			// is in danger of being abandoned by it.
+			return m, Quit()
+		}
 		return m, m.list.key(m, t)
 	}
 	return m, nil
@@ -213,12 +262,54 @@ func (m *Menu) View() tea.View {
 	w, h := m.width, m.height
 
 	var form menuForm = m.list
+	content := m.frontContent(st, w, max(0, h-1))
 	if m.form != nil {
 		form = m.form
+		content = form.lines(m, st, w, max(0, h-1))
 	}
-	content := form.lines(m, st, w, max(0, h-1))
 	status := paint(st, &st.Status, hintLine(w, form.hints(m)...))
 	return tea.NewView(textFrame(st, w, h, content, status))
+}
+
+// The front screen's geometry. The menu takes its column first and the cover
+// artwork is offered only what is left, which is the same order of preference
+// ui.Arrange applies to a board and its panel: the working part is sized
+// first, and the decoration fits in the remainder or is absent. menuPaneWidth
+// is enough for every entry label and for its two reserved help rows to wrap
+// legibly; at 80 columns the remainder is too narrow for any artwork, so the
+// list simply keeps the whole terminal.
+const (
+	menuPaneWidth = 58
+	coverGap      = 2
+)
+
+// frontContent lays out the front screen: the menu list, with the cover
+// artwork beside it when the terminal leaves room for both. The artwork never
+// costs the menu anything — not an entry, not a column of its pane — because
+// it is only ever given what the menu did not take.
+func (m *Menu) frontContent(st *ui.Styles, width, height int) []string {
+	menuW := min(width, menuPaneWidth)
+	art := coverColumn(width-menuW-coverGap, height, st.Plain)
+	if len(art) == 0 {
+		return m.list.lines(m, st, width, height)
+	}
+	rows := m.list.lines(m, st, menuW, height)
+	out := make([]string, 0, max(len(rows), len(art)))
+	for i := range max(len(rows), len(art)) {
+		var left, right string
+		if i < len(rows) {
+			left = rows[i]
+		}
+		if i < len(art) {
+			right = art[i]
+		}
+		if right == "" {
+			out = append(out, left)
+			continue
+		}
+		out = append(out, padTo(left, menuW+coverGap)+right)
+	}
+	return out
 }
 
 // opponentChosen takes the second player's name back from the embedded picker.
@@ -243,30 +334,85 @@ func (m *Menu) opponentChosen(msg menuOpponentMsg) tea.Cmd {
 
 // entry actions.
 
-func (m *Menu) startVersusBot() tea.Cmd {
-	m.pending = newGameSetup(gamestore.VersusBot)
-	return m.startSteps(stepTier, stepSide, stepRules, stepSize)
+// startPlay begins the new-game form at its real first question: who the game
+// is against. The three kinds used to be three entries on the front screen,
+// which spent most of it saying "Play" three ways; the question reads better
+// asked once, in the same one-at-a-time form as everything else, and escape
+// from it walks backwards exactly as it does everywhere in the form.
+func (m *Menu) startPlay() tea.Cmd {
+	m.pending = gameSetup{}
+	return m.startSteps(stepWho)
 }
 
-func (m *Menu) startHotseat() tea.Cmd {
-	m.pending = newGameSetup(gamestore.Hotseat)
-	return m.startSteps(stepOpponent, stepSide, stepRules, stepSize)
-}
-
-func (m *Menu) startNetwork() tea.Cmd {
-	m.pending = newGameSetup(gamestore.Remote)
-	return m.startSteps(stepNetMethod)
+// stepWho asks who is on the other side, and chains the questions that follow
+// from the answer. It stays as question zero of whatever chain it picks, so
+// escape from the next question comes back here rather than to the front list.
+func stepWho(m *Menu) tea.Cmd {
+	sel := 0
+	switch m.pending.kind {
+	case gamestore.Hotseat:
+		sel = 1
+	case gamestore.Remote, gamestore.Correspondence:
+		sel = 2
+	}
+	m.form = &chooser{
+		title: "Who do you want to play?",
+		opts: []menuOption{
+			{
+				label: "the computer",
+				help:  "Three engine tiers, beginner to pro. The default game is enter all the way.",
+				value: gamestore.VersusBot,
+			},
+			{
+				label: "someone at this keyboard",
+				help:  "Two players taking turns on one machine, on one board.",
+				value: gamestore.Hotseat,
+			},
+			{
+				label: "someone over the network",
+				help:  "A direct connection, a relay, or a correspondence game played by exchanging codes.",
+				value: gamestore.Remote,
+			},
+		},
+		sel:    sel,
+		cancel: closeForm,
+		pick: func(m *Menu, i int) tea.Cmd {
+			k, _ := m.form.(*chooser).opts[i].value.(gamestore.Kind)
+			// Correspondence is the network family's third method, so coming
+			// back through this question with one pending keeps its answers
+			// the way any unchanged answer is kept.
+			changed := m.pending.kind != k &&
+				!(k == gamestore.Remote && m.pending.kind == gamestore.Correspondence)
+			if changed {
+				m.pending = m.newGameSetup(k)
+			}
+			steps := []stepFn{stepWho}
+			switch k {
+			case gamestore.VersusBot:
+				steps = append(steps, stepTier, stepSide, stepRules, stepSize)
+			case gamestore.Hotseat:
+				steps = append(steps, stepOpponent, stepSide, stepRules, stepSize)
+			default:
+				steps = append(steps, stepNetMethod)
+			}
+			m.steps = steps
+			return m.runStep(1)
+		},
+	}
+	return nil
 }
 
 // newGameSetup is the state of a game's answers before any question is asked.
 //
-// It starts at the defaults the command line uses, so that the answer already
-// highlighted in each chooser is the documented one: pressing enter through the
-// questions must give the same game as `twixtui play bot`. Every chooser then
-// selects whatever the setup already holds, which is also what makes walking
+// It starts at the stored defaults, which with nothing stored are the defaults
+// the command line uses, so that the answer already highlighted in each
+// chooser is the configured one: pressing enter through the questions must
+// give the same game as `twixtui play bot` on a fresh machine, and the game
+// the settings panel describes on any other. Every chooser then selects
+// whatever the setup already holds, which is also what makes walking
 // backwards through the form keep the answers given so far.
-func newGameSetup(k gamestore.Kind) gameSetup {
-	return gameSetup{kind: k, rules: game.Std, tier: bot.Intermediate}
+func (m *Menu) newGameSetup(k gamestore.Kind) gameSetup {
+	return gameSetup{kind: k, rules: m.defaults.ruleset(), tier: bot.Intermediate}
 }
 
 func (m *Menu) openTutorial() tea.Cmd {
@@ -277,6 +423,346 @@ func (m *Menu) openTutorial() tea.Cmd {
 		return Fail(err)
 	}
 	return Open(sc)
+}
+
+// openLearn groups the three ways the product teaches: doing, reading, and
+// the guided tour. They are one entry on the front screen because they are
+// visited rarely and mostly early, and each of the three explains itself here.
+func (m *Menu) openLearn() tea.Cmd {
+	m.form = &chooser{
+		title: "Learn to play",
+		opts: []menuOption{
+			{
+				label: "The tutorial",
+				help:  "The rules and the moves, taught on a real board you play on.",
+				value: (*Menu).openTutorial,
+			},
+			{
+				label: "The rules",
+				help:  "The written rules, to read here: the same text `twixtui rules show` prints.",
+				value: (*Menu).openRules,
+			},
+			{
+				label: "The introduction",
+				help:  "The tour twixtui gives on first run, played again.",
+				value: (*Menu).openIntro,
+			},
+		},
+		cancel: closeForm,
+		pick: func(m *Menu, i int) tea.Cmd {
+			run, ok := m.form.(*chooser).opts[i].value.(func(*Menu) tea.Cmd)
+			if !ok {
+				return nil
+			}
+			return run(m)
+		},
+	}
+	return nil
+}
+
+// openRules shows the rules document in the scrolling panel. The layout is
+// built once, when the panel opens, to the width the panel has then, capped at
+// 78 columns because a paragraph the width of a cinema terminal is harder to
+// read than a column. The price of laying out once is that a resize while
+// reading keeps the wrap the panel opened with — the same trade the standings
+// make — and closing and reopening re-flows.
+func (m *Menu) openRules() tea.Cmd {
+	m.form = &scrollForm{title: "The rules", body: rulesLines(docs.Rules, min(max(m.width, 20), 78))}
+	return nil
+}
+
+// rulesLines lays the rules document out for the panel. The source is
+// markdown hard-wrapped for the repository page, so wrapping its lines one by
+// one leaves a ragged half-line after every second one; instead prose lines
+// are joined back into their paragraph and the paragraph is wrapped whole. A
+// line that opens a structure of its own — a heading, a list item, a quote —
+// starts a fresh paragraph with its continuation lines joined to it, and a
+// fenced code block is notation, kept exactly as written.
+func rulesLines(text string, width int) []string {
+	var out []string
+	var para []string
+	flush := func() {
+		if len(para) > 0 {
+			out = append(out, wrapText(strings.Join(para, " "), width)...)
+			para = nil
+		}
+	}
+	inFence := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "```"):
+			flush()
+			inFence = !inFence
+			out = append(out, line)
+		case inFence:
+			out = append(out, line)
+		case trimmed == "":
+			flush()
+			out = append(out, "")
+		default:
+			if opensBlock(trimmed) {
+				flush()
+			}
+			para = append(para, trimmed)
+		}
+	}
+	flush()
+	return out
+}
+
+// opensBlock reports whether a markdown line begins a block of its own rather
+// than continuing the paragraph above it.
+func opensBlock(line string) bool {
+	switch line[0] {
+	case '#', '-', '*', '>', '|':
+		return true
+	}
+	// An ordered list item: digits, a dot, a space.
+	i := 0
+	for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+		i++
+	}
+	return i > 0 && i+1 < len(line) && line[i] == '.' && line[i+1] == ' '
+}
+
+// openIntro replays the introduction on top of the menu, exactly as a first
+// run shows it, so what a player deliberately asks to see again is the thing
+// itself and not a summary of it.
+func (m *Menu) openIntro() tea.Cmd {
+	sc, err := NewOnboarding(m.deps)
+	if err != nil {
+		return Fail(err)
+	}
+	return Open(sc)
+}
+
+// openWatch lists the games that are over, to be stepped through move by
+// move. Imported games belong here whatever their stored state says: they
+// were brought in to be looked at, and the continue list refuses them for
+// exactly that reason.
+func (m *Menu) openWatch() tea.Cmd {
+	var done []gamestore.Saved
+	for _, sv := range m.deps.Games.List() {
+		if sv.Finished || sv.Kind == gamestore.Imported {
+			done = append(done, sv)
+		}
+	}
+	if len(done) == 0 {
+		m.message = "No finished games on this machine. Finish one and it will be here to watch."
+		return nil
+	}
+	now := m.deps.Clock()
+	opts := make([]menuOption, 0, len(done))
+	for _, sv := range done {
+		opts = append(opts, menuOption{label: savedRow(now, sv), value: sv, help: watchHelp(sv)})
+	}
+	m.form = &chooser{
+		title:  "Watch a finished game",
+		opts:   opts,
+		cancel: closeForm,
+		pick: func(m *Menu, i int) tea.Cmd {
+			sv, ok := m.form.(*chooser).opts[i].value.(gamestore.Saved)
+			if !ok {
+				return nil
+			}
+			sc, err := NewReplayScreen(m.deps, sv)
+			if err != nil {
+				m.message = err.Error()
+				return nil
+			}
+			return Open(sc)
+		},
+	}
+	return nil
+}
+
+// watchHelp explains a finished game in the row's own terms: what kind of game
+// it was and how it ended. A record that will not load is still listed — the
+// row above already is — and choosing it is what explains why.
+func watchHelp(sv gamestore.Saved) string {
+	g, err := sv.Game()
+	if err != nil {
+		return "A stored game whose record would not load; choosing it says why."
+	}
+	kind := "A " + string(sv.Kind) + " game"
+	if sv.Kind == gamestore.Imported {
+		kind = "An imported game"
+	}
+	return kind + ", " + describeOutcome(g.Result()) + ". Step through it move by move."
+}
+
+// openSettings gathers the choices a player makes once and then forgets:
+// colours, what a new game's form starts from, whether hints are offered, and
+// who is playing. The list is rebuilt on every visit so that each row can name
+// the value now in force, which is what makes the panel readable as a summary
+// before anything is opened.
+func (m *Menu) openSettings() tea.Cmd {
+	rs := m.defaults.ruleset()
+	hints := "offered"
+	if !m.defaults.hintsOffered() {
+		hints = "not offered"
+	}
+	m.form = &chooser{
+		title: "Settings",
+		opts: []menuOption{
+			{
+				label: "Colours — " + m.deps.Theme.Name,
+				help:  "The colour scheme the board and the panels are drawn in.",
+				value: (*Menu).openThemes,
+			},
+			{
+				label: "Rules — " + rs.PresetName(),
+				help:  "What a new game's rules question starts at. Any game can still answer differently.",
+				value: (*Menu).openDefaultRules,
+			},
+			{
+				label: fmt.Sprintf("Board — %dx%d", rs.Size, rs.Size),
+				help:  "What a new game's board question starts at.",
+				value: (*Menu).openDefaultSize,
+			},
+			{
+				label: "Hints — " + hints,
+				help:  "Whether a game against the computer offers advice on your turn.",
+				value: (*Menu).openHints,
+			},
+			{
+				label: "Profile — " + m.player,
+				help:  "Play as somebody else on this machine.",
+				value: (*Menu).switchProfile,
+			},
+		},
+		sel:    m.settingsSel,
+		cancel: closeForm,
+		pick: func(m *Menu, i int) tea.Cmd {
+			run, ok := m.form.(*chooser).opts[i].value.(func(*Menu) tea.Cmd)
+			if !ok {
+				return nil
+			}
+			m.settingsSel = i
+			return run(m)
+		},
+	}
+	return nil
+}
+
+// reopenSettings is the way back from a settings question, so that answering
+// one lands on the settings list — rebuilt, and therefore naming the value
+// just chosen — rather than on the front screen.
+func reopenSettings(m *Menu) tea.Cmd {
+	return m.openSettings()
+}
+
+// storeDefaults writes the defaults and reports what was decided. The choice
+// holds for this run even when the disk refuses it — the same judgement the
+// colour chooser applies — because saying the setting failed is better than
+// pretending it was stored, and better again than refusing the choice.
+func (m *Menu) storeDefaults(what string) {
+	if err := m.defaults.save(m.deps.ConfigDir); err != nil {
+		m.message = what + " for now, but the choice could not be saved: " + err.Error()
+		return
+	}
+	m.message = what + "."
+}
+
+// openDefaultRules asks which ruleset a new game's form should start at.
+func (m *Menu) openDefaultRules() tea.Cmd {
+	names := game.PresetNames()
+	current := m.defaults.ruleset().PresetName()
+	opts := make([]menuOption, 0, len(names))
+	sel := 0
+	for i, n := range names {
+		if n == current {
+			sel = i
+		}
+		opts = append(opts, menuOption{label: n, help: game.PresetSummary(n), value: n})
+	}
+	m.form = &chooser{
+		title:  "Which rules should a new game start with?",
+		opts:   opts,
+		sel:    sel,
+		cancel: reopenSettings,
+		pick: func(m *Menu, i int) tea.Cmd {
+			name, _ := m.form.(*chooser).opts[i].value.(string)
+			m.defaults.Rules = name
+			m.storeDefaults("New games start with " + name + " rules")
+			return m.openSettings()
+		},
+	}
+	return nil
+}
+
+// openDefaultSize asks how big a new game's board should start.
+func (m *Menu) openDefaultSize() tea.Cmd {
+	current := m.defaults.ruleset().Size
+	opts := make([]menuOption, 0, len(boardSizes))
+	sel := 0
+	for i, n := range boardSizes {
+		if n == current {
+			sel = i
+		}
+		opts = append(opts, menuOption{
+			label: fmt.Sprintf("%dx%d", n, n),
+			help:  boardSizeHelp(n),
+			value: n,
+		})
+	}
+	m.form = &chooser{
+		title:  "How big should a new game's board start?",
+		opts:   opts,
+		sel:    sel,
+		cancel: reopenSettings,
+		pick: func(m *Menu, i int) tea.Cmd {
+			n, _ := m.form.(*chooser).opts[i].value.(int)
+			m.defaults.Size = n
+			m.storeDefaults(fmt.Sprintf("New games start on %dx%d", n, n))
+			return m.openSettings()
+		},
+	}
+	return nil
+}
+
+// openHints asks whether a game against the computer offers advice. Only bot
+// games are affected, because a hint is only meaningful when there is an
+// engine to ask (R15), and that is worth saying where the choice is made.
+func (m *Menu) openHints() tea.Cmd {
+	sel := 0
+	if !m.defaults.hintsOffered() {
+		sel = 1
+	}
+	m.form = &chooser{
+		title: "Should games against the computer offer hints?",
+		opts: []menuOption{
+			{
+				label: "offered",
+				help:  "On your turn, ? asks the engine you are playing what it would do.",
+				value: true,
+			},
+			{
+				label: "not offered",
+				help:  "No advice. Games against people never had any: there is no engine to ask.",
+				value: false,
+			},
+		},
+		sel:    sel,
+		cancel: reopenSettings,
+		pick: func(m *Menu, i int) tea.Cmd {
+			on, _ := m.form.(*chooser).opts[i].value.(bool)
+			if on {
+				// Offered is the default, so it is stored as nothing at all:
+				// a file that says only what differs from the documentation
+				// cannot disagree with it.
+				m.defaults.Hints = nil
+				m.storeDefaults("Hints are offered against the computer")
+			} else {
+				off := false
+				m.defaults.Hints = &off
+				m.storeDefaults("Hints are off")
+			}
+			return m.openSettings()
+		},
+	}
+	return nil
 }
 
 func (m *Menu) switchProfile() tea.Cmd {
@@ -377,6 +863,8 @@ func savedHelp(sv gamestore.Saved) string {
 	switch sv.Kind {
 	case gamestore.Remote:
 		return "A network game needs the connection back: host or join again from the network menu."
+	case gamestore.Correspondence:
+		return "A correspondence game: it opens on the board with the code exchange, whoever is to move."
 	case gamestore.Imported:
 		return "A game imported from elsewhere. It can be replayed and looked at, but not played on: the seats belong to the two players named in it."
 	}
@@ -468,7 +956,7 @@ func (m *Menu) openThemes() tea.Cmd {
 		title:  "Colours",
 		opts:   opts,
 		sel:    sel,
-		cancel: closeForm,
+		cancel: reopenSettings,
 		preview: func(_ *Menu, st *ui.Styles, o menuOption, width, height int) []string {
 			t, ok := o.value.(theme.Theme)
 			if !ok {
@@ -490,7 +978,12 @@ func (m *Menu) openThemes() tea.Cmd {
 				m.message = "Colours: " + t.Name + "."
 			}
 			styles := ui.StylesFor(t)
-			m.form = nil
+			// The new scheme is adopted here as well as through the message,
+			// because the settings list rebuilt on the next line names the
+			// scheme in force and must not name the old one for a frame.
+			m.deps.Theme = t
+			m.deps.Styles = &styles
+			m.openSettings()
 			return func() tea.Msg { return ThemeChangedMsg{Theme: t, Styles: &styles} }
 		},
 	}
@@ -732,6 +1225,13 @@ func stepRules(m *Menu) tea.Cmd {
 				m.message = err.Error()
 				return nil
 			}
+			// Every preset carries the standard size, but how big the board
+			// is belongs to the next question — and to the stored default the
+			// setup opened with — so the preset's own size must not overwrite
+			// the answer already held.
+			if m.pending.rules.Size != 0 {
+				rs.Size = m.pending.rules.Size
+			}
 			m.pending.rules = rs
 			return m.answered()
 		},
@@ -810,10 +1310,17 @@ type menuOpponentMsg struct{ name string }
 
 // the network form.
 
+// stepNetMethod asks in which of the three ways the game crosses the machine
+// boundary: a direct connection, a relay, or no connection at all — codes
+// exchanged by hand, at whatever pace the two of you keep. The live methods
+// split by which end this is, so the chooser offers six rows for the three.
 func stepNetMethod(m *Menu) tea.Cmd {
 	type method struct {
 		role  netplay.Role
 		relay bool
+		// corr marks the correspondence rows; host mints an invitation and
+		// guest accepts one.
+		corr bool
 	}
 	m.form = &chooser{
 		title: "How do you want to connect?",
@@ -838,6 +1345,16 @@ func stepNetMethod(m *Menu) tea.Cmd {
 				help:  "They printed a code. You need the same relay address they used.",
 				value: method{role: netplay.Guest, relay: true},
 			},
+			{
+				label: "start a correspondence game",
+				help:  "No connection: you exchange short codes at your own pace, and you get an invitation to send.",
+				value: method{role: netplay.Host, corr: true},
+			},
+			{
+				label: "accept a correspondence invitation",
+				help:  "They sent you an invitation code; paste it and the game lives on this machine too.",
+				value: method{role: netplay.Guest, corr: true},
+			},
 		},
 		cancel: backOneStep,
 		pick: func(m *Menu, i int) tea.Cmd {
@@ -846,23 +1363,34 @@ func stepNetMethod(m *Menu) tea.Cmd {
 			m.pending.relay = ""
 			m.pending.target = ""
 
-			// The method chooser stays as question zero so that escape from the
-			// next question comes back here rather than to the menu list.
-			steps := []stepFn{stepNetMethod}
-			if mode.relay {
-				steps = append(steps, stepRelayAddr)
+			// The method chooser stays as question one, after stepWho, so that
+			// escape from the next question comes back here rather than to the
+			// front list.
+			steps := []stepFn{stepWho, stepNetMethod}
+			switch {
+			case mode.corr && mode.role == netplay.Host:
+				m.pending.kind = gamestore.Correspondence
+				steps = append(steps, stepSide, stepRules, stepSize, stepCorrInvite)
+			case mode.corr:
+				m.pending.kind = gamestore.Correspondence
+				steps = append(steps, stepCorrJoin)
+			default:
+				m.pending.kind = gamestore.Remote
+				if mode.relay {
+					steps = append(steps, stepRelayAddr)
+				}
+				if mode.role == netplay.Host {
+					steps = append(steps, stepSide, stepRules, stepSize)
+				} else if !mode.relay {
+					steps = append(steps, stepJoinAddr)
+				}
+				if mode.relay && mode.role == netplay.Guest {
+					steps = append(steps, stepPairingCode)
+				}
+				steps = append(steps, stepConnect)
 			}
-			if mode.role == netplay.Host {
-				steps = append(steps, stepSide, stepRules, stepSize)
-			} else if !mode.relay {
-				steps = append(steps, stepJoinAddr)
-			}
-			if mode.relay && mode.role == netplay.Guest {
-				steps = append(steps, stepPairingCode)
-			}
-			steps = append(steps, stepConnect)
 			m.steps = steps
-			return m.runStep(1)
+			return m.runStep(2)
 		},
 	}
 	return nil
@@ -1042,6 +1570,190 @@ func (m *Menu) connected(msg menuSessionMsg) tea.Cmd {
 	return m.start(cfg)
 }
 
+// the correspondence form.
+//
+// A correspondence game is created whole, on this machine, the moment its
+// invitation exists — the command line's play correspondence does the same —
+// so the two steps below end by putting a game in the store and opening its
+// board, not by connecting anything.
+
+// corrUnknownOpponent stands in for a player whose name this end cannot
+// learn: an invitation is open, and nothing that comes back carries a name.
+// It must read exactly as the command line's unknownOpponent
+// (internal/cli/correspondence.go) spells it, because the two paths create
+// the same kind of game and the listings must not spell the missing name two
+// ways.
+const corrUnknownOpponent = "an unnamed opponent"
+
+// corrStoreID turns the identifier an invite carries into the one this side
+// stores the game under and binds its codes to: lower-cased, because on a
+// case-insensitive filesystem two identifiers differing only in case would be
+// one file. The rule is the command line's (internal/cli/correspondenceID),
+// applied here for the same invites, and both ends derive the digest their
+// codes carry from this stored form.
+func corrStoreID(inviteID string) (string, error) {
+	id := strings.ToLower(strings.TrimSpace(inviteID))
+	if err := gamestore.ValidateID(id); err != nil {
+		return "", fmt.Errorf("that invitation names a game this build cannot store: %w", err)
+	}
+	return id, nil
+}
+
+// stepCorrInvite is the step answered by the machine rather than the player:
+// it mints the invitation, saves the game, and shows what to send. The game
+// goes on disk before the invitation is shown, because an invitation is only
+// worth sending if the game it names survives this terminal closing.
+func stepCorrInvite(m *Menu) tea.Cmd {
+	fail := func(err error) tea.Cmd {
+		m.form = nil
+		m.message = err.Error()
+		return nil
+	}
+	invite, err := netplay.NewInvite(m.pending.rules, m.pending.side, m.player)
+	if err != nil {
+		return fail(err)
+	}
+	code, err := netplay.EncodeInvite(invite)
+	if err != nil {
+		return fail(err)
+	}
+	id, err := corrStoreID(invite.ID)
+	if err != nil {
+		return fail(err)
+	}
+	g, err := game.New(m.pending.rules)
+	if err != nil {
+		return fail(err)
+	}
+	rec, err := g.Record()
+	if err != nil {
+		return fail(err)
+	}
+	sv := gamestore.Saved{
+		ID:       id,
+		Kind:     gamestore.Correspondence,
+		Player:   m.player,
+		Side:     m.pending.side.String(),
+		Opponent: corrUnknownOpponent,
+		Record:   rec.Encode(),
+	}
+	if err := m.deps.Games.Put(sv); err != nil {
+		return fail(err)
+	}
+	m.form = &inviteForm{saved: sv, code: code}
+	return nil
+}
+
+// stepCorrJoin takes the invitation the opponent sent and accepts it.
+func stepCorrJoin(m *Menu) tea.Cmd {
+	m.form = &textForm{
+		title:  "Their invitation",
+		label:  "the code they sent you",
+		note:   "Case, dashes, spaces and line breaks are ignored, so paste it however it arrived.",
+		value:  m.pending.target,
+		cancel: backOneStep,
+		submit: func(m *Menu, v string) tea.Cmd {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				m.message = "Paste the invitation they sent you."
+				return nil
+			}
+			// Kept so that walking back to this question keeps the paste.
+			m.pending.target = v
+			return m.acceptInvite(v)
+		},
+	}
+	return nil
+}
+
+// acceptInvite stores the invited game and opens its board. A code that does
+// not decode leaves the player on the form, where the complaint is beside the
+// field it is about.
+func (m *Menu) acceptInvite(code string) tea.Cmd {
+	invite, err := netplay.DecodeInvite(code)
+	if err != nil {
+		m.message = err.Error()
+		return nil
+	}
+	id, err := corrStoreID(invite.ID)
+	if err != nil {
+		m.message = err.Error()
+		return nil
+	}
+	if _, err := m.deps.Games.Get(id); err == nil {
+		m.message = "You already have game " + id + "; it is under Continue a saved game."
+		return nil
+	}
+	g, err := game.New(invite.Rules)
+	if err != nil {
+		m.message = err.Error()
+		return nil
+	}
+	rec, err := g.Record()
+	if err != nil {
+		m.message = err.Error()
+		return nil
+	}
+	host := invite.HostName
+	if host == "" {
+		host = corrUnknownOpponent
+	}
+	sv := gamestore.Saved{
+		ID:       id,
+		Kind:     gamestore.Correspondence,
+		Player:   m.player,
+		Side:     invite.GuestSide().String(),
+		Opponent: host,
+		Record:   rec.Encode(),
+	}
+	if err := m.deps.Games.Put(sv); err != nil {
+		m.message = err.Error()
+		return nil
+	}
+	m.form = nil
+	cfg, err := m.correspondenceConfig(sv)
+	if err != nil {
+		m.message = err.Error()
+		return nil
+	}
+	return m.start(cfg)
+}
+
+// correspondenceConfig rebuilds a stored correspondence game for the game
+// screen, whose exchange panel is where codes are produced and pasted. It is
+// the same configuration the command line's play correspondence builds, which
+// is what keeps a game openable from either door.
+func (m *Menu) correspondenceConfig(sv gamestore.Saved) (GameConfig, error) {
+	g, err := sv.Game()
+	if err != nil {
+		return GameConfig{}, err
+	}
+	side, err := game.ParsePlayer(sv.Side)
+	if err != nil {
+		return GameConfig{}, fmt.Errorf("saved game %s records an unreadable side %q: %w", sv.ID, sv.Side, err)
+	}
+	player := sv.Player
+	if player == "" {
+		player = m.player
+	}
+	return GameConfig{
+		Kind:  gamestore.Correspondence,
+		Rules: g.Rules(),
+		Seats: map[game.Player]Seat{
+			side: {Profile: player, Label: player},
+			// BareName rather than DisplayName: the label is fed back through
+			// RemoteName on the next save, so it has to round-trip, not read
+			// well. The screen saves the opponent under the recorded name and
+			// the game is reopened from that save every turn, so the prefix
+			// has to come off again here or it accumulates.
+			side.Opponent(): {Remote: true, Label: leaderboard.BareName(sv.Opponent)},
+		},
+		Codes:   true,
+		Resume:  &sv,
+		StoreID: sv.ID,
+	}, nil
+}
+
 // building the game.
 
 // botLabel names a bot seat. It goes through the recorded name so that the
@@ -1071,8 +1783,9 @@ func (m *Menu) buildConfig() (GameConfig, error) {
 		// called one thing from the board to the standings.
 		cfg.Seats[p.side.Opponent()] = Seat{Bot: opponent, Label: botLabel(p.tier)}
 		// R15: a hint is only meaningful when there is an engine to ask, and
-		// the engine already in the game is the one to ask.
-		cfg.Hints = true
+		// the engine already in the game is the one to ask. Whether it is
+		// asked at all is the player's stored choice.
+		cfg.Hints = m.defaults.hintsOffered()
 		cfg.HintFor = opponent
 	case gamestore.Hotseat:
 		if p.opponent == "" {
@@ -1106,6 +1819,14 @@ func (m *Menu) resumeConfig(sv gamestore.Saved) (GameConfig, error) {
 	if sv.Finished || g.Result().Over() {
 		return GameConfig{}, errors.New("that game is over: start a new one, or look at it with 'twixtui game show'")
 	}
+	if sv.Kind == gamestore.Correspondence {
+		// A correspondence game resumes into the exchange, not into a seat
+		// map built from the opponent's recorded name: that name is a remote
+		// one, and the branch below for remote names refuses to resume — a
+		// rule that is right for a live game and wrong for one that never had
+		// a connection to lose.
+		return m.correspondenceConfig(sv)
+	}
 	side, err := game.ParsePlayer(sv.Side)
 	if err != nil {
 		return GameConfig{}, err
@@ -1131,7 +1852,7 @@ func (m *Menu) resumeConfig(sv gamestore.Saved) (GameConfig, error) {
 		}
 		opponent := bot.New(tier, m.deps.Clock().UnixNano())
 		cfg.Seats[side.Opponent()] = Seat{Bot: opponent, Label: botLabel(tier)}
-		cfg.Hints = true
+		cfg.Hints = m.defaults.hintsOffered()
 		cfg.HintFor = opponent
 	case strings.HasPrefix(sv.Opponent, leaderboard.RemotePrefix):
 		return GameConfig{}, errors.New("this game needs its connection back: host or join it again")
@@ -1300,6 +2021,17 @@ func (c *chooser) lines(m *Menu, st *ui.Styles, width, height int) []string {
 }
 
 func (c *chooser) hints(m *Menu) []string {
+	if c == m.list {
+		// The front list has nothing to back out to, so its line does not
+		// offer esc, and it names the plain quit letter — the way out the
+		// board teaches — rather than only the control form.
+		return []string{
+			m.moveHint + " move",
+			keyLabel(m.nav.confirm...) + " choose",
+			m.frontQuitHint,
+			keyPrev + "/" + keyNext + " move",
+		}
+	}
 	return []string{
 		m.moveHint + " move",
 		keyLabel(m.nav.confirm...) + " choose",
@@ -1408,6 +2140,65 @@ func (f *waitForm) lines(m *Menu, st *ui.Styles, width, height int) []string {
 func (f *waitForm) hints(m *Menu) []string {
 	return []string{
 		"esc give up",
+		m.quitHint,
+	}
+}
+
+// inviteForm shows a freshly minted correspondence invitation. Enter opens
+// the board; escape goes to the front list rather than back one question,
+// because the game already exists and walking the form forward again would
+// mint a second one — the message it leaves says where the first one lives.
+type inviteForm struct {
+	saved gamestore.Saved
+	code  string
+}
+
+func (f *inviteForm) key(m *Menu, press tea.KeyPressMsg) tea.Cmd {
+	key := press.String()
+	switch {
+	case m.nav.isCancel(key):
+		m.form = nil
+		m.message = "Game " + f.saved.ID + " is saved; it is under Continue a saved game."
+		return nil
+	case m.nav.isConfirm(key):
+		m.form = nil
+		cfg, err := m.correspondenceConfig(f.saved)
+		if err != nil {
+			m.message = err.Error()
+			return nil
+		}
+		return m.start(cfg)
+	}
+	return nil
+}
+
+func (f *inviteForm) lines(m *Menu, st *ui.Styles, width, height int) []string {
+	out := make([]string, 0, height)
+	out = append(out, paint(st, &st.PanelTitle, "Send your opponent this invitation"))
+	out = append(out, "")
+	// The code comes first and unshortened: it is the one thing on this panel
+	// that must survive being copied, and a short terminal should lose the
+	// explanation, not the code. wrapText cuts it into width-sized pieces
+	// rather than clipping, and the pieces are enough — spaces and line breaks
+	// are ignored when a code is pasted.
+	for _, l := range wrapText(f.code, width) {
+		out = append(out, paint(st, &st.PanelText, l))
+	}
+	out = append(out, "")
+	out = appendWrapped(out, st, &st.PanelText,
+		fmt.Sprintf("Game %s. You play %s.", f.saved.ID, f.saved.Side), width)
+	out = appendWrapped(out, st, &st.PanelText,
+		"They accept it with: twixtui play correspondence --join <the invitation>", width)
+	out = append(out, "")
+	out = appendWrapped(out, st, &st.Label,
+		"Copy the invitation before you go on: it is shown only here.", width)
+	return clampLines(out, height)
+}
+
+func (f *inviteForm) hints(m *Menu) []string {
+	return []string{
+		keyLabel(m.nav.confirm...) + " open the board",
+		"esc back to the menu",
 		m.quitHint,
 	}
 }

@@ -364,7 +364,7 @@ twixtui profile delete ada.l
 machine yet; otherwise it opens the menu as whoever played last. The prompt is both
 a fuzzy search over the profiles you already have and a browsable list of them, so
 a half-remembered name or a typo still finds the right one. `profile use`, and
-Switch profile in the menu, change who that is.
+Profile under the menu's Settings, change who that is.
 
 `--profile NAME` plays one command as that profile. It resolves the name by exactly
 the rules `profile use` applies and is refused wherever `profile use` would refuse
