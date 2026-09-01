@@ -74,10 +74,19 @@ func (s *searcher) reference(g *game.Game, depth, ply int) int {
 // TestSearchMatchesMinimax pins alpha-beta soundness, with and without the
 // transposition table: pruning and hashing may change how long the search takes
 // but never what it concludes.
+//
+// It is the second most expensive test in the repository and the sample is the
+// reason, so the sample was measured rather than guessed before anyone trims
+// it. Searching every child with a null window disagrees with minimax on 17 of
+// the 38 positions this seed produces, which any handful of rounds would catch.
+// Cutting one point too early -- alpha >= beta-1 rather than alpha >= beta --
+// disagrees on exactly one, round 18, and on none at all in the table variant.
+// That is what forty rounds buys: not redundancy against the obvious defect but
+// the one position in the corpus that separates a cutoff off by a single point
+// from a sound one. Twelve rounds would miss it, which is worth knowing about
+// the short run: -short samples the property, it does not discharge it.
 func TestSearchMatchesMinimax(t *testing.T) {
 	src := rand.New(rand.NewPCG(51, 52))
-	// Full-width minimax at three plies is the expensive part of the package's
-	// tests, so the quick run takes a smaller sample of the same property.
 	rounds, floor := 40, 20
 	if testing.Short() {
 		rounds, floor = 12, 6
@@ -147,7 +156,20 @@ func TestDepthCeilingsSeparateTiers(t *testing.T) {
 	// Asserting an exact depth under a short wall-clock budget measures the
 	// machine rather than the search, and fails on a slow continuous-integration
 	// runner for no useful reason.
-	const generous = 20 * time.Second
+	//
+	// Two seconds is generous rather than arbitrary. Beginner and intermediate
+	// stop at their ceilings after under a millisecond and about eight
+	// milliseconds respectively, so for them the budget is never the binding
+	// constraint at any plausible speed. Pro is the only tier that spends its
+	// whole budget, since its ceiling of sixteen is out of reach on this board,
+	// and all it has to do here is finish one iteration beyond intermediate's
+	// ceiling of three. Measured on these positions it completes depth four
+	// inside a hundred milliseconds, so two seconds tolerates a machine twenty
+	// times slower than the one this was measured on. The twenty seconds this
+	// used to allow bought no further guarantee and cost forty seconds of the
+	// package's runtime, which is the sort of price that stops people running
+	// the suite at all.
+	const generous = 2 * time.Second
 	compared, decided := 0, 0
 	for _, plies := range []int{4, 12, 20} {
 		g := randomGame(t, tournamentRules(10), plies, src)
@@ -170,8 +192,11 @@ func TestDepthCeilingsSeparateTiers(t *testing.T) {
 			}
 		}
 		if depths[Pro] <= depths[Intermediate] {
-			t.Errorf("10x10 ply=%d: pro reached depth %d, no deeper than intermediate's %d",
-				plies, depths[Pro], depths[Intermediate])
+			// The budget is named in the failure because the one way this can
+			// fail without a real regression is a machine too slow to finish
+			// pro's fourth iteration inside it.
+			t.Errorf("10x10 ply=%d: pro reached depth %d within %s, no deeper than intermediate's %d",
+				plies, depths[Pro], generous, depths[Intermediate])
 		}
 		compared++
 	}

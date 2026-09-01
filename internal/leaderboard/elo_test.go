@@ -6,16 +6,11 @@ import (
 )
 
 // ratingAfter records the given results on a fresh board and returns the
-// player's rating.
+// player's rating. It goes through recordBatch, so the settling runs below cost
+// one write rather than one per game.
 func ratingAfter(t *testing.T, player string, results ...Result) int {
 	t.Helper()
-	b := openBoard(t, t.TempDir())
-	for _, r := range results {
-		if err := b.Record(r); err != nil {
-			t.Fatalf("Record: %v", err)
-		}
-	}
-	return standing(t, b, player).Rating
+	return standing(t, recordBatch(t, results...), player).Rating
 }
 
 func TestWinAgainstStrongerOpponentGainsMore(t *testing.T) {
@@ -83,9 +78,13 @@ func TestDrawIsWorthHalfAGame(t *testing.T) {
 	}
 }
 
-// recordBatch writes several results in one atomic write. Record itself writes
-// one result at a time; batching keeps a several-hundred-game replay test fast
-// without changing what lands in the file.
+// recordBatch writes several results in one atomic write, taking the same
+// validation and defaulting door Record does. Record writes one result at a
+// time and pays a fsync for each, which is the durability the store owes a
+// player and has nothing to do with what a rating is worth: the tests in this
+// file are about the Elo replay, and TestRecordRoundTrips and the repeated-open
+// cycles cover the write path they are skipping. What lands in the file is the
+// same either way.
 func recordBatch(t *testing.T, results ...Result) *Board {
 	t.Helper()
 	b := openBoard(t, t.TempDir())

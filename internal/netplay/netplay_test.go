@@ -247,6 +247,17 @@ func (p *rawPeer) drain() {
 	}()
 }
 
+// swallow throws away whatever drain has buffered, so a peer nothing is
+// examining goes on reading for as long as the test runs. Without it the inbox
+// fills after sixteen frames and the peer stops reading, which is a different
+// case from a peer that reads and does not answer.
+func (p *rawPeer) swallow() {
+	go func() {
+		for range p.inbox {
+		}
+	}()
+}
+
 func (p *rawPeer) send(t *testing.T, m message) {
 	t.Helper()
 	if err := p.f.write(m); err != nil {

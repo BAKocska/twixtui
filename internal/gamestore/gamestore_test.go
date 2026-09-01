@@ -248,9 +248,36 @@ func TestNewIDIsPlausible(t *testing.T) {
 	}
 }
 
+// TestOpenRequiresADirectory pins both halves of what that directory is for.
+// Open does not create it — that waits for the first write — so the only thing
+// it can check up front is that it was given one. Everything the store then
+// does has to stay inside it: a store that quietly fell back to a relative path
+// would write games into whatever directory the program happened to be started
+// from, and every configuration directory on the machine would share one pile
+// of games while each still looked consistent with itself.
 func TestOpenRequiresADirectory(t *testing.T) {
 	if _, err := Open(""); err == nil {
 		t.Error("Open accepted an empty directory")
+	}
+
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Dir(); !strings.HasPrefix(got, dir+string(filepath.Separator)) {
+		t.Errorf("the store keeps its games in %q, which is not inside %q", got, dir)
+	}
+	record, _ := sampleRecord(t)
+	if err := s.Put(Saved{ID: "inside01", Kind: Hotseat, Record: record}); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := elsewhere.List(); len(got) != 0 {
+		t.Errorf("a store opened on another directory can see %d of this one's games: %+v", len(got), got)
 	}
 }
 
@@ -264,14 +291,29 @@ func TestListOnAFreshInstall(t *testing.T) {
 	}
 }
 
+// TestDescribe covers the one-line summary a listing prints per stored game.
+// Each of the four facts on the row is on it because a player choosing a game
+// out of a list needs it: with the opponent gone several rows read alike, and
+// with the side gone the row cannot say which end of the board is theirs.
 func TestDescribe(t *testing.T) {
 	sv := Saved{Player: "Balint", Opponent: "bot:pro", Side: "vertical"}
-	if got := sv.Describe(); !strings.Contains(got, "Balint") || !strings.Contains(got, "in progress") {
-		t.Errorf("Describe = %q", got)
+	got := sv.Describe()
+	for _, want := range []string{"Balint", "bot:pro", "vertical", "in progress"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Describe = %q, which does not say %q", got, want)
+		}
 	}
+
 	sv.Finished = true
-	if got := sv.Describe(); !strings.Contains(got, "finished") {
-		t.Errorf("Describe = %q", got)
+	if got := sv.Describe(); !strings.Contains(got, "finished") || strings.Contains(got, "in progress") {
+		t.Errorf("a finished game is described as %q", got)
+	}
+
+	// The side is the one field a stored game may not have — an imported record
+	// names neither seat — so it is left out rather than printed empty.
+	sv.Side = ""
+	if got := sv.Describe(); strings.Contains(got, "()") {
+		t.Errorf("a game with no side recorded is described as %q", got)
 	}
 }
 

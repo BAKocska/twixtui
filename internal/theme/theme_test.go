@@ -47,11 +47,32 @@ func TestNamesAndGet(t *testing.T) {
 	}
 }
 
+// everyTheme returns the schemes the tests below walk. Each of those tests
+// asserts a property of every theme and says nothing at all about a theme it
+// was not handed, so an All that quietly returned a subset would leave four
+// green tests measuring nothing. Cross-checking against Names is what makes
+// that impossible: the two are built from the same table by different code, so
+// they can only agree when both are whole, and they are compared in order, so a
+// scheme added to the table in the wrong place is caught here too.
+func everyTheme(t *testing.T) []Theme {
+	t.Helper()
+	all, names := All(), Names()
+	if len(all) != len(names) {
+		t.Fatalf("All() has %d themes and Names() has %d", len(all), len(names))
+	}
+	for i, th := range all {
+		if th.Name != names[i] {
+			t.Fatalf("All()[%d] is %q where Names() has %q", i, th.Name, names[i])
+		}
+	}
+	return all
+}
+
 // TestColoursAreWellFormed catches a mistyped colour, which is otherwise
 // invisible until someone looks at the board on a terminal that renders it.
 func TestColoursAreWellFormed(t *testing.T) {
 	hex := regexp.MustCompile(`^#[0-9a-f]{6}$`)
-	for _, th := range All() {
+	for _, th := range everyTheme(t) {
 		roles := map[string]string{
 			"VerticalPeg":    th.VerticalPeg,
 			"VerticalLink":   th.VerticalLink,
@@ -91,7 +112,7 @@ func TestColoursAreWellFormed(t *testing.T) {
 // TestPlayersAreDistinguishable checks the one property a theme must have: the
 // two sides cannot share a colour, or the board becomes unreadable.
 func TestPlayersAreDistinguishable(t *testing.T) {
-	for _, th := range All() {
+	for _, th := range everyTheme(t) {
 		if th.Monochrome() {
 			continue
 		}
@@ -247,7 +268,7 @@ func TestEveryThemeIsLegibleAgainstTheBackgroundItClaims(t *testing.T) {
 		// Against a light terminal, anything above this disappears.
 		lightCeiling = 0.62
 	)
-	for _, th := range All() {
+	for _, th := range everyTheme(t) {
 		if th.Monochrome() {
 			if th.Suits != AnyBackground {
 				t.Errorf("%s sets no colours but claims to suit a particular background", th.Name)
@@ -297,7 +318,7 @@ func TestEveryThemeIsLegibleAgainstTheBackgroundItClaims(t *testing.T) {
 // TestThemeRolesAreToldApart checks the colours a player has to distinguish at a
 // glance are actually distinguishable, rather than three shades of one hue.
 func TestThemeRolesAreToldApart(t *testing.T) {
-	for _, th := range All() {
+	for _, th := range everyTheme(t) {
 		if th.Monochrome() {
 			continue
 		}

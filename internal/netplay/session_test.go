@@ -387,11 +387,24 @@ func TestSendMoveRoutesRecordEntries(t *testing.T) {
 }
 
 // TestSendMoveRefusesTheOpponentsRecordEntry stops one end resigning on behalf
-// of the other.
+// of the other. The refusal has to arrive before the entry is played, not after
+// it: a caller passing a transcript line straight through sees one error either
+// way, and only the record shows whether the game was ended behind it.
 func TestSendMoveRefusesTheOpponentsRecordEntry(t *testing.T) {
 	host, _ := mustConnectPipe(t)
-	if err := host.SendMove("h:resign"); err == nil {
+	err := host.SendMove("h:resign")
+	if err == nil {
 		t.Fatal("the host was allowed to resign for its opponent")
+	}
+	if !strings.Contains(err.Error(), "h:resign") {
+		t.Fatalf("the refusal does not name the entry it would not send: %v", err)
+	}
+	g := positionOf(t, host)
+	if g.Result().Over() {
+		t.Fatalf("the refused entry ended the game anyway: %+v", g.Result())
+	}
+	if g.Entries() != 0 {
+		t.Fatalf("the refused entry left %d in the record", g.Entries())
 	}
 }
 
@@ -602,23 +615,45 @@ func TestTruncatedFrameEndsTheSession(t *testing.T) {
 	wantClosed(t, host)
 }
 
-// TestKeepaliveNoticesADeadPeer covers an opponent that stops answering without
-// the connection being closed, which no read error would reveal on its own.
+// TestKeepaliveNoticesADeadPeer covers an opponent that goes away without the
+// connection being closed, which no read error would reveal on its own.
+//
+// The two cases reach the keepalive loop's two branches. A peer that has
+// stopped reading makes the ping itself unwritable. A peer that still reads
+// takes every ping, so the only thing left to end the game is the watch on how
+// long it has been since anything arrived. With the unreadable case alone that
+// watch could be deleted outright and this test would still pass, because the
+// failed write reports the same thing a tick earlier.
 func TestKeepaliveNoticesADeadPeer(t *testing.T) {
-	opts := hostOpts()
-	opts.Keepalive = 30 * time.Millisecond
-	opts.DeadAfter = 150 * time.Millisecond
-	host, _ := hostAgainstSilentRaw(t, opts)
+	tuned := func() HostOptions {
+		opts := hostOpts()
+		opts.Keepalive = 30 * time.Millisecond
+		opts.DeadAfter = 150 * time.Millisecond
+		return opts
+	}
+	noticed := func(t *testing.T, host Session) {
+		t.Helper()
+		started := time.Now()
+		ev := wantEvent(t, host, EventDisconnected)
+		if !strings.Contains(ev.Text, "stopped responding") {
+			t.Fatalf("the report was %q", ev.Text)
+		}
+		if waited := time.Since(started); waited > 3*time.Second {
+			t.Fatalf("it took %s to notice", waited)
+		}
+		wantClosed(t, host)
+	}
 
-	started := time.Now()
-	ev := wantEvent(t, host, EventDisconnected)
-	if !strings.Contains(ev.Text, "stopped responding") {
-		t.Fatalf("the report was %q", ev.Text)
-	}
-	if waited := time.Since(started); waited > 3*time.Second {
-		t.Fatalf("it took %s to notice", waited)
-	}
-	wantClosed(t, host)
+	t.Run("a peer that stops answering", func(t *testing.T) {
+		host, peer := hostAgainstRaw(t, tuned())
+		peer.swallow()
+		noticed(t, host)
+	})
+
+	t.Run("a peer that stops reading", func(t *testing.T) {
+		host, _ := hostAgainstSilentRaw(t, tuned())
+		noticed(t, host)
+	})
 }
 
 // TestKeepaliveKeepsAResponsiveGameAlive is the control for the test above: with

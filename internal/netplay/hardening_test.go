@@ -590,17 +590,34 @@ func TestASilentJoinerDoesNotHoldTheHost(t *testing.T) {
 		hostCh <- result{s, err}
 	}()
 
+	// The host writes its invitation the moment it takes a socket up, so a byte
+	// on all four inside one window is proof that all four hold handshake slots
+	// at the same time. The window is shorter than a single handshake bound on
+	// purpose: reading them one after another would let a host that runs its
+	// handshakes in turn satisfy each read as the one before it expired, which
+	// is the very arrangement being ruled out. A plain sleep would be worse
+	// still, passing the whole test on any run where nothing had been accepted
+	// yet, with nothing in the invited guest's way to measure.
 	const silent = 4
-	for range silent {
+	greeted := make(chan error, silent)
+	for i := range silent {
 		c, err := net.Dial("tcp", h.Addr())
 		if err != nil {
-			t.Fatalf("dialling a silent socket: %v", err)
+			t.Fatalf("dialling silent socket %d: %v", i+1, err)
 		}
 		defer c.Close()
+		go func() {
+			_ = c.SetReadDeadline(time.Now().Add(opts.HandshakeTimeout / 2))
+			_, err := c.Read(make([]byte, 1))
+			_ = c.SetReadDeadline(time.Time{})
+			greeted <- err
+		}()
 	}
-	// Long enough for the silent sockets to have been accepted, short enough
-	// that none of their handshake bounds has expired.
-	time.Sleep(100 * time.Millisecond)
+	for range silent {
+		if err := <-greeted; err != nil {
+			t.Fatalf("the host did not have all %d silent sockets in a handshake at once, so nothing was in the guest's way: %v", silent, err)
+		}
+	}
 
 	start := time.Now()
 	guest, err := Dial(t.Context(), h.Addr(), guestOpts())

@@ -3,6 +3,7 @@ package netplay
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"hash/crc32"
 	"strings"
 	"testing"
@@ -86,38 +87,56 @@ func TestOpponentNameCannotCarryEscapes(t *testing.T) {
 	}
 }
 
-// TestRejectedMoveCodeCannotCarryEscapes covers the other way in: a code pasted
-// by the player, whose move field is echoed back in the refusal.
+// TestRejectedMoveCodeCannotCarryEscapes covers the other way in: a code the
+// player pasted because a stranger sent it. The length byte of a move code
+// allows 255 bytes of anything in the move field, and that field leaves the
+// package twice: through Inspect, whose result callers print to say what a code
+// holds, and inside the refusal when the move turns out to be unplayable.
+//
+// The code is built by hand. EncodeMove would refuse this notation, and it is
+// the paste that is being modelled, not our own output: the sender is not
+// obliged to have used our encoder.
 func TestRejectedMoveCodeCannotCarryEscapes(t *testing.T) {
-	rs := game.Std
-	rs.Size = 12
-	g := game.MustNew(rs)
-
-	// A code the sender built for a legitimate position, but whose move field
-	// carries an escape sequence. Encoding is done by the library, so drive it
-	// through the real path and then substitute the move.
 	const id = "abcd1234"
-	code, err := EncodeMove(g, id, "F7")
-	if err != nil {
-		t.Fatal(err)
-	}
+	g := game.MustNew(testRules())
+	code := forgedMoveCode(t, g, id, hostile)
+
 	mc, err := Inspect(code)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("the forged code should still parse: %v", err)
 	}
-	mc.Move = hostile
+	assertSafeForATerminal(t, "the move Inspect returned", mc.Move, maxNotationLen)
+	if !strings.Contains(mc.Move, "red") {
+		t.Errorf("the whole move was thrown away rather than filtered: %q", mc.Move)
+	}
 
-	// The refusal must not repeat the escape sequence back at the terminal.
 	_, err = DecodeMove(g, id, code)
-	if err != nil {
-		t.Fatalf("the honest code should decode: %v", err)
+	if !errors.Is(err, ErrBadCode) || !strings.Contains(err.Error(), "cannot be played here") {
+		t.Fatalf("DecodeMove returned %v, want a refusal naming the move it could not play", err)
 	}
+	assertSafeForATerminal(t, "the refusal", err.Error(), 512)
+	if g.Entries() != 0 {
+		t.Fatalf("the forged code changed the game to %d entries", g.Entries())
+	}
+}
 
-	// Now the same check the decoder performs on a move it cannot play, reached
-	// directly because a well-formed code cannot carry this field.
-	if got := safeText(mc.Move, maxMoveLen); containsControl(got) {
-		t.Errorf("a rejected move is echoed as %q, which still holds a control character", got)
+// forgedMoveCode carries notation that EncodeMove would not write. Everything
+// before the length byte binds the code to this game and this position, which
+// is what gets the move as far as being tried.
+func forgedMoveCode(t *testing.T, g *game.Game, id, notation string) string {
+	t.Helper()
+	honest, err := EncodeMove(g, id, "B1")
+	if err != nil {
+		t.Fatalf("encoding the code whose header is reused: %v", err)
 	}
+	payload, err := parseCode(honest, movePrefix)
+	if err != nil {
+		t.Fatalf("parsing that code: %v", err)
+	}
+	body := append([]byte(nil), payload[:moveCodeHeaderLen-1]...)
+	body = append(body, byte(len(notation)))
+	body = append(body, notation...)
+	return formatCode(movePrefix, binary.BigEndian.AppendUint32(body, crc32.ChecksumIEEE(body)))
 }
 
 // TestDecodedInviteNameCannotCarryEscapes checks the sanitiser runs when an

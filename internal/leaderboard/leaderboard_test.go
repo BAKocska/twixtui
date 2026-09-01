@@ -69,6 +69,18 @@ func TestDefaultDirHonoursEnvironmentOverride(t *testing.T) {
 	if dir != "/tmp/twixtui-test-config" {
 		t.Fatalf("DefaultDir = %q, want the override used verbatim", dir)
 	}
+
+	// This package carries its own copy of the storage layer, so the branch
+	// that has no override to honour needs its own cover here: a mistake in it
+	// would scatter the result log somewhere the profile store is not.
+	t.Setenv(EnvConfigDir, "")
+	dir, err = DefaultDir()
+	if err != nil {
+		t.Fatalf("DefaultDir without override: %v", err)
+	}
+	if filepath.Base(dir) != "twixtui" {
+		t.Fatalf("DefaultDir = %q, want a twixtui subdirectory of the user config dir", dir)
+	}
 }
 
 func TestRecordRoundTrips(t *testing.T) {
@@ -334,12 +346,14 @@ func TestStandingsRankBestFirst(t *testing.T) {
 }
 
 func TestBotRatingIsAnAnchorAndDoesNotDrift(t *testing.T) {
-	b := openBoard(t, t.TempDir())
+	rows := make([]Result, 0, 20)
 	for n := range 20 {
-		if err := b.Record(result("Balint", BotName("pro"), Win, day(n))); err != nil {
-			t.Fatalf("Record: %v", err)
-		}
+		rows = append(rows, result("Balint", BotName("pro"), Win, day(n)))
 	}
+	// Twenty results in one write: the anchor is recomputed from the whole log
+	// every time it is read, so how many writes put the log there is not what
+	// this test is about.
+	b := recordBatch(t, rows...)
 	bot := standing(t, b, BotName("pro"))
 	if bot.Rating != botRatings["pro"] {
 		t.Fatalf("pro bot rating = %d after twenty losses, want the fixed anchor %d", bot.Rating, botRatings["pro"])
@@ -405,9 +419,16 @@ func TestReset(t *testing.T) {
 // TestRepeatedOpenWriteCyclesKeepEveryResult is the durability check: every
 // cycle opens the board fresh, records one game and closes, which is what a run
 // of twixtui does. Nothing may be lost or corrupted along the way.
+//
+// A dozen cycles, not sixty, for the same reason as the profile store's twin:
+// each cycle is the same deterministic sequence over a file that only grows, so
+// a write that never lands, a write that replaces instead of appending, or a
+// schema version left unstamped all declare themselves on the first or second
+// cycle. Sixty spent half a second of fsyncs repeating a check that had already
+// fired.
 func TestRepeatedOpenWriteCyclesKeepEveryResult(t *testing.T) {
 	dir := t.TempDir()
-	const cycles = 60
+	const cycles = 12
 	for i := range cycles {
 		b, err := Open(dir)
 		if err != nil {
