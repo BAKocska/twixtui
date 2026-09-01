@@ -55,3 +55,9 @@ func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	return ok && term.IsTerminal(f.Fd())
 }
+
+// stdoutIsTerminal reports whether the process's own output is a terminal, which
+// is what decides whether colour is worth emitting at all.
+func stdoutIsTerminal() bool {
+	return term.IsTerminal(os.Stdout.Fd())
+}

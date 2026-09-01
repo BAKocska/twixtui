@@ -69,7 +69,12 @@ func (o *options) configPath() (string, error) {
 // theme resolves the colour scheme for this run: an explicit flag wins, then the
 // saved choice, and a request for no colour overrides both.
 func (o *options) theme() (theme.Theme, error) {
-	if o.noColor || os.Getenv("NO_COLOR") != "" {
+	// Colour is for a terminal. When output is redirected to a file or piped
+	// into something else, escape sequences are noise at best and corrupt the
+	// data at worst, so they are suppressed the way any well-behaved command
+	// suppresses them. This is also what makes a listing's output stable enough
+	// to assert on.
+	if o.noColor || os.Getenv("NO_COLOR") != "" || !stdoutIsTerminal() {
 		return theme.Get("mono")
 	}
 	if o.themeName != "" {
@@ -95,6 +100,8 @@ func (o *options) themeReason() string {
 		return "--no-color was given"
 	case os.Getenv("NO_COLOR") != "":
 		return "NO_COLOR is set in the environment"
+	case !stdoutIsTerminal():
+		return "the output is not going to a terminal"
 	case o.themeName != "":
 		return "--theme " + o.themeName + " was given"
 	}

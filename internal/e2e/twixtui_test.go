@@ -269,8 +269,7 @@ func TestGameSurvivesResizeWithStateIntact(t *testing.T) {
 		}
 	}
 
-	tm.Resize(w, h)
-	after := tm.WaitSettled(10 * time.Second)
+	after := tm.ResizeAndWait(w, h, 20*time.Second)
 	if after != before {
 		t.Errorf("the frame changed across a shrink and regrow cycle\n--- before ---\n%s\n--- after ---\n%s",
 			before, after)
@@ -289,8 +288,7 @@ func TestGameSurvivesResizeWithStateIntact(t *testing.T) {
 func TestTooSmallStateIsExplicit(t *testing.T) {
 	tm := session(t, "play local --size 12 --side vertical", 80, 24)
 	tm.MustWaitFor("A", 20*time.Second)
-	tm.Resize(18, 5)
-	screen := tm.WaitSettled(10 * time.Second)
+	screen := tm.ResizeAndWait(18, 5, 20*time.Second)
 	if !tm.Alive() {
 		t.Fatal("the program died in a very small terminal")
 	}
@@ -300,7 +298,10 @@ func TestTooSmallStateIsExplicit(t *testing.T) {
 	tm.AssertFits()
 	// Growing back must recover a board.
 	tm.Resize(90, 30)
-	recovered := tm.WaitSettled(10 * time.Second)
+	recovered, err := tm.WaitFor("·", 20*time.Second)
+	if err != nil {
+		t.Fatalf("the board did not come back after growing: %v", err)
+	}
 	if !strings.Contains(recovered, "·") {
 		t.Errorf("the board did not come back after growing:\n%s", recovered)
 	}
@@ -313,8 +314,7 @@ func TestTutorialResizes(t *testing.T) {
 	tm.MustWaitFor("A", 20*time.Second)
 	tm.WaitSettled(10 * time.Second)
 	for _, size := range [][2]int{{60, 20}, {40, 14}, {20, 8}, {100, 34}} {
-		tm.Resize(size[0], size[1])
-		tm.WaitSettled(10 * time.Second)
+		tm.ResizeAndWait(size[0], size[1], 20*time.Second)
 		if !tm.Alive() {
 			w, h := tm.Size()
 			t.Fatalf("the tutorial died at %dx%d", w, h)

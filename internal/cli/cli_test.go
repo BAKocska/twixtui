@@ -796,3 +796,39 @@ func TestLastPlayedIsSingularForOneMinute(t *testing.T) {
 		t.Errorf("the completion description says %q, want %q", got, want)
 	}
 }
+
+// TestOutputToAPipeCarriesNoEscapeSequences pins the rule that colour is for a
+// terminal. Redirected into a file or piped into another command, escape
+// sequences are noise at best and corrupt the data at worst — and a listing
+// nobody can assert on is a listing nobody can script against.
+//
+// This is also the difference that made a test pass on one machine and fail on
+// another: colour was decided by the environment alone, so a shell with NO_COLOR
+// set produced clean output and one without it did not.
+func TestOutputToAPipeCarriesNoEscapeSequences(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(t, dir, "profile", "create", "Balint"); err != nil {
+		t.Fatal(err)
+	}
+	rs := game.Std
+	rs.Size = 12
+	id := importedGame(t, dir, rs, "F7; G8; H9; J10")
+
+	for _, args := range [][]string{
+		{"game", "show", id},
+		{"game", "list"},
+		{"leaderboard", "show"},
+		{"profile", "list"},
+		{"theme", "list"},
+		{"rules", "show", "board"},
+	} {
+		out, err := run(t, dir, args...)
+		if err != nil {
+			t.Errorf("%v: %v", args, err)
+			continue
+		}
+		if strings.ContainsRune(out, 0x1b) {
+			t.Errorf("%v wrote an escape sequence to a pipe:\n%q", args, out)
+		}
+	}
+}

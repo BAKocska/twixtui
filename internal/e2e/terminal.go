@@ -326,6 +326,40 @@ func (tm *Terminal) WaitSettled(timeout time.Duration) string {
 	return previous
 }
 
+// WaitChanged blocks until the screen differs from previous and has then stopped
+// changing, and returns the new screen.
+//
+// This is the wait to use after anything that should redraw. WaitSettled alone is
+// not enough: it returns as soon as the screen has held still for a moment, and
+// immediately after a resize the screen is still the old one and perfectly
+// still, so a caller can be handed the frame from before the change and assert
+// against it. That is not a hypothetical — it is how a genuine recovery from the
+// too-small state looked like a failure to recover.
+func (tm *Terminal) WaitChanged(previous string, timeout time.Duration) string {
+	tm.t.Helper()
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if tm.Capture() != previous {
+			return tm.WaitSettled(time.Until(deadline))
+		}
+		time.Sleep(pollInterval)
+	}
+	tm.t.Fatalf("the screen never changed within %s\n--- screen ---\n%s", timeout, tm.Capture())
+	return previous
+}
+
+// ResizeAndWait changes the size and waits for the program to redraw, which is
+// the only safe way to assert on a frame after a resize.
+func (tm *Terminal) ResizeAndWait(width, height int, timeout time.Duration) string {
+	tm.t.Helper()
+	before := tm.Capture()
+	tm.Resize(width, height)
+	return tm.WaitChanged(before, timeout)
+}
+
 // AssertFits checks the invariant every frame must satisfy: no line wider than
 // the terminal and no more lines than it has rows. A frame that breaks this
 // corrupts the display and is the most common resize bug.
