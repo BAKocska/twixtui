@@ -782,8 +782,10 @@ func onboardingContent() []onboardingStep {
 			id:        "links",
 			setup:     []string{"F6", "C9"},
 			highlight: pointsNamed("D5", "D7", "E4", "E8", "G4", "G8", "H5", "H7"),
-			text: "Links are made for you rather than by you. Two of your own pegs are linked when they stand a knight's move apart — " +
-				"two holes one way and one the other, as a knight jumps in chess — and the link appears as the second peg lands. " +
+			text: "Two of your own pegs can be linked when they stand a knight's move apart — " +
+				"two holes one way and one the other, as a knight jumps in chess — and under the rules this game plays by default " +
+				"the link appears as the second peg lands, offered to you rather than forced on you: until you commit the turn you " +
+				"may decline any of them, and you may take your own links off the board on a later turn. That is what link mode is for. " +
 				"Exactly eight holes could ever link to Vertical's peg on F6, and they are the ones marked: " +
 				"D5, D7, E4, E8, G4, G8, H5 and H7. Holes side by side never link, nor do diagonal neighbours, which is what newcomers get wrong first.",
 			invite: "Put a peg on one of those eight and watch the link appear.",

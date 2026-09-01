@@ -9,6 +9,8 @@ import (
 	"github.com/BAKocska/twixtui/internal/game"
 	"github.com/BAKocska/twixtui/internal/profile"
 	"github.com/BAKocska/twixtui/internal/ui"
+
+	"github.com/BAKocska/twixtui/internal/learn"
 )
 
 // obTestPlayer is the profile these tests play as. The introduction keys its flag
@@ -837,4 +839,45 @@ func onboardingCount(m *onboardingModel, pl game.Player) int {
 		}
 	}
 	return n
+}
+
+// TestTheIntroductionTeachesTheRulesItIsPlayedUnder pins the content against the
+// ruleset it actually runs on. A review found the links step saying links are
+// made for you rather than by you, which is the paper-and-pencil rule; the
+// introduction runs on the default ruleset, where linking is deliberate, so the
+// first thing a player met in a real game — link mode, offering the choice — had
+// been described to them as something that does not happen.
+//
+// Asserted against the ruleset rather than against a phrase, so that changing the
+// ruleset the introduction uses cannot leave the prose behind.
+func TestTheIntroductionTeachesTheRulesItIsPlayedUnder(t *testing.T) {
+	rs := learn.Rules()
+	var links string
+	for _, s := range onboardingContent() {
+		if s.id == "links" {
+			links = s.text
+		}
+	}
+	if links == "" {
+		t.Fatal("the introduction has no step about links")
+	}
+
+	if rs.DeliberateLinking {
+		// The player chooses. The step must not say the choice is absent, and
+		// must say the choice exists.
+		for _, wrong := range []string{"made for you rather than by you", "permanent"} {
+			if strings.Contains(links, wrong) {
+				t.Errorf("linking is deliberate under %s, yet the step says %q", rs.Describe(), wrong)
+			}
+		}
+		if !strings.Contains(links, "decline") {
+			t.Errorf("linking is deliberate under %s, yet the step never says the player may decline a link:\n%s",
+				rs.Describe(), links)
+		}
+		return
+	}
+	// Links are automatic and permanent. Then the step must not promise a choice.
+	if strings.Contains(links, "decline") {
+		t.Errorf("linking is automatic under %s, yet the step offers to decline a link", rs.Describe())
+	}
 }

@@ -7,6 +7,72 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A front screen worth the name. The menu was a flat list that had grown by
+  accretion, with three separate ways to start a game and no route at all to a
+  finished one. Entries are grouped by how often somebody does the thing rather
+  than by the mechanism behind it: Play asks who is on the other side as the first
+  question of a game instead of being three doors; Continue and Watch are what a
+  returning player does with games that already exist, and Watch reaches the replay
+  viewer the menu could not; Learn gathers the tutorial, the written rules and the
+  introduction; Settings gathers colours, the default ruleset, the default board and
+  whether hints are offered, stored per machine as the colour scheme already was.
+  The lists answer `j` and `k` as well as the arrows, resolved from the keymap, so
+  rebinding the board's movement moves the menu too.
+- A first-run introduction, skippable at every step and never shown twice. Five
+  steps on the real board and the real engine: what the game is, the board and
+  whose borders are whose, a turn is one peg, links form a knight's move away, and
+  links block links. Nothing gates advancing — the invitations are invitations —
+  and two keys leave from any step, both counting as seen, because somebody who
+  skipped does not want it again tomorrow. Where the tutorial lives is a note left
+  on the menu rather than a step, since the step naming it is the one a skipper
+  never reaches. The flag belongs to the profile, not the machine, so the second
+  person on a shared machine is still a newcomer.
+- The cover of the 1962 box, in a terminal, without needing kitty graphics. Two
+  artworks ship because neither wins everywhere: a projection of the project's own
+  flat reduction of the lid composition, and hand-composed character art that
+  answers below the size at which a projection stops reading, and on a terminal
+  with no colour. Quadrant blocks beat half blocks at every size and braille beat
+  the luminance ramp, so the losers were dropped; the 256-colour quantiser is
+  optimal against the xterm cube by exhaustion. The picture is nine kilobytes,
+  decoded on first use rather than at startup, and regenerable from a committed
+  source. `TWIXTUI_COVER_ART` and `TWIXTUI_COVER_IMAGE` override the choice and
+  the picture.
+- A rematch on the game-over screen, with the sides swapped: vertical moves first
+  and the opening advantage is real enough that the swap rule exists to blunt it,
+  so a second game on the same seats would hand the same player the same edge
+  twice.
+- The winning chain is marked when a game ends, recovered from the link graph, so
+  the player is not left tracing it across a 24×24 board.
+
+### Changed
+
+- Continuous integration is five jobs rather than one, on Linux and macOS. The
+  end-to-end layer drives a real terminal through tmux and skipped silently when
+  tmux was absent: twenty-one of twenty-two tests skipped while the job exited
+  zero. tmux is installed and a step now fails the build on any skip in that
+  package, proven against a negative control. A race job covers the packages with
+  concurrency and found a data race that predated it. The suite runs in 36 seconds
+  rather than 77 for the same 542 tests.
+- The bot's tier gap is measured across board sizes and the figures previously
+  published are withdrawn: they were run under at least two protocols and read as
+  one curve. On one stated protocol, pro scores 0.542 on 12×12 and 0.958 on 16×16
+  at the shipped budgets, and under an equal thirty-second guard 0.458, 0.417,
+  0.583 and 0.583 from 10×10 to 16×16, every one with a 95% floor below 0.5.
+
+### Fixed
+
+- The introduction described the paper-and-pencil linking rule while running on
+  the default ruleset, where the player chooses their links. A newcomer was told
+  that the first thing they would meet in a real game does not happen.
+- Games are saved as they are played rather than only on a clean exit, so closing
+  the terminal no longer loses one. A finished game is final and can no longer be
+  resumed or overwritten, which used to destroy a recorded result.
+- The cursor and the highlight no longer erase the links they sit on, and a link
+  that has to cross between two pegs is carried through one of them rather than
+  stopped by it.
+
 ## [0.1.1] - 2026-09-01
 
 ### Added

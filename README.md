@@ -190,7 +190,7 @@ twixtui play bot --tier pro --side random
 | --- | --- |
 | `beginner` | One move ahead on peg count alone, answered at once: takes a win and blocks one, but has no plan. |
 | `intermediate` | Three moves ahead with the full evaluation, still near-instant: punishes a loose chain. |
-| `pro` | Thinks for up to three seconds, extending forced lines, with a transposition table: the strongest play on offer. Its nominal depth limit is sixteen, but sixteen is theoretical — a 16×16 position given an hour reached depth seven. |
+| `pro` | Thinks for up to three seconds, extending forced lines, with a transposition table: the strongest play on offer. Its nominal depth limit is sixteen, but sixteen is theoretical — with the per-move budget lifted, a thirty-second search of a 16×16 position reached depth seven. |
 
 One alpha-beta search backs all three. They differ in how deep they may go, how many
 candidate moves they will look at, and how much of the evaluation they are allowed to
@@ -217,9 +217,13 @@ the deeper search has room, it scored 0.458 on 10×10, 0.417 on 12×12, 0.583 on
 14×14 and 0.583 on 16×16, and every one of those has a 95% confidence floor below
 0.5. So across that range the extra depth does not establish a reliable advantage.
 
-Read plainly: pick `pro` for the 24×24 board the game ships with, where the gap is
-wide. On a small board it is a different opponent rather than a better one, and
-`intermediate` answers instantly. The figures, the protocol and the number of games
+Read plainly: the gap widens with the board. It is not established anywhere from
+10×10 to 16×16 under an equal guard, and at the shipped budgets it is even on 12×12
+and large on 16×16, so on a small board `pro` is a different opponent rather than a
+better one and `intermediate` answers instantly. The 24×24 board the game ships
+with is larger still, and the trend points the same way, but it has not been
+measured on this protocol and no figure here stands for it. The figures, the
+protocol and the number of games
 behind each are recorded with the measurement in `internal/bot/strength_test.go`.
 
 | Flag | Effect |

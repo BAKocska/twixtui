@@ -52,8 +52,11 @@ type matchResult struct {
 // depthStats summarises how deep one side's search actually got. It belongs
 // beside every win rate this harness reports, because only the two weaker tiers
 // stop at their depth ceiling. The pro tier's ceiling of sixteen plies is far
-// beyond what any practical per-move budget reaches — with the budget lifted to
-// an hour and a thirty-second hard stop it got to depth 7 on 16x16 — so its rate
+// beyond what any practical per-move budget reaches: with the configured budget
+// lifted to an hour, so that only the hard stop bound it, a thirty-second search
+// of a 16x16 position got to depth 7. The hour is what it was allowed, not what it
+// had; thirty seconds is what it spent, and that is the number worth quoting. So
+// its rate
 // is always a rate at a depth the clock chose, and the depth has to be stated
 // for the rate to be worth anything.
 type depthStats struct {
