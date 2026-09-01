@@ -16,7 +16,7 @@ A terminal is a good place for it. The board is a grid of discrete positions joi
 short straight lines, which is what a character cell grid is already good at drawing,
 and nothing here wants a mouse: the whole game is "move the cursor, place a peg, decide
 about links". So it plays over SSH, in a pane beside your work, on a machine with no
-display server, out of a single static binary with nothing to install alongside it.
+display server, out of a single binary with nothing to install alongside it.
 
 The rules `twixtui` implements, the handful of points where historical editions
 genuinely disagree, and where every rule comes from are written up in
@@ -66,8 +66,12 @@ steep enough for a plain diagonal, `╱` or `╲`. One that goes two columns acr
 only one row down covers four screen columns for every row it descends, far
 shallower than any diagonal a cell can draw, so it is drawn as a connected run of
 `─` with corners `╭ ╮ ╰ ╯`, and a tee or a cross — `├ ┤ ┬ ┴ ┼` — where two links
-leave a peg on the same side and share a run. Two links that cross without meeting
-get `╳`, and a peg a run has to pass through is drawn as `⊕` or `⊖`, which says
+leave a peg on the same side and share a run. Where two links that cross reach the
+same cell, that cell gets `╳`, because a tee there would say they meet. Two
+crossing links need not reach the same cell — at the compact scale two crossing
+steep links land one directly above the other — and then nothing is marked: the
+only cell a mark could go in belongs to one of the two links, and taking it would
+erase that link. A peg a run has to pass through is drawn as `⊕` or `⊖`, which says
 both things at once and still names its owner.
 
 The cursor and a highlight sit as brackets either side of a hole, `[ ]` and `( )`.
@@ -94,7 +98,8 @@ Go 1.26 or newer. The binary lands in `$(go env GOPATH)/bin`.
 
 ### Download a binary
 
-Every release publishes static, dependency-free binaries for four platforms. Take the
+Every release publishes binaries for four platforms, built without cgo so they carry
+no third-party dependencies. Take the
 archive for yours from the
 [releases page](https://github.com/BAKocska/twixtui/releases/latest):
 
@@ -502,7 +507,8 @@ none of those.
 | `s` | Take the swap option, while it is on offer. |
 | `d` | Offer a draw, or accept the one on offer. |
 | `r` | Resign. |
-| `q`, `ctrl+c` | Quit. |
+| `q` | Leave the game. Started from the menu, it goes back to the menu; started from the command line, there is nothing behind it, so the program ends and the game is saved. |
+| `ctrl+c` | Leave the game and end the program, saving it either way. |
 
 Placing a peg offers every link that peg can legally make, and link mode is where you
 turn those on and off: the eight knight's-move directions around the cursor are
