@@ -192,12 +192,15 @@ func MinSize(art Art) (w, h int) {
 // evaluation of both artworks settled. That evaluation, the converters that were
 // tried and dropped, and the sizes each artwork wins at are written up in
 // docs/COVER.md; it used to cite a file in the development tree, which no reader
-// of the repository could ever have, since that tree is not published. In monochrome the homage always answers: it is drawn
-// for runes, where a dithered projection is noise. In colour the projection
-// answers once the grid its picture actually occupies is fine enough to keep
-// the wordmark and the figure readable — under that, the homage. A player
-// who wants the other answer passes their choice to Render; EnvArt overrides
-// this default from the environment.
+// of the repository could ever have, since that tree is not published.
+//
+// An explicit choice in EnvArt is honoured first and wins whatever the size and
+// depth suggest, including in monochrome, where the projection becomes braille.
+// Failing that: monochrome takes the homage, because it is drawn for runes and a
+// dithered projection there is noise; and in colour the projection answers once
+// the grid its picture occupies is fine enough to keep the wordmark and the
+// figure readable, the homage under that. A caller that wants neither default
+// passes its own choice to Render.
 func Best(w, h int, depth Depth) Art {
 	if art, ok := artOverride(); ok {
 		return art

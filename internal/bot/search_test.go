@@ -17,6 +17,20 @@ var testTiers = []Tier{Beginner, Intermediate, Pro}
 // fastParams shortens a tier's budget without changing what separates it from
 // the others, so that the property tests can run all three tiers over many
 // positions in seconds.
+// boundedEngine is an engine of the given tier whose search is bounded by depth
+// rather than by the clock, so the same seed and position must give the same
+// answer however loaded the machine is. The depth is small enough that the search
+// always finishes well inside the budget, and the budget is generous enough that
+// it never decides anything; everything else about the tier — its candidate
+// widths, its evaluation, its table, its sampling — is untouched, so this is the
+// same code path the tier plays on.
+func boundedEngine(t Tier, seed int64) *engine {
+	p := tierParams(t)
+	p.maxDepth = 2
+	p.budget = time.Minute
+	return &engine{tier: t, seed: seed, p: p, play: newSearcher(p)}
+}
+
 func fastEngine(t Tier, seed int64, budget time.Duration) *engine {
 	p := tierParams(t)
 	p.budget = budget
@@ -80,8 +94,21 @@ func TestMoveIsAlwaysLegal(t *testing.T) {
 }
 
 // TestMoveIsDeterministic pins the reproducibility the strength measurement
-// depends on: the choice is a function of the seed and the position, not of the
-// wall clock or of how many moves the bot has already made.
+// depends on: the choice is a function of the seed and the position, not of how
+// many moves the bot has already made.
+//
+// The search is bounded by depth here and not by a clock, and that is the whole
+// point. A search cut off by a wall-clock budget stops wherever the machine
+// happened to get to, so its answer is a function of the load as well as of the
+// seed: this test used to run with a forty-millisecond budget and it failed on a
+// loaded runner, giving D2, D2 and D6 for one seed. That is not a defect in the
+// bot — a truncated search is allowed to answer from what it had — but it is not
+// a property a test can assert, and asserting it anyway made a real difference
+// between machines look like a bug in the search.
+//
+// So determinism is pinned where the code guarantees it, with the clock taken out
+// of the question, and the tiers' own budgets are exercised by the tests about
+// deadlines and cancellation instead.
 func TestMoveIsDeterministic(t *testing.T) {
 	src := rand.New(rand.NewPCG(13, 14))
 	ctx := context.Background()
@@ -91,14 +118,14 @@ func TestMoveIsDeterministic(t *testing.T) {
 			if g.Result().Over() {
 				continue
 			}
-			first := fastEngine(tier, 99, 40*time.Millisecond)
+			first := boundedEngine(tier, 99)
 			a, err := first.Move(ctx, g)
 			if err != nil {
 				t.Fatalf("%v.Move: %v", tier, err)
 			}
 			// A second bot with the same seed, and the same bot asked twice,
 			// must both agree.
-			second := fastEngine(tier, 99, 40*time.Millisecond)
+			second := boundedEngine(tier, 99)
 			b, err := second.Move(ctx, g)
 			if err != nil {
 				t.Fatalf("%v.Move: %v", tier, err)

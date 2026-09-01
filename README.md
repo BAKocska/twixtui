@@ -275,9 +275,13 @@ You pick your side before the first move, and on the command line `play bot` wil
 not start without it: leave `--side` out and it says so. The menu asks instead.
 `--side random` is there for players who would rather not choose.
 
-`--seed N` makes a bot game reproducible: the same seed, ruleset and moves produce the
-same bot replies every time. That is how the bot's own tests pin its behaviour, and it
-is useful for replaying a position that went wrong.
+`--seed N` fixes the bot's randomness, which is what the beginner tier samples with.
+Given the same seed, ruleset and moves, the two depth-capped tiers reply the same way
+every time; the pro tier is bounded by a clock rather than by depth, so a machine
+under load can stop its search a little earlier and answer differently. That is the
+search doing what it was asked, not a fault, but it means a pro game is reproducible
+in practice rather than by guarantee. The bot's own tests pin determinism with the
+clock taken out of the question, for the same reason.
 
 Asking for a hint runs that same search at full strength and gives you the move it
 would play, a line on why, and the holes that reason is about, marked on the board.

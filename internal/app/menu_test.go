@@ -2094,9 +2094,25 @@ func TestMenuWatchAndContinueSplitTheStore(t *testing.T) {
 func TestMenuInitOpensNothingOnceTheIntroductionIsSeen(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
-	if !OnboardingSeen(d, "Tester") {
-		t.Skip("this machine has not seen the introduction; the real onboarding branch owns that path")
+
+	// The state is arranged rather than waited for. This used to skip unless the
+	// profile happened to have been introduced, and the test deps build a fresh
+	// store every time, so the condition was never true and the test never ran:
+	// it reported success without asserting anything, which is worse than not
+	// existing, because it looks like cover.
+	if OnboardingSeen(d, m.player) {
+		t.Fatalf("%s has seen the introduction before this test arranged it", m.player)
 	}
+	if cmd := m.Init(); cmd == nil {
+		t.Fatal("a profile that has not seen the introduction was not offered it")
+	}
+	if err := d.Profiles.MarkIntroduced(m.player); err != nil {
+		t.Fatal(err)
+	}
+	if !OnboardingSeen(d, m.player) {
+		t.Fatalf("marking %s introduced did not take", m.player)
+	}
+
 	if cmd := m.Init(); cmd != nil {
 		t.Errorf("Init produced %T although the introduction was seen", cmd())
 	}
