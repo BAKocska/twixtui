@@ -1,6 +1,10 @@
 package cover
 
-import "os"
+import (
+	"fmt"
+	"os"
+	"strings"
+)
 
 // The environment is the configuration surface here because the cover is
 // decoration: a player who cares exports a line in their shell profile, and
@@ -33,4 +37,32 @@ func FromEnvironment() (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// ParseEnvironment applies both environment variables and returns every
+// complaint it has, so the command line can report them once, before the program
+// switches the terminal to its alternate screen. Nothing on a drawing path
+// reports anything: Best is called for every frame, so a diagnostic there would
+// repeat for as long as the menu is open and would be written over the picture.
+//
+// A bad value is reported and then ignored, rather than being fatal. Somebody
+// who mistypes the name of an artwork wants to play the game, not to be stopped
+// by it.
+func ParseEnvironment() []error {
+	var problems []error
+	switch v := strings.TrimSpace(os.Getenv(EnvArt)); strings.ToLower(v) {
+	case "":
+		setArtOverride(Homage, false)
+	case "homage":
+		setArtOverride(Homage, true)
+	case "photo":
+		setArtOverride(Photo, true)
+	default:
+		setArtOverride(Homage, false)
+		problems = append(problems, fmt.Errorf("%s is %q, which is neither \"homage\" nor \"photo\"; using the artwork the terminal size suggests", EnvArt, v))
+	}
+	if _, err := FromEnvironment(); err != nil {
+		problems = append(problems, err)
+	}
+	return problems
 }

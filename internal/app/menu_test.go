@@ -192,7 +192,13 @@ func TestMenuEveryEntryShowsItsExplanation(t *testing.T) {
 		if !strings.Contains(frame, entries[i].label) {
 			t.Errorf("entry %q is not on screen:\n%s", entries[i].label, frame)
 		}
-		if !strings.Contains(frame, entries[i].help) {
+		// Compared with the whitespace collapsed, because the explanation is
+		// shown in a pane that is now 58 columns wide once the cover artwork
+		// takes the remainder, so a sentence longer than that is wrapped. It is
+		// still shown; it is simply no longer on one line, and a test that
+		// demanded one line would be asserting the width of the pane rather
+		// than that the player is told what an entry does.
+		if !strings.Contains(mnLeftPane(frame), mnFlatten(entries[i].help)) {
 			t.Errorf("entry %q does not show its explanation %q:\n%s", entries[i].label, entries[i].help, frame)
 		}
 	}
@@ -1214,7 +1220,14 @@ func mnHighlighted(t *testing.T, m *Menu) string {
 	t.Helper()
 	frame := m.View().Content
 	for _, line := range strings.Split(frame, "\n") {
-		if rest, ok := strings.CutPrefix(ansi.Strip(line), "> "); ok {
+		// The cover artwork is drawn to the right of the menu's own column, so
+		// the row is cut to that column before the label is read: otherwise the
+		// entry comes back with a row of block glyphs attached to it.
+		row := []rune(ansi.Strip(line))
+		if len(row) > menuPaneWidth {
+			row = row[:menuPaneWidth]
+		}
+		if rest, ok := strings.CutPrefix(string(row), "> "); ok {
 			return strings.TrimSpace(rest)
 		}
 	}
@@ -2061,10 +2074,36 @@ func TestMenuWatchAndContinueSplitTheStore(t *testing.T) {
 func TestMenuInitOpensNothingOnceTheIntroductionIsSeen(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
-	if !OnboardingSeen(d) {
+	if !OnboardingSeen(d, "Tester") {
 		t.Skip("this machine has not seen the introduction; the real onboarding branch owns that path")
 	}
 	if cmd := m.Init(); cmd != nil {
 		t.Errorf("Init produced %T although the introduction was seen", cmd())
 	}
+}
+
+// mnFlatten collapses every run of whitespace, including line breaks, to one
+// space, so a wrapped sentence compares equal to the sentence it wraps.
+func mnFlatten(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// mnLeftPane returns the menu's own column of a front-screen frame, flattened.
+//
+// Two things make the naive comparison wrong. The pane is 58 columns wide once
+// the cover artwork takes the remainder, so an explanation longer than that is
+// wrapped; and the artwork is drawn to the right of every line, so flattening the
+// whole frame puts a row of block glyphs between the two halves of a wrapped
+// sentence. Reading the pane alone and then flattening compares what the player
+// reads with what the entry promises, and cares about neither the pane's width
+// nor whether there is a picture beside it.
+func mnLeftPane(frame string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(frame, "\n") {
+		r := []rune(line)
+		if len(r) > menuPaneWidth {
+			r = r[:menuPaneWidth]
+		}
+		b.WriteString(string(r))
+		b.WriteByte('\n')
+	}
+	return mnFlatten(b.String())
 }

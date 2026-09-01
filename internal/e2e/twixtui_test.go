@@ -84,7 +84,25 @@ func session(t *testing.T, args string, width, height int) *Terminal {
 		t.Fatalf("creating the test profile: %v\n%s", err, out)
 	}
 
-	command := bin + " --config " + cfg + " --profile Tester " + args
+	return startIn(t, cfg, args, width, height)
+}
+
+// sessionIn is session with a configuration directory the caller keeps, so two
+// launches can share one machine's state. The introduction is shown once per
+// profile, and proving that needs a second launch against the first one's store.
+func sessionIn(t *testing.T, cfg, args string, width, height int) *Terminal {
+	t.Helper()
+	bin := binary(t)
+	setup := exec.Command(bin, "--config", cfg, "profile", "create", "Tester")
+	setup.Env = append(os.Environ(), "TWIXTUI_CONFIG_DIR="+cfg, "NO_COLOR=1")
+	// A second launch finds the profile already there, which is not an error.
+	_ = setup.Run()
+	return startIn(t, cfg, args, width, height)
+}
+
+func startIn(t *testing.T, cfg, args string, width, height int) *Terminal {
+	t.Helper()
+	command := binary(t) + " --config " + cfg + " --profile Tester " + args
 	return Start(t, command, Options{
 		Width:  width,
 		Height: height,
@@ -98,11 +116,62 @@ func session(t *testing.T, args string, width, height int) *Terminal {
 func TestBinaryShowsTheMenu(t *testing.T) {
 	t.Parallel()
 	tm := session(t, "", 90, 30)
-	screen := tm.MustWaitFor("Tester", 20*time.Second)
+
+	// A brand-new machine meets the introduction before the menu, which is the
+	// point of the introduction, so this walks the path a first-time player
+	// actually walks: skip it, then the menu. Asserting the introduction appears
+	// first is deliberate rather than incidental — a regression that dropped it
+	// would otherwise show up here as a pass.
+	intro := tm.MustWaitFor("skip", 20*time.Second)
+	if !tm.Alive() {
+		t.Fatalf("the program exited instead of showing the introduction:\n%s", intro)
+	}
+	tm.AssertFits()
+	tm.SendKeys("q")
+
+	// Keyed on an entry rather than on the profile name: the introduction leaves
+	// a note about the tutorial, which takes the top row on this one frame, so
+	// the title is not what a first run settles on. The entries are.
+	screen := tm.MustWaitFor("Play", 20*time.Second)
+	if !strings.Contains(screen, "Quit") {
+		t.Fatalf("the front screen has no way out on it:\n%s", screen)
+	}
 	if !tm.Alive() {
 		t.Fatalf("the program exited instead of showing a menu:\n%s", screen)
 	}
 	tm.AssertFits()
+}
+
+// TestTheIntroductionIsNotShownTwice is the other half: having skipped it once,
+// the next launch on the same machine goes straight to the menu. A first-run
+// screen that returns every launch is the thing players complain about.
+func TestTheIntroductionIsNotShownTwice(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	first := sessionIn(t, dir, "", 90, 30)
+	first.MustWaitFor("skip", 20*time.Second)
+	first.SendKeys("q")
+	first.MustWaitFor("Play", 20*time.Second)
+	first.SendKeys("q")
+	for range 40 {
+		if !first.Alive() {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	second := sessionIn(t, dir, "", 90, 30)
+	screen := second.MustWaitFor("Play", 20*time.Second)
+	if strings.Contains(screen, "skip") {
+		t.Fatalf("the introduction came back on the second launch:\n%s", screen)
+	}
+	// With no note in the way, the front screen names who is playing. Games and
+	// standings are recorded against that profile, so it belongs on the screen
+	// the player starts from.
+	if !strings.Contains(screen, "Tester") {
+		t.Errorf("the front screen does not say which profile is playing:\n%s", screen)
+	}
+	second.AssertFits()
 }
 
 // TestHotseatGameDrawsTheBoard checks a game screen appears with a board on it,

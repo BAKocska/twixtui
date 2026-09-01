@@ -224,10 +224,12 @@ func TestBestFollowsTheEvaluation(t *testing.T) {
 		}
 	}
 	t.Setenv(EnvArt, "homage")
+	ParseEnvironment()
 	if got := Best(120, 60, DepthTrueColour); got != Homage {
 		t.Errorf("Best ignores %s=homage", EnvArt)
 	}
 	t.Setenv(EnvArt, "photo")
+	ParseEnvironment()
 	if got := Best(24, 10, DepthMono); got != Photo {
 		t.Errorf("Best ignores %s=photo", EnvArt)
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/BAKocska/twixtui/internal/cover"
 	"github.com/BAKocska/twixtui/internal/theme"
 )
 
@@ -152,7 +153,18 @@ subcommands below to go straight to a game.`,
 		// --theme is checked here rather than wherever a command happens to ask
 		// what colour to draw in, so that a command which never draws refuses a
 		// misspelling too instead of accepting it in silence.
-		PersistentPreRunE: func(*cobra.Command, []string) error {
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			// The cover's environment variables are applied once, here, so that
+			// a complaint about one of them is printed before anything switches
+			// the terminal to its alternate screen. Nothing on a drawing path
+			// reports them: the artwork is chosen for every frame, so a
+			// diagnostic there would repeat for as long as a menu is open and
+			// would be written over the picture it was about. A bad value is
+			// reported and then ignored, because somebody who mistyped the name
+			// of a picture wants to play the game rather than be stopped by it.
+			for _, problem := range cover.ParseEnvironment() {
+				fmt.Fprintf(cmd.ErrOrStderr(), "twixtui: %v\n", problem)
+			}
 			_, _, err := opts.namedTheme()
 			return err
 		},

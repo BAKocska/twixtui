@@ -196,10 +196,10 @@ func menuEntries() []menuOption {
 // built, so a player coming back from a game cannot be handed the tour a
 // second time.
 func (m *Menu) Init() tea.Cmd {
-	if OnboardingSeen(m.deps) {
+	if OnboardingSeen(m.deps, m.player) {
 		return nil
 	}
-	sc, err := NewOnboarding(m.deps)
+	sc, err := NewOnboarding(m.deps, m.player)
 	if err != nil {
 		// A menu that would not open because its introduction failed to build
 		// is worse than a menu whose introduction has to be found under Learn.
@@ -530,7 +530,7 @@ func opensBlock(line string) bool {
 // run shows it, so what a player deliberately asks to see again is the thing
 // itself and not a summary of it.
 func (m *Menu) openIntro() tea.Cmd {
-	sc, err := NewOnboarding(m.deps)
+	sc, err := NewOnboarding(m.deps, m.player)
 	if err != nil {
 		return Fail(err)
 	}

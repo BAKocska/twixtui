@@ -27,7 +27,6 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/BAKocska/twixtui/assets"
@@ -147,6 +146,33 @@ func Render(w, h int, depth Depth, art Art) []string {
 	return renderHomage(w, h, depth)
 }
 
+// artOverride reports the artwork the environment named, if it named one.
+//
+// It reads a value the environment was already parsed into rather than the
+// environment itself, because Best is called for every frame the menu draws.
+// Reading and validating there was how a misspelt name came to be announced on
+// every frame, over the picture it was complaining about. Parsing happens once,
+// in ParseEnvironment, which the command line calls before anything is on screen.
+func artOverride() (Art, bool) {
+	envMu.RLock()
+	defer envMu.RUnlock()
+	return envArt, envArtSet
+}
+
+// setArtOverride records the artwork the environment named. Only
+// ParseEnvironment calls it.
+func setArtOverride(a Art, ok bool) {
+	envMu.Lock()
+	envArt, envArtSet = a, ok
+	envMu.Unlock()
+}
+
+var (
+	envMu     sync.RWMutex
+	envArt    Art
+	envArtSet bool
+)
+
 // MinSize reports the smallest box the artwork is legible in.
 //
 // The homage bound is where the compact wordmark and a three-peg scene still
@@ -173,19 +199,8 @@ func MinSize(art Art) (w, h int) {
 // who wants the other answer passes their choice to Render; EnvArt overrides
 // this default from the environment.
 func Best(w, h int, depth Depth) Art {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvArt))) {
-	case "":
-	case "homage":
-		return Homage
-	case "photo":
-		return Photo
-	default:
-		// Reported rather than dropped, for the reason the image variable is
-		// reported: a typo that silently does nothing leaves the player looking
-		// at the wrong artwork with no way to find out why. Best cannot return an
-		// error, so the complaint goes to the environment's own channel.
-		fmt.Fprintf(os.Stderr, "twixtui: %s is %q, which is neither \"homage\" nor \"photo\"; using the size-appropriate default\n",
-			EnvArt, os.Getenv(EnvArt))
+	if art, ok := artOverride(); ok {
+		return art
 	}
 	if depth == DepthMono {
 		return Homage
