@@ -1,6 +1,8 @@
 package theme
 
 import (
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -73,6 +75,12 @@ func TestColoursAreWellFormed(t *testing.T) {
 			continue
 		}
 		for role, value := range roles {
+			// Text may be empty, which means the terminal's own foreground is
+			// used. That is deliberate: naming a colour there makes a scheme
+			// wrong on one end of the background range or the other.
+			if value == "" && role == "Text" {
+				continue
+			}
 			if !hex.MatchString(value) {
 				t.Errorf("%s.%s = %q, which is not a six-digit lower-case hex colour", th.Name, role, value)
 			}
@@ -198,5 +206,119 @@ func TestMonochrome(t *testing.T) {
 	}
 	if classic.Monochrome() {
 		t.Error("a coloured theme reports itself as monochrome")
+	}
+}
+
+// relativeLuminance returns the perceptual lightness of a hex colour, on the
+// scale the web contrast guidelines use: 0 is black, 1 is white.
+func relativeLuminance(t *testing.T, hex string) float64 {
+	t.Helper()
+	if len(hex) != 7 || hex[0] != '#' {
+		t.Fatalf("not a hex colour: %q", hex)
+	}
+	channel := func(s string) float64 {
+		var v int
+		if _, err := fmt.Sscanf(s, "%x", &v); err != nil {
+			t.Fatalf("unreadable channel %q in %q", s, hex)
+		}
+		c := float64(v) / 255
+		if c <= 0.04045 {
+			return c / 12.92
+		}
+		return math.Pow((c+0.055)/1.055, 2.4)
+	}
+	r, g, b := channel(hex[1:3]), channel(hex[3:5]), channel(hex[5:7])
+	return 0.2126*r + 0.7152*g + 0.0722*b
+}
+
+// TestEveryThemeIsLegibleAgainstTheBackgroundItClaims is the invariant the
+// default scheme used to break.
+//
+// No scheme paints a background, so every colour sits on the terminal's own. A
+// scheme drawn for a dark terminal therefore cannot use a near-black, and one
+// drawn for a light terminal cannot use a near-white. The default scheme did
+// both at once: its second player was near-black and its panel text near-white,
+// so there was no terminal it was fully legible on. The bounds below are loose
+// enough to leave the palettes room and tight enough to catch that.
+func TestEveryThemeIsLegibleAgainstTheBackgroundItClaims(t *testing.T) {
+	const (
+		// Against a dark terminal, anything below this disappears.
+		darkFloor = 0.10
+		// Against a light terminal, anything above this disappears.
+		lightCeiling = 0.62
+	)
+	for _, th := range All() {
+		if th.Monochrome() {
+			if th.Suits != AnyBackground {
+				t.Errorf("%s sets no colours but claims to suit a particular background", th.Name)
+			}
+			continue
+		}
+		if th.Suits == AnyBackground {
+			t.Errorf("%s sets colours, so it must say which terminal it is drawn for", th.Name)
+			continue
+		}
+		roles := map[string]string{
+			"VerticalPeg":    th.VerticalPeg,
+			"VerticalLink":   th.VerticalLink,
+			"HorizontalPeg":  th.HorizontalPeg,
+			"HorizontalLink": th.HorizontalLink,
+			"Grid":           th.Grid,
+			"BorderRow":      th.BorderRow,
+			"Cursor":         th.Cursor,
+			"Highlight":      th.Highlight,
+			"LastMove":       th.LastMove,
+			"Dim":            th.Dim,
+			"Warning":        th.Warning,
+		}
+		// Text may be empty, which means it inherits the terminal's own
+		// foreground and is legible on any background by construction.
+		if th.Text != "" {
+			roles["Text"] = th.Text
+		}
+		for role, hex := range roles {
+			lum := relativeLuminance(t, hex)
+			switch th.Suits {
+			case DarkBackground:
+				if lum < darkFloor {
+					t.Errorf("%s.%s is %s, luminance %.3f, too dark to see on the dark terminal it is drawn for",
+						th.Name, role, hex, lum)
+				}
+			case LightBackground:
+				if lum > lightCeiling {
+					t.Errorf("%s.%s is %s, luminance %.3f, too light to see on the light terminal it is drawn for",
+						th.Name, role, hex, lum)
+				}
+			}
+		}
+	}
+}
+
+// TestThemeRolesAreToldApart checks the colours a player has to distinguish at a
+// glance are actually distinguishable, rather than three shades of one hue.
+func TestThemeRolesAreToldApart(t *testing.T) {
+	for _, th := range All() {
+		if th.Monochrome() {
+			continue
+		}
+		// The cursor, the highlight and the two players all appear on the board
+		// at once and each means something different.
+		onBoard := map[string]string{
+			"vertical peg":   th.VerticalPeg,
+			"horizontal peg": th.HorizontalPeg,
+			"cursor":         th.Cursor,
+			"highlight":      th.Highlight,
+			"grid":           th.Grid,
+		}
+		for aName, a := range onBoard {
+			for bName, b := range onBoard {
+				if aName >= bName {
+					continue
+				}
+				if a == b {
+					t.Errorf("%s: %s and %s are the same colour %s", th.Name, aName, bName, a)
+				}
+			}
+		}
 	}
 }

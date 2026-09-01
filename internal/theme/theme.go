@@ -18,11 +18,33 @@ import (
 	"strings"
 )
 
+// Background says which terminal a scheme is drawn for.
+//
+// No scheme paints a background: pegs and links sit on whatever colour the
+// player's terminal already is. A scheme is therefore only legible against one
+// end of the range, and saying which one is what stops a scheme being written
+// that is legible against neither. The default scheme used to be exactly that:
+// its darker player was near-black, invisible on a dark terminal, while its
+// panel text was near-white, invisible on a light one.
+type Background uint8
+
+// Which terminal a scheme suits.
+const (
+	// AnyBackground sets no colours at all, so it cannot clash with either.
+	AnyBackground Background = iota
+	// DarkBackground is drawn to be read against a dark terminal.
+	DarkBackground
+	// LightBackground is drawn to be read against a light terminal.
+	LightBackground
+)
+
 // Theme names the colour of every role the interface draws.
 type Theme struct {
 	Name    string
 	Summary string
 
+	// Suits is the terminal this scheme is legible against.
+	Suits Background
 	// VerticalPeg and HorizontalPeg colour the two players' pegs, and their
 	// links take the matching link colour. These two must stay clearly distinct
 	// from each other in every theme.
@@ -60,28 +82,37 @@ func (t Theme) Monochrome() bool { return t.VerticalPeg == "" && t.HorizontalPeg
 var themes = []Theme{
 	{
 		Name:    "classic",
-		Summary: "red and black, as the printed board game",
+		Summary: "red and indigo, after the printed board game, for a dark terminal",
+		Suits:   DarkBackground,
 
-		VerticalPeg:  "#d13b3b",
-		VerticalLink: "#a32c2c",
+		VerticalPeg:  "#e05252",
+		VerticalLink: "#a83b3b",
 
-		HorizontalPeg:  "#2b2b33",
-		HorizontalLink: "#4a4a57",
+		// The printed game's second player is black, which cannot be drawn on a
+		// dark terminal: it was near-black here and effectively invisible. Indigo
+		// keeps the darker, cooler character of that side while staying legible,
+		// and the two players are told apart by shape in any case.
+		HorizontalPeg:  "#7d8cc4",
+		HorizontalLink: "#57639b",
 
-		Grid:      "#6a6a75",
-		BorderRow: "#8a8a95",
+		Grid:      "#7a7a85",
+		BorderRow: "#9a9aa5",
 
 		Cursor:    "#f0c040",
-		Highlight: "#3fa7d6",
+		Highlight: "#5fd38d",
 		LastMove:  "#e0e0e6",
 
-		Text:    "#e6e6ea",
+		// Panel text is left unset so it inherits the terminal's own foreground.
+		// Naming a near-white here is what made this scheme unreadable on a light
+		// terminal, and the terminal's own choice is right by construction.
+		Text:    "",
 		Dim:     "#8a8a95",
 		Warning: "#e0952a",
 	},
 	{
 		Name:    "slate",
-		Summary: "muted blue and amber, for dark terminals",
+		Summary: "muted blue and amber, for a dark terminal",
+		Suits:   DarkBackground,
 
 		VerticalPeg:  "#5fa8d3",
 		VerticalLink: "#3d7fa3",
@@ -89,8 +120,8 @@ var themes = []Theme{
 		HorizontalPeg:  "#e0a458",
 		HorizontalLink: "#b07c3c",
 
-		Grid:      "#4a5259",
-		BorderRow: "#66707a",
+		Grid:      "#5c6670",
+		BorderRow: "#7a848e",
 
 		Cursor:    "#f2f2f2",
 		Highlight: "#8ed081",
@@ -102,7 +133,8 @@ var themes = []Theme{
 	},
 	{
 		Name:    "paper",
-		Summary: "dark ink on a light background",
+		Summary: "dark ink, for a light terminal",
+		Suits:   LightBackground,
 
 		VerticalPeg:  "#9b2226",
 		VerticalLink: "#bb4a4a",
@@ -114,7 +146,7 @@ var themes = []Theme{
 		BorderRow: "#77776f",
 
 		Cursor:    "#0a6e4a",
-		Highlight: "#1b6ca8",
+		Highlight: "#8a4a00",
 		LastMove:  "#3d3d38",
 
 		Text:    "#22221e",
@@ -124,6 +156,7 @@ var themes = []Theme{
 	{
 		Name:    "mono",
 		Summary: "no colour, distinguishes players by shape alone",
+		Suits:   AnyBackground,
 	},
 }
 
