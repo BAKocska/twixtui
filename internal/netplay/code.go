@@ -314,13 +314,18 @@ func checkMoveCode(g *game.Game, id, code string) (MoveCode, error) {
 	}
 	trial := g.Clone()
 	if err := applyEntry(trial, mc.Side, mc.Move); err != nil {
-		return mc, fmt.Errorf("%w: %s cannot be played here: %w", ErrBadCode, mc.Move, err)
+		return mc, fmt.Errorf("%w: %s cannot be played here: %w", ErrBadCode, safeText(mc.Move, maxMoveLen), err)
 	}
 	if got := shortSum(positionSum(trial)); got != mc.After {
-		return mc, fmt.Errorf("%w: playing %s here gives %s and your opponent got %s", ErrDiverged, mc.Move, got, mc.After)
+		return mc, fmt.Errorf("%w: playing %s here gives %s and your opponent got %s", ErrDiverged, safeText(mc.Move, maxMoveLen), got, mc.After)
 	}
 	return mc, nil
 }
+
+// maxMoveLen bounds a move as written in a code. Real notation is a handful of
+// characters; the bound is here because the field arrives from a pasted string
+// and ends up in a message on the player's screen.
+const maxMoveLen = 64
 
 // EncodeTranscript renders a whole game as a block of move codes, one per line.
 // It is how a correspondence game is handed over in full: to start one from a

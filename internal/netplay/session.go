@@ -246,12 +246,11 @@ func (c config) normalise() config {
 // are already short; the bound is here so a peer cannot send a megabyte of one.
 const maxNameLen = 64
 
+// cleanName bounds and sanitises a name from the other end. A name is drawn on
+// the player's terminal, so control bytes in it are removed rather than passed
+// through: an opponent could otherwise put an escape sequence in their own name.
 func cleanName(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > maxNameLen {
-		s = strings.TrimSpace(s[:maxNameLen])
-	}
-	return s
+	return safeText(s, maxNameLen)
 }
 
 func (c config) check() error {
