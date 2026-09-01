@@ -66,19 +66,41 @@ func (o *options) configPath() (string, error) {
 	return filepath.Join(base, "twixtui"), nil
 }
 
+// namedTheme resolves the --theme flag, if one was given. It exists so the flag
+// is checked in one place: a value is wrong or right on its own, and resolving
+// it only where a theme was actually needed made a misspelling an error at a
+// terminal and nothing at all once the output was redirected, which is the one
+// place a script could have caught it.
+func (o *options) namedTheme() (theme.Theme, bool, error) {
+	if o.themeName == "" {
+		return theme.Theme{}, false, nil
+	}
+	t, err := theme.Get(o.themeName)
+	if err != nil {
+		return theme.Theme{}, false, err
+	}
+	return t, true, nil
+}
+
 // theme resolves the colour scheme for this run: an explicit flag wins, then the
 // saved choice, and a request for no colour overrides both.
 func (o *options) theme() (theme.Theme, error) {
+	named, ok, err := o.namedTheme()
+	if err != nil {
+		return theme.Theme{}, err
+	}
 	// Colour is for a terminal. When output is redirected to a file or piped
 	// into something else, escape sequences are noise at best and corrupt the
 	// data at worst, so they are suppressed the way any well-behaved command
 	// suppresses them. This is also what makes a listing's output stable enough
-	// to assert on.
+	// to assert on. The named theme is resolved before this all the same: where
+	// the output goes decides whether colour is worth emitting, and nothing
+	// else.
 	if o.noColor || os.Getenv("NO_COLOR") != "" || !stdoutIsTerminal() {
 		return theme.Get("mono")
 	}
-	if o.themeName != "" {
-		return theme.Get(o.themeName)
+	if ok {
+		return named, nil
 	}
 	dir, err := o.configPath()
 	if err != nil {
@@ -127,6 +149,13 @@ subcommands below to go straight to a game.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          rejectUnknownSubcommand,
+		// --theme is checked here rather than wherever a command happens to ask
+		// what colour to draw in, so that a command which never draws refuses a
+		// misspelling too instead of accepting it in silence.
+		PersistentPreRunE: func(*cobra.Command, []string) error {
+			_, _, err := opts.namedTheme()
+			return err
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runInteractive(cmd, opts)
 		},

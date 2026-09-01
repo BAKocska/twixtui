@@ -291,6 +291,51 @@ func TestThemeCommands(t *testing.T) {
 	}
 }
 
+// TestUnknownThemeIsRefusedWhereverTheOutputGoes is F-10. The monochrome
+// short-circuit used to run before the named theme was resolved, so a
+// misspelled --theme was refused at a terminal and silently ignored the moment
+// the output was redirected — which is precisely where a script would have to
+// notice it. A test's own stdout is a pipe, so the plain case below is the one
+// that used to pass with the typo intact; --no-color forces the short-circuit
+// whatever the machine running the suite does with its output.
+func TestUnknownThemeIsRefusedWhereverTheOutputGoes(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"--theme", "zzz", "theme", "show"},
+		{"--no-color", "--theme", "zzz", "theme", "show"},
+		// The value is wrong before anything asks what colour to draw in, so a
+		// command that never consults a theme has to refuse it too.
+		{"--theme", "zzz", "profile", "list"},
+	} {
+		out, err := run(t, dir, args...)
+		if err == nil {
+			t.Errorf("%v accepted an unknown theme: %q", args, out)
+			continue
+		}
+		if !strings.Contains(err.Error(), `"zzz"`) || !strings.Contains(err.Error(), "classic") {
+			t.Errorf("%v: the refusal should name the value and the known themes: %v", args, err)
+		}
+	}
+
+	// The command line refuses the value up front, but the resolver has to hold
+	// the same rule on its own: a caller that asks for a theme while colour is
+	// suppressed must still be told the name is wrong, or the ordering defect
+	// returns the moment something asks without going through the flag check.
+	if got, err := (&options{configDir: dir, themeName: "zzz", noColor: true}).theme(); err == nil {
+		t.Errorf("theme() answered %q for an unknown name because the run was monochrome", got.Name)
+	}
+
+	// Refusing the typo must not have become refusing the flag: a known theme
+	// still goes through, and still yields to the redirected output.
+	out, err := run(t, dir, "--theme", "paper", "theme", "show")
+	if err != nil {
+		t.Fatalf("a known --theme was refused: %v", err)
+	}
+	if !strings.Contains(out, "mono") {
+		t.Errorf("colour survived a pipe: %q", out)
+	}
+}
+
 // TestProfileCommands covers the lifecycle and that the loose match refuses an
 // ambiguous query rather than guessing.
 func TestProfileCommands(t *testing.T) {
@@ -327,6 +372,131 @@ func TestProfileCommands(t *testing.T) {
 	}
 	if _, err := run(t, dir, "profile", "delete", "Katalin"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestProfileFlagDoesNotChangeTheStoredChoice is F-2. A --profile flag is an
+// override for one run, and it used to call UseCurrent on the way past, so a
+// single scripted game permanently retargeted the next interactive one — the
+// outcome the contract at the top of current.go says the design rules out.
+func TestProfileFlagDoesNotChangeTheStoredChoice(t *testing.T) {
+	dir := t.TempDir()
+	// Bob is created last, so Bob is the stored choice.
+	for _, name := range []string{"Alice", "Bob"} {
+		if _, err := run(t, dir, "profile", "create", name); err != nil {
+			t.Fatalf("creating %s: %v", name, err)
+		}
+	}
+
+	o := &options{configDir: dir, profile: "Alice"}
+	_, playing, err := o.requireProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if playing != "Alice" {
+		t.Fatalf("--profile did not take effect for this run: playing as %q", playing)
+	}
+
+	out, err := run(t, dir, "profile", "whoami")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out); got != "Bob" {
+		t.Errorf("the stored choice after --profile Alice = %q, want Bob", got)
+	}
+
+	// Having played is a fact about the profile, so it is still recorded as
+	// used; only the machine's choice of who is playing is left alone. Dropping
+	// the one with the other would reorder the list a player picks from.
+	store, err := profile.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, ok := store.Get("Alice")
+	if !ok {
+		t.Fatal("Alice went missing")
+	}
+	bob, ok := store.Get("Bob")
+	if !ok {
+		t.Fatal("Bob went missing")
+	}
+	if !alice.LastUsed.After(bob.LastUsed) {
+		t.Errorf("the profile that played was not marked as used: Alice %v, Bob %v",
+			alice.LastUsed, bob.LastUsed)
+	}
+}
+
+// TestProfileFlagRefusesWhatProfileUseRefuses is F-3. The same string cannot
+// name a profile for one command and not for another: --profile used to absorb
+// every miss the loose search could not rescue by creating a new identity,
+// silently, which is how a typo splits a player's history in two.
+func TestProfileFlagRefusesWhatProfileUseRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		existing []string
+		query    string
+	}{
+		{"no profile matches", []string{"Alice"}, "Alicia"},
+		{"several profiles match", []string{"Alice", "Alicia"}, "Ali"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, name := range tc.existing {
+				if _, err := run(t, dir, "profile", "create", name); err != nil {
+					t.Fatalf("creating %s: %v", name, err)
+				}
+			}
+
+			useOut, useErr := run(t, dir, "profile", "use", tc.query)
+			if useErr == nil {
+				t.Fatalf("profile use %s was accepted, so there is nothing to compare: %q",
+					tc.query, useOut)
+			}
+
+			o := &options{configDir: dir, profile: tc.query}
+			_, _, flagErr := o.requireProfile()
+			if flagErr == nil {
+				t.Fatalf("--profile %s was accepted where profile use refused it", tc.query)
+			}
+			if flagErr.Error() != useErr.Error() {
+				t.Errorf("the two surfaces disagree about %s:\n  profile use: %v\n  --profile:   %v",
+					tc.query, useErr, flagErr)
+			}
+
+			store, err := profile.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p, ok := store.Get(tc.query); ok {
+				t.Errorf("--profile %s created the profile %q", tc.query, p.Name)
+			}
+			if got := len(store.List()); got != len(tc.existing) {
+				t.Errorf("%d profiles exist, want %d", got, len(tc.existing))
+			}
+		})
+	}
+}
+
+// TestProfileFlagCreatesTheFirstProfile keeps the one write the flag may still
+// make. On a machine with no profiles there is no stored choice to retarget and
+// no other name the player could have meant, which is what lets a new player go
+// from install to a game in a single command.
+func TestProfileFlagCreatesTheFirstProfile(t *testing.T) {
+	dir := t.TempDir()
+	o := &options{configDir: dir, profile: "Alice"}
+	_, playing, err := o.requireProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if playing != "Alice" {
+		t.Fatalf("playing as %q, want Alice", playing)
+	}
+	out, err := run(t, dir, "profile", "whoami")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out); got != "Alice" {
+		t.Errorf("the profile the flag created was not adopted: whoami = %q", got)
 	}
 }
 
