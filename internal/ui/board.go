@@ -200,7 +200,8 @@ func (cv *canvas) mergeDiagonal(x, y int, r rune, id styleID) {
 	cv.set(x, y, r, id)
 }
 
-// drawLink rasterises one link.
+// drawLink rasterises one link. A shallow link contributes edge connectivity
+// rather than glyphs, so nothing it draws is visible until resolveLinks runs.
 //
 // A steep link (column ±1, row ±2) is an exact diagonal in screen cells under
 // both scales, so a run of one glyph draws it.
