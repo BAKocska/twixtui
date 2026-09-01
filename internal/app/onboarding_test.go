@@ -881,3 +881,57 @@ func TestTheIntroductionTeachesTheRulesItIsPlayedUnder(t *testing.T) {
 		t.Errorf("linking is automatic under %s, yet the step offers to decline a link", rs.Describe())
 	}
 }
+
+// TestTheLinksStepMarksExactlyTheHolesItNames closes a gap a review proved by
+// mutation: deleting one hole from the marked list passed the whole suite, so the
+// eight holes drawn on the board could drift away from the eight the sentence
+// beside them names. That is the same content-against-board drift as the links
+// step's rule claim, which had already been caught once.
+//
+// The expected set is computed from the engine rather than written out, so this
+// cannot drift either: it is the knight's moves from F6 that land on the board.
+func TestTheLinksStepMarksExactlyTheHolesItNames(t *testing.T) {
+	var step onboardingStep
+	for _, s := range onboardingContent() {
+		if s.id == "links" {
+			step = s
+		}
+	}
+	if step.id == "" {
+		t.Fatal("the introduction has no step about links")
+	}
+
+	from, err := game.ParsePoint("F6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := learn.Rules().Size
+	want := map[game.Point]bool{}
+	for d := game.Dir(0); d < game.NumDirs; d++ {
+		q := from.Add(d)
+		if q.Col >= 0 && q.Row >= 0 && q.Col < n && q.Row < n {
+			want[q] = true
+		}
+	}
+	if len(want) != 8 {
+		t.Fatalf("F6 has %d knight's moves on a %dx%d board; the step's sentence says eight", len(want), n, n)
+	}
+
+	got := map[game.Point]bool{}
+	for _, p := range step.highlight {
+		got[p] = true
+	}
+	for p := range want {
+		if !got[p] {
+			t.Errorf("%v can link to F6 but is not marked", p)
+		}
+		if !strings.Contains(step.text, p.String()) {
+			t.Errorf("%v is a knight's move from F6 but the sentence does not name it", p)
+		}
+	}
+	for p := range got {
+		if !want[p] {
+			t.Errorf("%v is marked but cannot link to F6", p)
+		}
+	}
+}

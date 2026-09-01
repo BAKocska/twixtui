@@ -583,7 +583,7 @@ func (m *onboardingModel) panel(arr ui.Arrangement) onboardingPanel {
 	if m.done {
 		add(m.styles.PanelTitle, "That is the whole of it")
 		blank()
-		add(m.styles.PanelText, "You know enough to start. Everything else — blocking, building two ways at once, the endgame, the swap — is easier to learn from a game you are losing than from a screen.")
+		add(m.styles.PanelText, "You know enough to start. Everything else — setups, building two ways at once, the endgame, the swap — is easier to learn from a game you are losing than from a screen.")
 		blank()
 		add(m.styles.Highlight, onboardingNote)
 		return p

@@ -308,14 +308,34 @@ func TestMenuEveryEntryIsReachable(t *testing.T) {
 		{[]string{"Settings", "Rules"}, mnFormTitle("Which rules should a new game start with?")},
 		{[]string{"Settings", "Board"}, mnFormTitle("How big should a new game's board start?")},
 		{[]string{"Settings", "Hints"}, mnFormTitle("Should games against the computer offer hints?")},
-		{[]string{"Settings", "Profile"}, func(t *testing.T, _ *Menu, cmd tea.Cmd) {
+		{[]string{"Settings", "Profile"}, func(t *testing.T, m *Menu, cmd tea.Cmd) {
 			if cmd == nil {
 				t.Fatal("no command")
 			}
-			done, _ := cmd().(DoneMsg)
-			if _, ok := done.Next.(*Picker); !ok {
-				t.Errorf("handed over to %T, want the profile picker", done.Next)
+			// Opened on top of the menu rather than replacing it, so that both
+			// ways out of the picker come back to the settings list. Replacing
+			// the menu left it with no way back: escape did nothing and nothing
+			// on screen named an exit, while every sibling row escaped.
+			open, ok := cmd().(OpenMsg)
+			if !ok {
+				t.Fatalf("finishing the row produced %T, want the picker opened on top", cmd())
 			}
+			picker, ok := open.Screen.(*Picker)
+			if !ok {
+				t.Fatalf("opened %T, want the profile picker", open.Screen)
+			}
+			// Cancelling must finish the picker rather than do nothing, and the
+			// menu must then be showing the list the row was chosen from.
+			if picker.cancelled == nil {
+				t.Fatal("the picker has no way out of it")
+			}
+			if picker.cancelled() == nil {
+				t.Error("cancelling the picker produced no command, so escape does nothing")
+			}
+			// And once the picker is gone the menu is back on the settings list
+			// it was chosen from, rebuilt so the row names the current profile.
+			m.revealed()
+			mnFormTitle("Settings")(t, m, nil)
 		}},
 		{[]string{"Quit"}, func(t *testing.T, _ *Menu, cmd tea.Cmd) {
 			if cmd == nil {

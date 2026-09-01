@@ -30,8 +30,11 @@ import (
 // because a screen cannot push another screen: the shell's DoneMsg replaces or
 // pops, so a wizard built out of screens could not walk backwards.
 type Menu struct {
-	deps   Deps
-	player string
+	// reopenOnReveal rebuilds a panel when a screen opened from it finishes, so
+	// that a row two levels down returns to its own list rather than to the front.
+	reopenOnReveal func(*Menu)
+	deps           Deps
+	player         string
 
 	nav navKeys
 	// listUp and listDown are the letters the board moves by. Every list on
@@ -765,8 +768,19 @@ func (m *Menu) openHints() tea.Cmd {
 	return nil
 }
 
+// switchProfile opens the profile picker.
+//
+// It is opened on top of the menu rather than replacing it, and both ways out of
+// it come back to the settings list it was reached from. Replacing the menu left
+// the picker with no way back at all: its only exits were choosing a profile or
+// ending the program, so escape did nothing and nothing on screen named a way
+// out, while every other settings row escaped back to the list.
 func (m *Menu) switchProfile() tea.Cmd {
-	return Replace(NewPicker(m.deps, "Who is playing?"))
+	m.reopenOnReveal = func(m *Menu) { _ = m.openSettings() }
+	picker := NewPicker(m.deps, "Who is playing?").Cancelled(func() tea.Cmd {
+		return Done(DoneMsg{})
+	})
+	return Open(picker)
 }
 
 func (m *Menu) quit() tea.Cmd { return Quit() }
@@ -784,6 +798,15 @@ func (m *Menu) quit() tea.Cmd { return Quit() }
 func (m *Menu) revealed() {
 	m.form = nil
 	m.message = ""
+	// A screen opened from a settings row returns to that row rather than to the
+	// front, because a player who went two levels down to change one thing has
+	// not asked to be put back at the top. The panel is rebuilt rather than
+	// restored, which is the point of dropping it: choosing a profile is exactly
+	// what changes the row that names the current one.
+	if reopen := m.reopenOnReveal; reopen != nil {
+		m.reopenOnReveal = nil
+		reopen(m)
+	}
 }
 
 // openSaved lists the games still waiting for a move.

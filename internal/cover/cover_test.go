@@ -90,7 +90,12 @@ func TestMonoCarriesNoEscapes(t *testing.T) {
 		t.Helper()
 		for i, l := range lines {
 			for _, r := range l {
-				if r == 0x1b || (r < 0x20 && r != '\t') || r == 0x7f {
+				// A tab is not exempt. It is a control byte a terminal expands
+				// by a width the caller cannot predict, so a line carrying one
+				// can exceed the box this package promises to stay inside, and
+				// the promise is measured in cells. Exempting it left an
+				// artwork free to emit tabs and still pass.
+				if r == 0x1b || r < 0x20 || r == 0x7f {
 					t.Fatalf("%s: monochrome line %d holds control character %#x: %q", what, i, r, l)
 				}
 			}
