@@ -241,16 +241,49 @@ func TestProgramResizeEndToEnd(t *testing.T) {
 
 	// One space between holes is the compact scheme and cannot occur in the
 	// other, so this is the scale and not merely the board.
-	waitForFrame(t, tm, wait, "· · ·")
+	waitForFrame(t, tm, wait, compactSpacing)
 
 	tm.Send(tea.WindowSizeMsg{Width: 200, Height: 60})
 
 	// Three spaces is the detail scheme, which only the larger size can produce,
 	// so this fails if the resize is dropped rather than merely being slow.
-	waitForFrame(t, tm, wait, "·   ·   ·")
+	waitForFrame(t, tm, wait, detailSpacing)
 
 	tm.Send(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
 	tm.WaitFinished(t, teatest.WithFinalTimeout(wait))
+}
+
+// The gap between two holes in a board row. Each belongs to one drawing scale
+// and cannot appear in the other, which TestTheSpacingTellsTheScalesApart pins,
+// so finding one in a frame identifies the scale that drew it.
+const (
+	compactSpacing = "· ·"
+	detailSpacing  = "·   ·"
+)
+
+// TestTheSpacingTellsTheScalesApart pins what the resize test leans on. If a
+// change to the glyphs or the steps ever made one spacing appear under the other
+// scale, that test would go quiet rather than fail, so the property is asserted
+// here instead of assumed there.
+func TestTheSpacingTellsTheScalesApart(t *testing.T) {
+	for _, n := range []int{game.MinSize, 12, 24, game.MaxSize} {
+		for _, sc := range []Scale{Compact, Detail} {
+			bv := &BoardView{Scale: sc, ShowCursor: true}
+			w, h := sc.BlockSize(n)
+			st := PlainStyles()
+			frame := strings.Join(bv.Render(crowdedBoard(t, n, int64(n)), &st, w+40, h+6), "\n")
+			want, other := compactSpacing, detailSpacing
+			if sc == Detail {
+				want, other = detailSpacing, compactSpacing
+			}
+			if !strings.Contains(frame, want) {
+				t.Errorf("n=%d %s: frame does not contain its own spacing %q", n, sc, want)
+			}
+			if strings.Contains(frame, other) {
+				t.Errorf("n=%d %s: frame contains the other scale's spacing %q", n, sc, other)
+			}
+		}
+	}
 }
 
 // waitForFrame waits until the program's output carries want.
@@ -264,8 +297,11 @@ func TestProgramResizeEndToEnd(t *testing.T) {
 // renderer's choice of full or partial repaint rather than the program.
 //
 // A board row changes completely when the scale changes, so it is repainted
-// whole, and the spacing between holes belongs to one scale or the other: one
-// space cannot appear in a detail frame nor three in a compact one.
+// whole, and the spacing between holes belongs to one scale or the other. Two
+// adjacent holes are enough, so the condition survives a repaint that starts
+// part-way along the row. Measured on the bytes the second wait actually
+// receives, which are only those emitted after the first wait consumed the
+// stream: teatest gives each wait its own buffer.
 func waitForFrame(t *testing.T, tm *teatest.TestModel, wait time.Duration, want string) {
 	t.Helper()
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
