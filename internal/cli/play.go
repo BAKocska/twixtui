@@ -187,7 +187,7 @@ in the terms the search actually measured.`,
 				Hints:   f.hints,
 				HintFor: opponent,
 			}
-			return runScreens(cmd, deps, func() (app.Screen, error) {
+			return runScreens(cmd, deps, func(deps app.Deps) (app.Screen, error) {
 				return app.NewGameScreen(deps, cfg)
 			})
 		},
@@ -253,7 +253,7 @@ whose turn it is, and each player's own border rows are marked.`,
 					side.Opponent(): {Profile: other, Label: other},
 				},
 			}
-			return runScreens(cmd, deps, func() (app.Screen, error) {
+			return runScreens(cmd, deps, func(deps app.Deps) (app.Screen, error) {
 				return app.NewGameScreen(deps, cfg)
 			})
 		},
@@ -396,7 +396,7 @@ func runRemoteGame(cmd *cobra.Command, deps app.Deps, player string, session net
 		},
 		Session: session,
 	}
-	return runScreens(cmd, deps, func() (app.Screen, error) {
+	return runScreens(cmd, deps, func(deps app.Deps) (app.Screen, error) {
 		return app.NewGameScreen(deps, cfg)
 	})
 }
@@ -496,16 +496,31 @@ func (o *options) deps() (app.Deps, string, error) {
 }
 
 // runScreens runs the interactive interface with the given first screen.
-func runScreens(cmd *cobra.Command, deps app.Deps, first func() (app.Screen, error)) error {
-	screen, err := first()
+//
+// Notes left by the screens are printed after the interface has closed rather
+// than while it is open: the alternate screen takes its own output with it when
+// it goes, so a line drawn on the way out is never seen. That is where a player
+// is told their unfinished game was saved.
+func runScreens(cmd *cobra.Command, deps app.Deps, first func(app.Deps) (app.Screen, error)) error {
+	var notes []string
+	deps.Note = func(line string) { notes = append(notes, line) }
+
+	// The builder is given this function's own copy of the dependencies rather
+	// than closing over the caller's: the note channel is installed here, and a
+	// screen built from the caller's copy would have nowhere to leave a note.
+	screen, err := first(deps)
 	if err != nil {
 		return err
 	}
 	shell := app.NewShell(deps, screen)
 	program := tea.NewProgram(shell, tea.WithContext(cmd.Context()))
-	_, err = program.Run()
-	if err != nil && !errors.Is(err, context.Canceled) {
-		return err
+	_, runErr := program.Run()
+
+	for _, line := range notes {
+		fmt.Fprintln(cmd.OutOrStdout(), line)
+	}
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		return runErr
 	}
 	return nil
 }

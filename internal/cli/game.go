@@ -171,7 +171,7 @@ keys used to play it.`,
 			if err != nil {
 				return err
 			}
-			return runScreens(cmd, deps, func() (app.Screen, error) {
+			return runScreens(cmd, deps, func(deps app.Deps) (app.Screen, error) {
 				return app.NewReplayScreen(deps, sv)
 			})
 		},
@@ -360,7 +360,7 @@ Given a lesson name, start there; otherwise choose from the list.`,
 			if len(args) == 1 {
 				lesson = args[0]
 			}
-			return runScreens(cmd, deps, func() (app.Screen, error) {
+			return runScreens(cmd, deps, func(deps app.Deps) (app.Screen, error) {
 				return app.NewTutorialScreen(deps, lesson)
 			})
 		},

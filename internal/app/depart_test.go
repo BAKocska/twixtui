@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -120,5 +121,138 @@ func TestGameScreenImplementsDeparting(t *testing.T) {
 	}
 	if _, ok := screen.(Departing); !ok {
 		t.Error("the game screen no longer implements Departing, so quitting will discard an unfinished game")
+	}
+}
+
+// TestLeavingAnUnfinishedGameSaysSo covers the other half of the quit problem.
+// The game was saved but nothing told the player, and the interface cannot tell
+// them itself: anything drawn on the way out goes with the alternate screen. So
+// the screen leaves a note for the command line to print afterwards.
+func TestLeavingAnUnfinishedGameSaysSo(t *testing.T) {
+	var notes []string
+	d := gsTestDeps(t)
+	d.Note = func(line string) { notes = append(notes, line) }
+
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := NewShell(d, screen)
+	shell.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+
+	// Play a move so there is something worth saving.
+	shell.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	shell.Update(tea.KeyPressMsg{Code: 'e', Text: "enter"})
+
+	shell.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+
+	if len(notes) == 0 {
+		t.Fatal("leaving an unfinished game left no note, so the player is not told it was saved")
+	}
+	joined := strings.Join(notes, "\n")
+	if !strings.Contains(joined, "saved") {
+		t.Errorf("the note does not say the game was saved: %q", joined)
+	}
+	// It must name the game, or the player cannot find it again.
+	saved := d.Games.List()
+	if len(saved) == 0 {
+		t.Fatal("no game was actually stored")
+	}
+	if !strings.Contains(joined, saved[0].ID) {
+		t.Errorf("the note does not name the saved game %s: %q", saved[0].ID, joined)
+	}
+}
+
+// TestAFinishedGameLeavesNoSaveNote checks the note is about the game being
+// picked up again, so a game that has ended does not offer to resume itself.
+func TestAFinishedGameLeavesNoSaveNote(t *testing.T) {
+	var notes []string
+	d := gsTestDeps(t)
+	d.Note = func(line string) { notes = append(notes, line) }
+
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gs, ok := screen.(*gameScreen)
+	if !ok {
+		t.Fatalf("unexpected screen type %T", screen)
+	}
+	if err := gs.g.Resign(gs.g.Turn()); err != nil {
+		t.Fatal(err)
+	}
+	gs.Depart()
+
+	for _, line := range notes {
+		if strings.Contains(line, "pick it up") || strings.Contains(line, "saved as") {
+			t.Errorf("a finished game offered to be resumed: %q", line)
+		}
+	}
+}
+
+// TestLeavingAGameOpenedFromTheMenuComesBack is the navigation half of the same
+// complaint the save note answers. A menu that replaced itself with the game left
+// nowhere to go back to, so leaving the game ended the whole program: no rematch,
+// no other opponent, no leaderboard, quit and start again.
+func TestLeavingAGameOpenedFromTheMenuComesBack(t *testing.T) {
+	d := shellTestDeps(t)
+	if _, err := d.Profiles.Create("ada"); err != nil {
+		t.Fatal(err)
+	}
+	menu := NewMenu(d, "ada")
+	shell := NewShell(d, menu)
+	shell.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The menu opens a game the way it does in the product.
+	if cmd := shell.Push(screen); cmd != nil {
+		cmd()
+	}
+	if got := len(shell.stack); got != 2 {
+		t.Fatalf("the stack is %d deep after opening a game from the menu, want 2", got)
+	}
+
+	// Leaving the game must come back to the menu rather than end the program.
+	_, cmd := shell.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			shell.Update(msg)
+		}
+	}
+	if got := len(shell.stack); got != 1 {
+		t.Fatalf("the stack is %d deep after leaving the game, want 1", got)
+	}
+	if _, ok := shell.top().(*Menu); !ok {
+		t.Errorf("leaving the game landed on %T, want the menu", shell.top())
+	}
+}
+
+// TestLeavingTheOnlyScreenEndsTheProgram is the other side of it: a game started
+// straight from the command line has nothing behind it, so leaving it should end
+// the run, which is what makes the save note the only thing that tells the player
+// where their game went.
+func TestLeavingTheOnlyScreenEndsTheProgram(t *testing.T) {
+	d := gsTestDeps(t)
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := NewShell(d, screen)
+	shell.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+
+	_, cmd := shell.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if cmd == nil {
+		t.Fatal("leaving the only screen produced no command")
+	}
+	msg := cmd()
+	done, ok := msg.(DoneMsg)
+	if !ok {
+		t.Fatalf("leaving the only screen produced %T, want a DoneMsg", msg)
+	}
+	if _, quit := shell.Update(done); quit == nil {
+		t.Error("leaving the only screen did not end the program")
 	}
 }

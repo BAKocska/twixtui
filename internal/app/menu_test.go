@@ -84,16 +84,23 @@ func mnStartedConfig(t *testing.T, cmd tea.Cmd) GameConfig {
 		t.Fatal("finishing the form produced no command")
 	}
 	msg := cmd()
-	done, ok := msg.(DoneMsg)
-	if !ok {
-		t.Fatalf("finishing the form produced %T, want a DoneMsg", msg)
+	// The menu opens a game on top of itself rather than being replaced by it,
+	// so that leaving the game comes back to the menu.
+	var screen Screen
+	switch m := msg.(type) {
+	case OpenMsg:
+		screen = m.Screen
+	case DoneMsg:
+		if m.Err != nil {
+			t.Fatalf("starting the game failed: %v", m.Err)
+		}
+		t.Fatal("the menu replaced itself with the game, so leaving the game would end the program")
+	default:
+		t.Fatalf("finishing the form produced %T, want an OpenMsg", msg)
 	}
-	if done.Err != nil {
-		t.Fatalf("starting the game failed: %v", done.Err)
-	}
-	gs, ok := done.Next.(*gameScreen)
+	gs, ok := screen.(*gameScreen)
 	if !ok {
-		t.Fatalf("the menu handed over to %T, want the game screen", done.Next)
+		t.Fatalf("the menu handed over to %T, want the game screen", screen)
 	}
 	return gs.cfg
 }
@@ -217,9 +224,11 @@ func TestMenuEveryEntryIsReachable(t *testing.T) {
 			if cmd == nil {
 				t.Fatal("no command")
 			}
-			done, ok := cmd().(DoneMsg)
-			if !ok || done.Next == nil {
-				t.Fatalf("produced %T without a next screen", cmd())
+			// Opened on top of the menu, so leaving the tutorial comes back to
+			// it rather than ending the program.
+			open, ok := cmd().(OpenMsg)
+			if !ok || open.Screen == nil {
+				t.Fatalf("produced %T without a screen to open", cmd())
 			}
 		}},
 		{"Leaderboard", func(t *testing.T, m *Menu, _ tea.Cmd) {

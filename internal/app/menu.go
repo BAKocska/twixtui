@@ -82,7 +82,7 @@ func NewMenu(d Deps, player string) *Menu {
 	m.moveHint = keyLabel(m.nav.up...) + "/" + keyLabel(m.nav.down...)
 	m.quitHint = keyLabel(globalQuitKeys(km)...) + " quit"
 	m.list = &chooser{
-		title: "twixt — " + player,
+		title: "twixtui — " + player,
 		opts:  menuEntries(),
 		// There is nothing above the main list to back out to, and quitting is
 		// an entry of its own so that it cannot happen by pressing escape one
@@ -266,7 +266,7 @@ func (m *Menu) openTutorial() tea.Cmd {
 	if err != nil {
 		return Fail(err)
 	}
-	return Replace(sc)
+	return Open(sc)
 }
 
 func (m *Menu) switchProfile() tea.Cmd {
@@ -1015,7 +1015,7 @@ func (m *Menu) start(cfg GameConfig) tea.Cmd {
 		m.message = err.Error()
 		return nil
 	}
-	return Replace(sc)
+	return Open(sc)
 }
 
 // forms.

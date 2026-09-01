@@ -19,7 +19,7 @@ func runInteractive(cmd *cobra.Command, opts *options) error {
 	if err != nil {
 		return err
 	}
-	return runScreens(cmd, deps, func() (app.Screen, error) {
+	return runScreens(cmd, deps, func(deps app.Deps) (app.Screen, error) {
 		if player == "" {
 			// Nobody chosen yet: the picker doubles as the first-run path,
 			// where it takes a name rather than showing an empty list.

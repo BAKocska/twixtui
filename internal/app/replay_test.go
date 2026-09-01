@@ -194,7 +194,10 @@ func TestReplayFooterKeepsTheEssentialsWhenNarrowed(t *testing.T) {
 		if got := ansi.StringWidth(status); got > w {
 			t.Errorf("the footer is %d cells wide in a %d column terminal: %q", got, w, status)
 		}
-		if !strings.HasPrefix(status, "move ") {
+		// The footer counts record entries, not moves: a draw offer is an entry
+		// that changes nothing on the board, and calling those moves disagreed
+		// with every other surface's move count.
+		if !strings.HasPrefix(status, "step ") {
 			t.Errorf("at %dx%d the footer lost where in the record the player is: %q", w, h, status)
 		}
 	}

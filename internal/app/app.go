@@ -4,6 +4,7 @@
 package app
 
 import (
+	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -35,6 +36,21 @@ type Deps struct {
 	// Now is the clock, injected so that a test can pin the durations that end
 	// up on the leaderboard.
 	Now func() time.Time
+
+	// Note lets a screen leave a line for the player to read after the
+	// interface has closed. Anything printed while the alternate screen is up
+	// disappears with it, so a screen that saved a game on the way out has
+	// nowhere to say so: the player was left not knowing whether their game
+	// survived. Nil means nobody is listening.
+	Note func(string)
+}
+
+// note leaves a line for the player to read after the interface closes.
+func (d Deps) note(format string, args ...any) {
+	if d.Note == nil {
+		return
+	}
+	d.Note(fmt.Sprintf(format, args...))
 }
 
 // Clock returns the time, defaulting to the real one.
@@ -75,8 +91,25 @@ func Back() tea.Cmd { return Done(DoneMsg{}) }
 // Fail leaves the current screen and reports why.
 func Fail(err error) tea.Cmd { return Done(DoneMsg{Err: err}) }
 
-// Replace swaps the current screen for another.
+// Replace swaps the current screen for another. The screen asking is finished
+// and will not be returned to.
 func Replace(s Screen) tea.Cmd { return Done(DoneMsg{Next: s}) }
+
+// OpenMsg asks the shell to show another screen on top of the one that sent it,
+// which stays underneath and is returned to when the new one is finished.
+type OpenMsg struct {
+	Screen Screen
+}
+
+// Open shows another screen without giving up this one.
+//
+// This is the difference between a menu that launches a game and a menu that is
+// consumed by launching one. With Replace, leaving the game emptied the stack and
+// ended the program, so there was no way back to the menu the player had started
+// from.
+func Open(s Screen) tea.Cmd {
+	return func() tea.Msg { return OpenMsg{Screen: s} }
+}
 
 // Quit ends the program from anywhere.
 func Quit() tea.Cmd { return Done(DoneMsg{Quit: true}) }

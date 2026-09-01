@@ -1235,6 +1235,14 @@ func (s *gameScreen) depart() error {
 	var err error
 	if !s.g.Result().Over() {
 		err = s.save(false)
+		if err == nil {
+			// Say so where the player will see it. The interface is about to
+			// close and take its own output with it, so a line drawn here would
+			// vanish; this one is printed afterwards. Without it the player is
+			// left not knowing whether the game they were part way through
+			// survived being closed.
+			s.deps.note("game saved as %s — %s", s.storeID, s.resumeHint())
+		}
 	}
 	if s.session != nil {
 		s.session.Close()
@@ -1243,6 +1251,16 @@ func (s *gameScreen) depart() error {
 		return fmt.Errorf("saving the game: %w", err)
 	}
 	return nil
+}
+
+// resumeHint says how to pick this game up again, which differs by how it is
+// being played: a correspondence game is opened by name from the command line,
+// and everything else from the menu.
+func (s *gameScreen) resumeHint() string {
+	if s.cfg.Kind == gamestore.Correspondence {
+		return fmt.Sprintf("open it again with: twixtui play correspondence --game %s", s.storeID)
+	}
+	return "pick it up from Continue a saved game"
 }
 
 // Depart satisfies Departing, so that the shell answering the global quit key
@@ -1549,7 +1567,7 @@ func (s *gameScreen) linkModeLines(width int) []string {
 	if s.g.Staged().PegPlaced {
 		out = append(out, gsWrap("this turn's peg is down: digits add a link or withdraw one", width)...)
 	} else {
-		out = append(out, gsWrap("removals come first: digits take links off, new ones after the peg", width)...)
+		out = append(out, gsWrap("before you place a peg you can only take links off: a digit removes that link. Adding one comes after the peg is down.", width)...)
 	}
 	digits := s.linkDigits()
 	if len(digits) == 0 {
@@ -1593,8 +1611,13 @@ func (s *gameScreen) swapOffered() bool {
 func (s *gameScreen) swapText() string {
 	text := fmt.Sprintf("swap on offer: %s takes the opening peg %s for yourself instead of answering it",
 		s.gameKeyLabel(gaSwap), s.openingPeg())
+	// The peg reflects across the board's diagonal, which for a hole on that
+	// diagonal is where it already is. Saying "mirrored to M13" about a peg on
+	// M13 reads like a fault, so the mirror is only mentioned when it moves.
 	if p, ok := s.openingPoint(); ok {
-		text += fmt.Sprintf(", mirrored to %s so it is legal for you", game.Point{Col: p.Row, Row: p.Col})
+		if mirrored := (game.Point{Col: p.Row, Row: p.Col}); mirrored != p {
+			text += fmt.Sprintf(", which moves to %s so it is legal for you", mirrored)
+		}
 	}
 	return text + ". This turn only."
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/BAKocska/twixtui/internal/game"
 	"github.com/BAKocska/twixtui/internal/gamestore"
+	"github.com/BAKocska/twixtui/internal/leaderboard"
 	"github.com/BAKocska/twixtui/internal/ui"
 )
 
@@ -204,7 +205,10 @@ func (s *ReplayScreen) View() tea.View {
 // keys do, dropped from the end when the terminal is too narrow for all of it.
 func (s *ReplayScreen) status(width int) string {
 	parts := make([]string, 0, len(s.hints)+1)
-	parts = append(parts, fmt.Sprintf("move %d of %d", s.at, len(s.positions)-1))
+	// These are record entries rather than moves: a draw offer is an entry that
+	// changes nothing on the board, so counting them as moves disagreed with
+	// every other surface's move count.
+	parts = append(parts, fmt.Sprintf("step %d of %d", s.at, len(s.positions)-1))
 	return hintLine(width, append(parts, s.hints...)...)
 }
 
@@ -216,10 +220,11 @@ func (s *ReplayScreen) panel(width int) []string {
 	g := s.current()
 	lines := []string{
 		s.saved.ID,
-		s.saved.Player + " vs " + s.saved.Opponent,
+		s.saved.Player + " vs " + leaderboard.DisplayName(s.saved.Opponent),
 		g.Rules().Describe(),
 		"",
-		fmt.Sprintf("shown: move %d of %d", s.at, len(s.positions)-1),
+		fmt.Sprintf("step %d of %d", s.at, len(s.positions)-1),
+		fmt.Sprintf("moves played: %d", s.current().Ply()),
 	}
 	if s.at > 0 {
 		lines = append(lines, "last: "+s.labels[s.at-1])

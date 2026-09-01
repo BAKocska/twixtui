@@ -272,7 +272,7 @@ func openCorrespondenceGame(cmd *cobra.Command, deps app.Deps, saved gamestore.S
 		Resume:  &saved,
 		StoreID: saved.ID,
 	}
-	return runScreens(cmd, deps, func() (app.Screen, error) {
+	return runScreens(cmd, deps, func(deps app.Deps) (app.Screen, error) {
 		return app.NewGameScreen(deps, cfg)
 	})
 }

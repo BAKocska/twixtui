@@ -66,6 +66,12 @@ func (s *Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case DoneMsg:
 		return s, s.leave(m)
 
+	case OpenMsg:
+		if m.Screen == nil {
+			return s, nil
+		}
+		return s, s.Push(m.Screen)
+
 	case ThemeChangedMsg:
 		// The shell draws its own banner, so it needs the new styles too. The
 		// message then goes on to the screen, which keeps its own copy.
