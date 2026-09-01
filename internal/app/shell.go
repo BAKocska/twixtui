@@ -33,6 +33,11 @@ type Shell struct {
 	// to read is indistinguishable from a crash.
 	banner error
 
+	// notice is a line a screen left on its way out, drawn over the screen the
+	// player lands on. Unlike the banner it asks for nothing, so the next key
+	// clears it and still reaches the screen underneath.
+	notice string
+
 	// quitKeys are the keys the shell answers itself instead of passing down,
 	// taken from the keymap rather than written out a second time here.
 	quitKeys []string
@@ -97,6 +102,10 @@ func (s *Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return s, nil
 		}
+		// A notice states something that has already happened, so it is not
+		// asked about: the next key clears it and goes on to do whatever it
+		// would have done.
+		s.notice = ""
 	}
 
 	top := s.top()
@@ -118,8 +127,11 @@ func (s *Shell) View() tea.View {
 	} else {
 		content = textFrame(st, s.width, s.height, nil, "")
 	}
-	if s.banner != nil {
+	switch {
+	case s.banner != nil:
 		content = overlayBanner(st, content, s.banner, s.width, s.height)
+	case s.notice != "":
+		content = overlayNotice(st, content, s.notice, s.width, s.height)
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -132,8 +144,21 @@ func (s *Shell) Push(sc Screen) tea.Cmd {
 	if sc == nil {
 		return nil
 	}
+	if n, ok := sc.(nesting); ok {
+		n.nested(len(s.stack) > 0)
+	}
 	s.stack = append(s.stack, sc)
 	return tea.Batch(sc.Init(), s.sizeTop())
+}
+
+// nesting is implemented by a screen that describes the way out of itself. The
+// quit key comes back to the screen underneath when there is one and ends the
+// program when there is not — one key, two outcomes — and only the shell knows
+// which of them the player is going to get, so it says so when it pushes the
+// screen. A screen the shell was built around is the whole program and is never
+// told anything, which is the right default.
+type nesting interface {
+	nested(hasReturn bool)
 }
 
 // leave acts on a screen that has finished.
@@ -146,20 +171,35 @@ func (s *Shell) leave(m DoneMsg) tea.Cmd {
 	if m.Err != nil {
 		s.banner = m.Err
 	}
+	// A screen may have left the player a line, such as which game it has just
+	// saved. Where that line belongs is the shell's to decide, because it turns
+	// on what the player is left looking at: a screen underneath can carry it
+	// at the moment it is true, and only the departure that ends the program
+	// has to hand it to the command line, the interface being about to take its
+	// own output with it.
+	note := s.departNote()
 	if len(s.stack) > 0 {
 		s.stack = s.stack[:len(s.stack)-1]
 	}
 	if m.Next != nil {
+		s.notice = note
 		return s.Push(m.Next)
 	}
 	if len(s.stack) == 0 {
+		// Nothing left to go back to, so the program ends here or as soon as
+		// the banner is acknowledged. Either way the line has to outlive the
+		// interface.
+		if note != "" {
+			s.deps.note("%s", note)
+		}
 		if s.banner != nil {
-			// Nothing left to go back to, but the failure has not been read
-			// yet. Dismissing the banner ends the program.
+			// The failure has not been read yet. Dismissing the banner ends
+			// the program.
 			return nil
 		}
 		return s.quit()
 	}
+	s.notice = note
 	// A buried screen received no size messages while it was covered, so it is
 	// re-sized on the way back rather than redrawing at a stale size. It may
 	// also be showing something it read from disk before the screen above it
@@ -168,6 +208,17 @@ func (s *Shell) leave(m DoneMsg) tea.Cmd {
 		r.revealed()
 	}
 	return s.sizeTop()
+}
+
+// departNote takes the line the screen that has just finished left behind, if
+// it left one. It is taken rather than read, so that a screen departing twice
+// cannot have its note shown twice.
+func (s *Shell) departNote() string {
+	n, ok := s.top().(Noting)
+	if !ok {
+		return ""
+	}
+	return n.DepartNote()
 }
 
 // revealed is implemented by a screen holding state that can go stale while
@@ -229,6 +280,21 @@ type Departing interface {
 	// Depart is called once, on the way out, before the program ends. It must
 	// not block for long and must not expect to draw again.
 	Depart()
+}
+
+// Noting is implemented by a screen that has a line for the player on its way
+// out, such as which game it has just saved and how to open it again.
+//
+// The screen does not print the line itself because it cannot know where the
+// player will read it. A departure that ends the program has to leave it for
+// the command line, since the interface takes its own output with it; a
+// departure that goes back to the menu has a screen to say it on, and saying it
+// there, at the time, is the whole point of saying it. The shell is what knows
+// the difference, so it collects the line and places it.
+type Noting interface {
+	// DepartNote returns the line and forgets it, so that one departure is
+	// announced exactly once.
+	DepartNote() string
 }
 
 // quit lets every screen on the stack finish, innermost first, and then ends the
@@ -365,9 +431,24 @@ func overlayBanner(st *ui.Styles, frame string, err error, width, height int) st
 	if len(msg) > height-1 {
 		msg = msg[:height-1]
 	}
-	msg = append(msg, dismiss)
-	msg = clampLines(msg, height)
+	return overlayText(st, frame, append(msg, dismiss), width, height)
+}
 
+// overlayNotice draws a line the player is meant to read over the top rows of
+// the screen they have just landed on. It carries no dismissal hint because it
+// asks for nothing: it reports something that has already happened, and the
+// next key clears it as a side effect of whatever that key was for.
+func overlayNotice(st *ui.Styles, frame, note string, width, height int) string {
+	if width < 1 || height < 1 || note == "" {
+		return frame
+	}
+	return overlayText(st, frame, wrapText(note, width), width, height)
+}
+
+// overlayText writes msg over the first rows of the frame, keeping the frame's
+// size: an overlay that grew it would break the fitting invariant.
+func overlayText(st *ui.Styles, frame string, msg []string, width, height int) string {
+	msg = clampLines(msg, height)
 	lines := strings.Split(frame, "\n")
 	for i, m := range msg {
 		styled := paint(st, &st.Message, ansi.Truncate(m, width, ""))

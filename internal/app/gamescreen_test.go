@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -681,6 +682,75 @@ func TestResumeContinuesAnUnfinishedGame(t *testing.T) {
 	}
 }
 
+// TestTheOpponentBorderRefusalNamesTheKindOfLine keeps the first refusal a
+// newcomer meets true to the board. Vertical joins the top and bottom rows, so
+// the borders it may not enter are horizontal's left and right columns; calling
+// those a row sends the player looking along the wrong axis. The engine's
+// sentinel is worded for rows, which is where the wrong word came from.
+func TestTheOpponentBorderRefusalNamesTheKindOfLine(t *testing.T) {
+	h := newGSHarness(t, gsTestDeps(t), gsHotseat(6), 80, 24)
+
+	// Vertical, refused in column A.
+	h.goTo(game.Point{Col: 0, Row: 2})
+	h.press("space")
+	if h.s.g.Staged().PegPlaced {
+		t.Fatal("a peg went into the opponent's border")
+	}
+	if !strings.Contains(h.s.message, "column") || strings.Contains(h.s.message, "row") {
+		t.Errorf("vertical refused in column A reads %q, which does not name a column", h.s.message)
+	}
+
+	// Horizontal, refused in the top row, where the same sentence is about a row.
+	h.playTurn(game.Point{Col: 2, Row: 2})
+	h.ready()
+	h.goTo(game.Point{Col: 2, Row: 0})
+	h.press("space")
+	if h.s.g.Staged().PegPlaced {
+		t.Fatal("a peg went into the opponent's border")
+	}
+	if !strings.Contains(h.s.message, "row") || strings.Contains(h.s.message, "column") {
+		t.Errorf("horizontal refused in row 1 reads %q, which does not name a row", h.s.message)
+	}
+}
+
+// TestTheResultCountsMovesInWordsThatMatch covers a game that ends on the first
+// ply, which read "after 1 moves". The panel wraps to its own width, so the
+// longer sentence is read from the notice the screen renders rather than from
+// the frame; the short one is checked on screen as well.
+func TestTheResultCountsMovesInWordsThatMatch(t *testing.T) {
+	t.Run("one move", func(t *testing.T) {
+		h := newGSHarness(t, gsTestDeps(t), gsHotseat(6), 80, 24)
+		h.playTurn(game.Point{Col: 1, Row: 0})
+		h.ready()
+		h.press("r")
+		h.press("y")
+		if !h.s.g.Result().Over() {
+			t.Fatalf("the resignation did not end the game: %q", h.s.message)
+		}
+		if got := h.s.g.Ply(); got != 1 {
+			t.Fatalf("the game ended after %d plies, want 1", got)
+		}
+		if !strings.Contains(h.s.notice, "after 1 move") || strings.Contains(h.s.notice, "after 1 moves") {
+			t.Errorf("the result reads %q, which counts one move in the plural", h.s.notice)
+		}
+		h.mustContain("result", "after 1 move")
+	})
+
+	t.Run("several moves", func(t *testing.T) {
+		h := newGSHarness(t, gsTestDeps(t), gsHotseat(6), 80, 24)
+		for _, p := range gsWinScript {
+			h.playTurn(p)
+		}
+		if !h.s.g.Result().Over() {
+			t.Fatalf("the script did not finish the game: %q", h.s.message)
+		}
+		want := fmt.Sprintf("after %d moves", h.s.g.Ply())
+		if !strings.Contains(h.s.notice, want) {
+			t.Errorf("the result reads %q, want it to end %q", h.s.notice, want)
+		}
+	})
+}
+
 // --- link editing -----------------------------------------------------------
 
 // gsLinkOpening leaves vertical with pegs B1 and C3 linked, plus C1 and B3
@@ -780,6 +850,96 @@ func TestRefusedCrossingNamesTheBlockingLink(t *testing.T) {
 		}
 	}
 	h.mustContain("refusal on screen", blocker.String())
+}
+
+// TestLinkModeDoesNotOfferALinkThatAlwaysCrosses holds the affordance to what
+// the engine will actually do. The overlay used to label every unlinked knight
+// neighbour "add", including one whose link crosses a link already on the
+// board, so the panel offered an action the digit then refused. The same
+// position with the blocker taken off is the control: there the offer is real.
+func TestLinkModeDoesNotOfferALinkThatAlwaysCrosses(t *testing.T) {
+	h := gsLinkPosition(t)
+	from := game.Point{Col: 1, Row: 2} // B3
+	target := game.Point{Col: 2, Row: 0}
+	blocked, _ := game.NewLink(from, target)                                           // B3:C1
+	blocker, _ := game.NewLink(game.Point{Col: 1, Row: 0}, game.Point{Col: 2, Row: 2}) // B1:C3
+
+	// New links come after this turn's peg, so one goes down first. E5 is out of
+	// knight reach of every peg already on the board, so it changes nothing.
+	h.goTo(game.Point{Col: 4, Row: 4})
+	h.press("space")
+	if !h.s.g.Staged().PegPlaced {
+		t.Fatalf("the peg was not staged: %q", h.s.message)
+	}
+	h.goTo(from)
+	h.press("x")
+	if _, ok := h.s.linkDigits()[target]; !ok {
+		t.Fatalf("no digit sits on %v, so this is not the position the finding is about", target)
+	}
+	if got := h.s.linkVerb(target); got == "add" {
+		t.Errorf("the overlay offers to add %v, which crosses %v and is always refused", blocked, blocker)
+	}
+	// It really is always refused, so the offer would have been an empty one.
+	h.press("1")
+	if h.s.g.HasLink(blocked) {
+		t.Fatalf("%v was made, so the position does not block it after all", blocked)
+	}
+	if !strings.Contains(h.s.message, "cross") {
+		t.Fatalf("the refusal %q is not about a crossing", h.s.message)
+	}
+
+	// The control: same cursor, same digit, blocker gone. Removals come before
+	// the turn's peg, so the staged turn is dropped first.
+	h.press("esc")
+	h.press("a")
+	h.goTo(game.Point{Col: 1, Row: 0})
+	h.press("x")
+	h.press("4") // SSE, towards C3
+	if h.s.g.HasLink(blocker) {
+		t.Fatalf("%v could not be taken off: %q", blocker, h.s.message)
+	}
+	h.press("esc")
+	h.goTo(game.Point{Col: 4, Row: 4})
+	h.press("space")
+	h.goTo(from)
+	h.press("x")
+	if got := h.s.linkVerb(target); got != "add" {
+		t.Errorf("with nothing in the way the overlay says %q of %v, want an offer to add it", got, blocked)
+	}
+	h.press("1")
+	if !h.s.g.HasLink(blocked) {
+		t.Errorf("%v was offered and then refused: %q", blocked, h.s.message)
+	}
+}
+
+// TestAStagedPegSaysWhichLinkItCouldNotTake is the other half of the same
+// complaint: a peg placed within reach of one of its own took no link and the
+// panel said nothing, so a player expecting the automatic link was left to
+// guess whether the board had noticed the peg at all.
+func TestAStagedPegSaysWhichLinkItCouldNotTake(t *testing.T) {
+	h := newGSHarness(t, gsTestDeps(t), gsHotseat(6), 80, 24)
+	// Horizontal builds C5:D3; vertical then places D5, which reaches its own
+	// C3 along the other diagonal of the same rectangle and so cannot link.
+	h.playTurn(game.Point{Col: 2, Row: 2}) // vertical C3
+	h.playTurn(game.Point{Col: 2, Row: 4}) // horizontal C5
+	h.playTurn(game.Point{Col: 4, Row: 0}) // vertical E1, out of everything's reach
+	h.playTurn(game.Point{Col: 3, Row: 2}) // horizontal D3, linking C5:D3
+	h.ready()
+
+	h.goTo(game.Point{Col: 3, Row: 4})
+	h.press("space")
+	if !h.s.g.Staged().PegPlaced {
+		t.Fatalf("the peg was not staged: %q", h.s.message)
+	}
+	refused, _ := game.NewLink(game.Point{Col: 3, Row: 4}, game.Point{Col: 2, Row: 2})
+	if h.s.g.HasLink(refused) {
+		t.Fatalf("%v was taken, so this position does not block it", refused)
+	}
+	if h.s.g.Staged().AutoLinks != 0 {
+		t.Fatalf("the placement took links, so the silence the finding is about cannot arise")
+	}
+	h.mustContain("staged panel", "staged peg D5")
+	h.mustContain("staged panel", refused.String())
 }
 
 // TestTurnRunsRemovalsThenPegThenLinks walks the whole transactional turn in the
@@ -1485,6 +1645,90 @@ func TestHelpNamesTheKeysThatApply(t *testing.T) {
 	if labels["s"] {
 		t.Error("the help offers the swap when it is not available")
 	}
+}
+
+// TestTheTwoQuitKeysAreDescribedApartWhenTheyDiffer covers the one place where
+// a single binding covers two outcomes. In a game opened from the menu the
+// plain letter comes back to the menu while the control form ends the program,
+// and the help panel described both as "quit". The behaviours are checked here
+// too: a description that distinguishes them is worth nothing if they turn out
+// to do the same thing after all.
+func TestTheTwoQuitKeysAreDescribedApartWhenTheyDiffer(t *testing.T) {
+	d := shellTestDeps(t)
+
+	// A game that is the whole program. Both keys end it, so one line describes
+	// both of them accurately and there is nothing to separate.
+	alone, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewShell(d, alone)
+	if got := gsHelpFor(t, alone, "ctrl+c"); got != "" {
+		t.Errorf("a game that is the whole program lists ctrl+c apart from q as %q", got)
+	}
+
+	// The same game opened over another screen: the keys part company.
+	screen, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := NewShell(d, plainScreen{})
+	shell.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	if cmd := shell.Push(screen); cmd != nil {
+		cmd()
+	}
+	q, ctrl := gsHelpFor(t, screen, "q"), gsHelpFor(t, screen, "ctrl+c")
+	if ctrl == "" {
+		t.Fatal("the help does not mention ctrl+c, which from here ends the whole program")
+	}
+	if q == ctrl {
+		t.Errorf("both quit keys are described as %q, though one comes back and the other ends the program", q)
+	}
+	// The status line has room for one word about the key, and it faces the
+	// same question: from here, q does not quit.
+	arr := ui.Arrangement{Width: 90, Panel: ui.PanelSide}
+	nested, whole := screen.(*gameScreen).statusLine(arr), alone.(*gameScreen).statusLine(arr)
+	if strings.Contains(nested, "q quit") {
+		t.Errorf("the status line of a game opened over another screen reads %q", nested)
+	}
+	if !strings.Contains(whole, "q quit") {
+		t.Errorf("the status line of a game that is the whole program reads %q", whole)
+	}
+
+	// And that is what they do: q comes back to the screen underneath.
+	if shellRun(t, shell, gsKeyMsg(t, "q")) {
+		t.Error("q ended the program from a game opened over another screen")
+	}
+	if got := len(shell.stack); got != 1 {
+		t.Fatalf("the stack is %d deep after leaving the game, want 1", got)
+	}
+	// ctrl+c, from the same place, does not.
+	again, err := NewGameScreen(d, gsHotseat(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd := shell.Push(again); cmd != nil {
+		cmd()
+	}
+	if !shellRun(t, shell, gsKeyMsg(t, "ctrl+c")) {
+		t.Error("ctrl+c did not end the program from a game opened over another screen")
+	}
+}
+
+// gsHelpFor returns what the game's help panel says about a key, empty when it
+// does not mention it at all.
+func gsHelpFor(t *testing.T, screen Screen, label string) string {
+	t.Helper()
+	gs, ok := screen.(*gameScreen)
+	if !ok {
+		t.Fatalf("unexpected screen type %T", screen)
+	}
+	for _, e := range gs.helpEntries() {
+		if e.Label == label {
+			return e.Help
+		}
+	}
+	return ""
 }
 
 // TestPegRemovalIsReachableOnlyWhenTheRulesAllowIt covers the opt-in rule: the

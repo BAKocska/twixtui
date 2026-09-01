@@ -154,6 +154,16 @@ type gameScreen struct {
 	storeID  string
 	recorded bool
 	leaving  bool
+	// departNote is the line depart left for the player: which game was saved
+	// and how to pick it up again. The screen does not deliver it itself,
+	// because where it belongs depends on what the player is left looking at
+	// afterwards, and only the shell knows that.
+	departNote string
+	// returns records whether leaving this screen goes back to the screen it
+	// was opened over. The two quit keys then part company — the plain letter
+	// comes back, the control form ends the program — and the help has to say
+	// which is which.
+	returns bool
 	// savedAt is the number of recorded entries the stored copy holds, so an
 	// autosave writes only when the position has actually moved on.
 	savedAt    int
@@ -917,7 +927,8 @@ func (s *gameScreen) explain(err error) string {
 	case errors.Is(err, game.ErrOffBoard):
 		return "that is off the board"
 	case errors.Is(err, game.ErrOpponentBorder):
-		return "that border row is your opponent's: you may not play in it"
+		return fmt.Sprintf("that border %s is your opponent's: you may not play in it",
+			gsBorderWord(s.g.Turn().Opponent()))
 	case errors.Is(err, game.ErrPegAlreadySet):
 		return fmt.Sprintf("one peg per turn — %s commits, %s aborts",
 			s.keyLabel(ui.ActConfirm), s.keyLabel(ui.ActAbortTurn))
@@ -1280,12 +1291,16 @@ func (s *gameScreen) depart() error {
 	if !s.g.Result().Over() {
 		err = s.save(false)
 		if err == nil {
-			// Say so where the player will see it. The interface is about to
-			// close and take its own output with it, so a line drawn here would
-			// vanish; this one is printed afterwards. Without it the player is
-			// left not knowing whether the game they were part way through
-			// survived being closed.
-			s.deps.note("game saved as %s — %s", s.storeID, s.resumeHint())
+			// Say so where the player will actually see it. Which place that
+			// is depends on what happens next: a departure that ends the
+			// program has to leave the line for the command line, because the
+			// interface takes its own output with it, while a departure that
+			// comes back to the menu has a screen to say it on and should say
+			// it there, at the time. Only the shell knows which of the two
+			// this is, so the line is left here for it to collect. Without it
+			// the player is left not knowing whether the game they were part
+			// way through survived.
+			s.departNote = fmt.Sprintf("game saved as %s — %s", s.storeID, s.resumeHint())
 		}
 	}
 	if s.session != nil {
@@ -1311,12 +1326,28 @@ func (s *gameScreen) resumeHint() string {
 // itself does not skip the save. Without it, leaving with the plain letter saved
 // an unfinished game and leaving with the control key discarded it, which is the
 // same act as far as the player is concerned.
+//
+// This is the departure that ends the program, so anything the screen has to
+// tell the player goes to the command line: there will be no screen left to
+// read it on.
 func (s *gameScreen) Depart() {
-	if err := s.depart(); err != nil {
+	err := s.depart()
+	if note := s.DepartNote(); note != "" {
+		s.deps.note("%s", note)
+	}
+	if err != nil {
 		// There is no screen left to show this on, so the best that can be done
 		// is to put it where a player looking for their lost game will find it.
 		fmt.Fprintf(os.Stderr, "twixtui: %v\n", err)
 	}
+}
+
+// DepartNote satisfies Noting. It hands over the line depart left and forgets
+// it, so that one departure is announced once, wherever the shell puts it.
+func (s *gameScreen) DepartNote() string {
+	note := s.departNote
+	s.departNote = ""
+	return note
 }
 
 // leave hands control back to the shell.
@@ -1433,8 +1464,18 @@ func (s *gameScreen) panelLines(arr ui.Arrangement) []string {
 	add(s.style(s.styles.PanelText, s.rulesLine()))
 
 	blank()
-	for _, e := range s.helpEntries() {
-		add(s.style(s.styles.Label, gsPad(e.Label, 6)) + e.Help)
+	entries := s.helpEntries()
+	// The label column is as wide as the widest key plus a space. Six suits the
+	// board keys and used to be written out, which left a control key's label
+	// touching its description.
+	labelW := 6
+	for _, e := range entries {
+		if n := ansi.StringWidth(e.Label) + 1; n > labelW {
+			labelW = n
+		}
+	}
+	for _, e := range entries {
+		add(s.style(s.styles.Label, gsPad(e.Label, labelW)) + e.Help)
 	}
 	return lines
 }
@@ -1456,7 +1497,7 @@ func (s *gameScreen) helpEntries() []ui.HelpEntry {
 	if s.linkMode {
 		ctx = ui.CtxLink
 	}
-	out := s.keymap.HelpEntries(ctx)
+	out := s.splitQuitHelp(ctx, s.keymap.HelpEntries(ctx))
 	for _, b := range gameBindings {
 		if b.phases&phasePlay == 0 {
 			continue
@@ -1474,6 +1515,41 @@ func (s *gameScreen) helpEntries() []ui.HelpEntry {
 			continue
 		}
 		out = append(out, ui.HelpEntry{Label: b.label, Help: b.help})
+	}
+	return out
+}
+
+// nested satisfies nesting: the shell says whether leaving this game comes back
+// to a screen or ends the program.
+func (s *gameScreen) nested(hasReturn bool) { s.returns = hasReturn }
+
+// splitQuitHelp gives the two quit keys a line each in a game that was opened
+// over another screen, because there they do different things: the plain letter
+// leaves the game and comes back, the control form ends the program. They share
+// one binding, so one description covered both outcomes and was therefore wrong
+// about one of them. A game that is the whole program keeps the single line the
+// keymap gives, where the shared wording is accurate: there, both keys quit.
+//
+// The control keys are read off the binding rather than written out again here,
+// which is the same rule the shell uses to decide which of them it answers
+// itself.
+func (s *gameScreen) splitQuitHelp(ctx ui.Context, entries []ui.HelpEntry) []ui.HelpEntry {
+	b, ok := s.keymap.ByAction(ctx, ui.ActQuit)
+	if !s.returns || !ok {
+		return entries
+	}
+	out := make([]ui.HelpEntry, 0, len(entries)+1)
+	for _, e := range entries {
+		if e.Label != b.Label || e.Help != b.Help {
+			out = append(out, e)
+			continue
+		}
+		out = append(out, ui.HelpEntry{Label: b.Label, Help: "leave the game"})
+		for _, k := range b.Keys {
+			if strings.HasPrefix(k, "ctrl+") {
+				out = append(out, ui.HelpEntry{Label: k, Help: "leave and end the program"})
+			}
+		}
 	}
 	return out
 }
@@ -1542,7 +1618,7 @@ func (s *gameScreen) resultText(res game.Result) string {
 	if why != "" {
 		out += " by " + why
 	}
-	return out + fmt.Sprintf(" after %d moves", s.g.Ply())
+	return out + " after " + plural(s.g.Ply(), "move")
 }
 
 // lastPeg reports the hole the most recent peg went into. Entries that place no
@@ -1597,6 +1673,12 @@ func (s *gameScreen) stagedLines() []string {
 		if names := gsLinkNames(st.Peg, st.AutoLinks); len(names) > 0 {
 			out = append(out, "  links "+strings.Join(names, " "))
 		}
+		// A peg that reaches one of its own and links to none of them looks
+		// like the board failed to notice, so the links it could not take are
+		// named along with the ones it did.
+		if names := s.crossedLinks(st.Peg); len(names) > 0 {
+			out = append(out, "  blocked "+strings.Join(names, " "))
+		}
 	}
 	if len(st.Added) > 0 {
 		out = append(out, "  added "+gsLinkList(st.Added))
@@ -1612,6 +1694,28 @@ func (s *gameScreen) stagedLines() []string {
 		out = append(out, "  lifted "+strings.Join(names, " "))
 	}
 	return out
+}
+
+// crossedLinks names the links between the turn's peg and its own knight
+// neighbours that a link already on the board is in the way of. They are the
+// difference between the links a placement offers and the ones it takes, and
+// the only reason a placement takes fewer than it reaches.
+func (s *gameScreen) crossedLinks(peg game.Point) []string {
+	var names []string
+	for dir := game.Dir(0); dir < game.NumDirs; dir++ {
+		target := peg.Add(dir)
+		if !s.g.Exists(target) || s.g.At(target) != s.g.Turn() {
+			continue
+		}
+		l, knight := game.NewLink(peg, target)
+		if !knight || s.g.HasLink(l) {
+			continue
+		}
+		if _, blocked := s.g.LinkBlockedBy(l, s.g.Turn()); blocked {
+			names = append(names, l.String())
+		}
+	}
+	return names
 }
 
 // linkModeLines say what link mode is editing and what each digit will do to
@@ -1644,7 +1748,14 @@ func (s *gameScreen) linkModeLines(width int) []string {
 }
 
 // linkVerb says what the digit on a hole will do, which is what makes the
-// overlay readable: a link of the player's own shows as one to remove.
+// overlay readable: a link of the player's own shows as one to remove, and one
+// that is in the way of a link already on the board shows as neither.
+//
+// A crossing is checked before the turn's order is, because "after peg" would
+// promise the link becomes available once the peg is down, and a blocked link
+// never does: placing a peg only ever adds links, so what blocks the edge now
+// still blocks it afterwards. The digit is kept rather than dropped, so the
+// player can still press it and be told which link is in the way.
 func (s *gameScreen) linkVerb(target game.Point) string {
 	l, knight := game.NewLink(s.board.Cursor, target)
 	switch {
@@ -1652,6 +1763,11 @@ func (s *gameScreen) linkVerb(target game.Point) string {
 		return ""
 	case s.g.HasLink(l):
 		return "remove"
+	}
+	if _, blocked := s.g.LinkBlockedBy(l, s.g.Turn()); blocked {
+		return "blocked"
+	}
+	switch {
 	case s.stagedRemoval(l):
 		return "put back"
 	case !s.g.Staged().PegPlaced:
@@ -1731,7 +1847,7 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 		parts = append(parts, s.keymap.HintLine(ui.CtxLink, ui.ActToggleLink, ui.ActExitMode, ui.ActConfirm))
 	default:
 		parts = append(parts, s.keymap.HintLine(ui.CtxBoard,
-			ui.ActPlacePeg, ui.ActConfirm, ui.ActLinkMode, ui.ActAbortTurn, ui.ActQuit))
+			ui.ActPlacePeg, ui.ActConfirm, ui.ActLinkMode, ui.ActAbortTurn), s.quitHint())
 		if s.corr != nil {
 			parts = append(parts, s.gameKeyLabel(gaCode)+" exchange")
 		}
@@ -1747,6 +1863,22 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 		parts = append(parts, s.gameKeyLabel(gaDraw)+" draw", s.gameKeyLabel(gaResign)+" resign")
 	}
 	return s.style(s.styles.Status, gsTruncate(strings.Join(parts, " · "), arr.Width))
+}
+
+// quitHint is the terse form of the quit key for the status line. A game opened
+// over another screen is left rather than quit, and one word is all the line
+// has room to say about it; the help panel carries the fuller version. The
+// wording for a game that is the whole program comes from the keymap, so the
+// usual case cannot drift from the binding.
+func (s *gameScreen) quitHint() string {
+	b, ok := s.keymap.ByAction(ui.CtxBoard, ui.ActQuit)
+	if !ok {
+		return ""
+	}
+	if s.returns {
+		return b.Label + " leave"
+	}
+	return b.Label + " " + b.Short
 }
 
 // --- small helpers ----------------------------------------------------------
@@ -1852,6 +1984,19 @@ func gsAxisText(side game.Player) string {
 		return "left-right"
 	}
 	return "top-bottom"
+}
+
+// gsBorderWord names the kind of line a side's two borders are. Vertical joins
+// the top and bottom rows, horizontal the left and right columns, so a refusal
+// that calls every border a row is wrong half the time — and wrong exactly for
+// the player being refused, since the borders nobody else may enter are the
+// opponent's. The engine's own sentinel is worded for rows; this is the reading
+// a player at the board needs.
+func gsBorderWord(side game.Player) string {
+	if side == game.Horizontal {
+		return "column"
+	}
+	return "row"
 }
 
 func gsLinkNames(from game.Point, mask uint8) []string {
