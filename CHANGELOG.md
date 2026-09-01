@@ -7,7 +7,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing has been released yet; this section records what is in the repository.
+## [0.1.0] - 2026-09-01
+
+First release.
 
 ### Added
 
@@ -112,4 +114,5 @@ Nothing has been released yet; this section records what is in the repository.
   succeeding silently, and the tutorial's prose is set to a readable measure on a wide
   terminal.
 
-[Unreleased]: https://github.com/BAKocska/twixtui/commits/main
+[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/BAKocska/twixtui/releases/tag/v0.1.0
