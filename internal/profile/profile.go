@@ -38,6 +38,11 @@ type Profile struct {
 	Name     string    `json:"name"`
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used"`
+	// Introduced records that this player has been through the short
+	// introduction the interface offers on a first run. See introduction.go for
+	// why it is a property of the profile rather than of the machine, and for
+	// why it is added without moving storeVersion.
+	Introduced bool `json:"introduced,omitempty"`
 }
 
 // document is the on-disk shape of the store.
