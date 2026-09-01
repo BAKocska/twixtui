@@ -3,6 +3,8 @@ package app
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -175,8 +177,8 @@ func TestMenuEveryEntryShowsItsExplanation(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 120, 40)
 	entries := m.list.opts
-	if got := len(entries); got != 9 {
-		t.Errorf("%d entries, want the nine the menu is specified to offer", got)
+	if got := len(entries); got != 7 {
+		t.Errorf("%d entries, want the seven the front screen offers", got)
 	}
 
 	for i := range entries {
@@ -196,55 +198,111 @@ func TestMenuEveryEntryShowsItsExplanation(t *testing.T) {
 	}
 }
 
-// TestMenuEveryEntryIsReachable chooses each entry in turn and requires
-// something to actually happen: a form to open, or a command to be produced.
+// mnFormTitle fails unless the open form is a chooser titled want.
+func mnFormTitle(want string) func(t *testing.T, m *Menu, cmd tea.Cmd) {
+	return func(t *testing.T, m *Menu, _ tea.Cmd) {
+		t.Helper()
+		if got := mnChooser(t, m).title; got != want {
+			t.Errorf("opened %q, want %q", got, want)
+		}
+	}
+}
+
+// mnTextFormTitle fails unless the open form is a text field titled want.
+func mnTextFormTitle(want string) func(t *testing.T, m *Menu, cmd tea.Cmd) {
+	return func(t *testing.T, m *Menu, _ tea.Cmd) {
+		t.Helper()
+		f, ok := m.form.(*textForm)
+		if !ok {
+			t.Fatalf("opened %T, want a text field", m.form)
+		}
+		if f.title != want {
+			t.Errorf("the field asks for %q, want %q", f.title, want)
+		}
+	}
+}
+
+// mnOpensScreen fails unless the pick produced a screen opened on top of the
+// menu, so leaving it comes back rather than ending the program.
+func mnOpensScreen(t *testing.T, _ *Menu, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("no command")
+	}
+	open, ok := cmd().(OpenMsg)
+	if !ok || open.Screen == nil {
+		t.Fatalf("produced %T without a screen to open", cmd())
+	}
+}
+
+// TestMenuEveryEntryIsReachable walks every entry of the front screen and every
+// row one level down, with real keypresses, and requires each to open the thing
+// it claims: the named question, the named panel, or a screen on top. The tail
+// of the test then requires the case table to cover the whole front list, so an
+// entry added without a case here fails rather than going untested.
 func TestMenuEveryEntryIsReachable(t *testing.T) {
 	cases := []struct {
-		prefix string
-		check  func(t *testing.T, m *Menu, cmd tea.Cmd)
+		path  []string
+		check func(t *testing.T, m *Menu, cmd tea.Cmd)
 	}{
-		{"Play the computer", func(t *testing.T, m *Menu, _ tea.Cmd) {
-			if got := mnChooser(t, m).title; got != "How strong an opponent?" {
-				t.Errorf("opened %q", got)
-			}
-		}},
-		{"Play someone at this keyboard", func(t *testing.T, m *Menu, _ tea.Cmd) {
+		{[]string{"Play"}, mnFormTitle("Who do you want to play?")},
+		{[]string{"Play", "the computer"}, mnFormTitle("How strong an opponent?")},
+		{[]string{"Play", "someone at this keyboard"}, func(t *testing.T, m *Menu, _ tea.Cmd) {
 			if _, ok := m.form.(*pickerForm); !ok {
 				t.Errorf("opened %T, want the profile picker for the second player", m.form)
 			}
 		}},
-		{"Play someone over the network", func(t *testing.T, m *Menu, _ tea.Cmd) {
-			if got := mnChooser(t, m).title; got != "How do you want to connect?" {
-				t.Errorf("opened %q", got)
-			}
-		}},
-		{"Continue a saved game", func(t *testing.T, m *Menu, _ tea.Cmd) {
-			if got := mnChooser(t, m).title; got != "Continue a saved game" {
-				t.Errorf("opened %q", got)
-			}
-		}},
-		{"Learn to play", func(t *testing.T, _ *Menu, cmd tea.Cmd) {
+		{[]string{"Play", "someone over the network"}, mnFormTitle("How do you want to connect?")},
+		{[]string{"Play", "someone over the network", "wait for them to connect to me"},
+			mnFormTitle("Which side do you play?")},
+		{[]string{"Play", "someone over the network", "wait for them through a relay"},
+			mnTextFormTitle("Relay address")},
+		{[]string{"Play", "someone over the network", "connect to their address"},
+			mnTextFormTitle("Their address")},
+		{[]string{"Play", "someone over the network", "join their pairing code"},
+			mnTextFormTitle("Relay address")},
+		{[]string{"Play", "someone over the network", "start a correspondence game"},
+			mnFormTitle("Which side do you play?")},
+		{[]string{"Play", "someone over the network", "accept a correspondence invitation"},
+			mnTextFormTitle("Their invitation")},
+		{[]string{"Continue a saved game"}, mnFormTitle("Continue a saved game")},
+		{[]string{"Watch a finished game"}, mnFormTitle("Watch a finished game")},
+		{[]string{"Watch a finished game", "Balint vs"}, func(t *testing.T, _ *Menu, cmd tea.Cmd) {
 			if cmd == nil {
 				t.Fatal("no command")
 			}
-			// Opened on top of the menu, so leaving the tutorial comes back to
-			// it rather than ending the program.
 			open, ok := cmd().(OpenMsg)
-			if !ok || open.Screen == nil {
-				t.Fatalf("produced %T without a screen to open", cmd())
+			if !ok {
+				t.Fatalf("produced %T, want an OpenMsg", cmd())
+			}
+			if _, ok := open.Screen.(*ReplayScreen); !ok {
+				t.Errorf("opened %T, want the replay screen", open.Screen)
 			}
 		}},
-		{"Leaderboard", func(t *testing.T, m *Menu, _ tea.Cmd) {
+		{[]string{"Learn to play"}, mnFormTitle("Learn to play")},
+		{[]string{"Learn to play", "The tutorial"}, mnOpensScreen},
+		{[]string{"Learn to play", "The rules"}, func(t *testing.T, m *Menu, _ tea.Cmd) {
+			f, ok := m.form.(*scrollForm)
+			if !ok {
+				t.Fatalf("opened %T, want a scrolling panel", m.form)
+			}
+			body := strings.Join(f.body, " ")
+			if !strings.Contains(body, "TwixT") {
+				t.Errorf("the panel does not carry the rules text: %q…", f.title)
+			}
+		}},
+		{[]string{"Learn to play", "The introduction"}, mnOpensScreen},
+		{[]string{"Leaderboard"}, func(t *testing.T, m *Menu, _ tea.Cmd) {
 			if _, ok := m.form.(*scrollForm); !ok {
 				t.Errorf("opened %T, want a scrolling panel", m.form)
 			}
 		}},
-		{"Colours", func(t *testing.T, m *Menu, _ tea.Cmd) {
-			if got := mnChooser(t, m).title; got != "Colours" {
-				t.Errorf("opened %q", got)
-			}
-		}},
-		{"Switch profile", func(t *testing.T, _ *Menu, cmd tea.Cmd) {
+		{[]string{"Settings"}, mnFormTitle("Settings")},
+		{[]string{"Settings", "Colours"}, mnFormTitle("Colours")},
+		{[]string{"Settings", "Rules"}, mnFormTitle("Which rules should a new game start with?")},
+		{[]string{"Settings", "Board"}, mnFormTitle("How big should a new game's board start?")},
+		{[]string{"Settings", "Hints"}, mnFormTitle("Should games against the computer offer hints?")},
+		{[]string{"Settings", "Profile"}, func(t *testing.T, _ *Menu, cmd tea.Cmd) {
 			if cmd == nil {
 				t.Fatal("no command")
 			}
@@ -253,7 +311,7 @@ func TestMenuEveryEntryIsReachable(t *testing.T) {
 				t.Errorf("handed over to %T, want the profile picker", done.Next)
 			}
 		}},
-		{"Quit", func(t *testing.T, _ *Menu, cmd tea.Cmd) {
+		{[]string{"Quit"}, func(t *testing.T, _ *Menu, cmd tea.Cmd) {
 			if cmd == nil {
 				t.Fatal("no command")
 			}
@@ -265,13 +323,29 @@ func TestMenuEveryEntryIsReachable(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.prefix, func(t *testing.T) {
+		t.Run(strings.Join(tc.path, " > "), func(t *testing.T) {
 			d := shellTestDeps(t)
 			mnSaveGame(t, d, gamestore.VersusBot, "Balint", leaderboard.BotName("beginner"))
+			mnSaveGame(t, d, gamestore.Imported, "Balint", leaderboard.BotName("pro"))
 			m := mnMenu(t, d, 100, 30)
-			cmd := mnPick(t, m, tc.prefix)
+			var cmd tea.Cmd
+			for _, prefix := range tc.path {
+				cmd = mnPick(t, m, prefix)
+			}
 			tc.check(t, m, cmd)
 		})
+	}
+
+	// The table above must start a case at every front entry, so a new entry
+	// cannot ship without its reachability being asserted.
+	covered := map[string]bool{}
+	for _, tc := range cases {
+		covered[tc.path[0]] = true
+	}
+	for _, o := range menuEntries() {
+		if !covered[o.label] {
+			t.Errorf("the front entry %q has no reachability case", o.label)
+		}
 	}
 }
 
@@ -290,7 +364,8 @@ func TestMenuBotGameCollectsEveryChoice(t *testing.T) {
 			d := shellTestDeps(t)
 			m := mnMenu(t, d, 100, 30)
 
-			mnPick(t, m, "Play the computer")
+			mnPick(t, m, "Play")
+			mnPick(t, m, "the computer")
 			mnPick(t, m, "intermediate")
 			mnPick(t, m, tc.name)
 			mnPick(t, m, "pp")
@@ -334,7 +409,8 @@ func TestMenuRandomSidePicksBothSides(t *testing.T) {
 	const draws = 200
 	for range draws {
 		m := mnMenu(t, d, 100, 30)
-		mnPick(t, m, "Play the computer")
+		mnPick(t, m, "Play")
+		mnPick(t, m, "the computer")
 		mnPick(t, m, "beginner")
 		mnPick(t, m, "random")
 
@@ -357,7 +433,8 @@ func TestMenuRandomSidePicksBothSides(t *testing.T) {
 func TestMenuRandomSideReachesTheGameConfig(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Play the computer")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "the computer")
 	mnPick(t, m, "beginner")
 	mnPick(t, m, "random")
 	drawn := m.pending.side
@@ -377,7 +454,8 @@ func TestMenuRandomSideReachesTheGameConfig(t *testing.T) {
 func TestMenuSideChooserNamesTheAxes(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Play the computer")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "the computer")
 	mnPick(t, m, "beginner")
 
 	c := mnChooser(t, m)
@@ -413,7 +491,8 @@ func TestMenuHotseatTakesASecondProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Play someone at this keyboard")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "someone at this keyboard")
 
 	f, ok := m.form.(*pickerForm)
 	if !ok {
@@ -466,7 +545,8 @@ func TestMenuFormsWalkBackwards(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
 
-	mnPick(t, m, "Play the computer")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "the computer")
 	mnPick(t, m, "pro")
 	if got := mnChooser(t, m).title; got != "Which side do you play?" {
 		t.Fatalf("after the tier the form is %q", got)
@@ -481,6 +561,20 @@ func TestMenuFormsWalkBackwards(t *testing.T) {
 	if got := mnChooser(t, m); got.opts[got.sel].label != "pro" {
 		t.Errorf("the tier question reopened on %q, want the answer given before", got.opts[got.sel].label)
 	}
+	shellSend(t, m, "esc")
+	if got := mnChooser(t, m).title; got != "Who do you want to play?" {
+		t.Fatalf("escape went to %q, want back to the who question", got)
+	}
+	if got := mnChooser(t, m); got.opts[got.sel].label != "the computer" {
+		t.Errorf("the who question reopened on %q, want the answer given before", got.opts[got.sel].label)
+	}
+	// Going forward again keeps the answers: the same kind was picked, so the
+	// tier is still the pro chosen above.
+	mnPick(t, m, "the computer")
+	if got := mnChooser(t, m); got.opts[got.sel].label != "pro" {
+		t.Errorf("re-entering the chain forgot the tier: on %q", got.opts[got.sel].label)
+	}
+	shellSend(t, m, "esc")
 	shellSend(t, m, "esc")
 	if m.form != nil {
 		t.Fatalf("escape from the first question left %T open", m.form)
@@ -757,7 +851,8 @@ func TestMenuFormDefaultsToTheDocumentedGame(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
 
-	mnPick(t, m, "Play the computer")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "the computer")
 	shellSend(t, m, "enter") // how strong an opponent
 	shellSend(t, m, "enter") // which side
 	shellSend(t, m, "enter") // which rules
@@ -825,6 +920,7 @@ func TestMenuThemeChoiceAppliesAndIsRemembered(t *testing.T) {
 		t.Skip("only one theme is built in")
 	}
 	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Settings")
 	mnPick(t, m, "Colours")
 	cmd := mnPick(t, m, other.Name)
 	if cmd == nil {
@@ -855,7 +951,8 @@ func TestMenuThemeChoiceAppliesAndIsRemembered(t *testing.T) {
 func TestMenuNetworkFormAsksForWhatItNeeds(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Play someone over the network")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "someone over the network")
 	mnPick(t, m, "join their pairing code")
 
 	form, ok := m.form.(*textForm)
@@ -920,7 +1017,8 @@ func mnTypeInto(t *testing.T, m *Menu, text string) {
 func TestMenuHostFormAsksForTheTermsOfTheGame(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Play someone over the network")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "someone over the network")
 	mnPick(t, m, "wait for them through a relay")
 
 	mnTypeInto(t, m, "relay.example")
@@ -949,7 +1047,8 @@ func TestMenuHostFormAsksForTheTermsOfTheGame(t *testing.T) {
 func TestMenuGuestIsNotAskedForTermsItCannotSet(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Play someone over the network")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "someone over the network")
 	mnPick(t, m, "connect to their address")
 
 	form, ok := m.form.(*textForm)
@@ -980,7 +1079,8 @@ func TestMenuRelayAddressReachesTheRelayPort(t *testing.T) {
 
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Play someone over the network")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "someone over the network")
 	mnPick(t, m, "join their pairing code through a relay")
 	mnTypeInto(t, m, "127.0.0.1")
 	shellSend(t, m, "enter")
@@ -1009,13 +1109,22 @@ func TestMenuRelayAddressReachesTheRelayPort(t *testing.T) {
 }
 
 func TestMenuFitsEverySize(t *testing.T) {
-	forms := []string{
-		"Play the computer",
-		"Play someone at this keyboard",
-		"Play someone over the network",
-		"Continue a saved game",
-		"Leaderboard",
-		"Colours",
+	// Each path walks the picks that open one panel, top of the menu first.
+	forms := [][]string{
+		{"Play"},
+		{"Play", "the computer"},
+		{"Play", "someone at this keyboard"},
+		{"Play", "someone over the network"},
+		{"Continue a saved game"},
+		{"Watch a finished game"},
+		{"Learn to play"},
+		{"Learn to play", "The rules"},
+		{"Leaderboard"},
+		{"Settings"},
+		{"Settings", "Colours"},
+		{"Settings", "Rules"},
+		{"Settings", "Board"},
+		{"Settings", "Hints"},
 	}
 	for _, size := range shellSizes {
 		w, h := size[0], size[1]
@@ -1037,15 +1146,18 @@ func TestMenuFitsEverySize(t *testing.T) {
 			shellAssertFits(t, "menu", m.View().Content, w, h)
 		}
 
-		for _, prefix := range forms {
+		for _, path := range forms {
 			f := mnMenu(t, d, w, h)
-			mnPick(t, f, prefix)
-			shellAssertFits(t, "menu form "+prefix, f.View().Content, w, h)
+			for _, prefix := range path {
+				mnPick(t, f, prefix)
+			}
+			shellAssertFits(t, "menu form "+strings.Join(path, " > "), f.View().Content, w, h)
 		}
 
 		// A text field, and a text field carrying a complaint.
 		f := mnMenu(t, d, w, h)
-		mnPick(t, f, "Play someone over the network")
+		mnPick(t, f, "Play")
+		mnPick(t, f, "someone over the network")
 		mnPick(t, f, "join their pairing code")
 		shellAssertFits(t, "menu text field", f.View().Content, w, h)
 		shellSend(t, f, "enter")
@@ -1138,7 +1250,7 @@ func TestMenuListsMoveWithTheBoardsLetters(t *testing.T) {
 		t.Fatalf("three presses of j selected %q, want the fourth entry %q", got, want)
 	}
 	shellSend(t, m, "enter")
-	if got := mnChooser(t, m).title; got != "Continue a saved game" {
+	if got := mnChooser(t, m).title; got != "Learn to play" {
 		t.Errorf("j j j enter opened %q, want the fourth entry's own list", got)
 	}
 	shellSend(t, m, "esc")
@@ -1159,7 +1271,8 @@ func TestMenuListsMoveWithTheBoardsLetters(t *testing.T) {
 
 	// A question with a fixed set of answers is the same widget, and has to
 	// answer the same keys.
-	mnPick(t, m, "Play the computer")
+	mnPick(t, m, "Play")
+	mnPick(t, m, "the computer")
 	tier := mnHighlighted(t, m)
 	shellSend(t, m, "j")
 	moved := mnHighlighted(t, m)
@@ -1301,6 +1414,7 @@ func TestThemeChooserShowsTheSchemeUnderTheCursor(t *testing.T) {
 	d.Styles = &styles
 
 	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Settings")
 	mnPick(t, m, "Colours")
 	c := mnChooser(t, m)
 
@@ -1333,6 +1447,7 @@ func TestThemeChooserShowsTheSchemeUnderTheCursor(t *testing.T) {
 func TestThemeChooserPreviewObeysColourOff(t *testing.T) {
 	d := shellTestDeps(t)
 	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Settings")
 	mnPick(t, m, "Colours")
 	c := mnChooser(t, m)
 
@@ -1378,6 +1493,7 @@ func TestThemePreviewNeverCostsTheListARow(t *testing.T) {
 		w, h := size[0], size[1]
 		d := shellTestDeps(t)
 		m := mnMenu(t, d, w, h)
+		mnPick(t, m, "Settings")
 		mnPick(t, m, "Colours")
 		c := mnChooser(t, m)
 		with := visible(m, c)
@@ -1437,5 +1553,518 @@ func TestThemeSampleIsWholeOrAbsent(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// The front screen's artwork. The cover package lives on its own branch, so
+// these tests stand a fake renderer in through the same two variables the
+// integration will use; what they pin is the menu's side of the bargain — when
+// the artwork appears, what it may never cost, and that a renderer that lies
+// about its size cannot break the fitting invariant.
+
+// mnCoverMark is a rune the menu never draws itself, so finding it in a frame
+// means the artwork was drawn and nothing else can be mistaken for it.
+const mnCoverMark = "▚"
+
+// mnFakeCover installs an artwork source whose minimum canvas is minW×minH
+// and whose drawing is a block of marker runes that size.
+func mnFakeCover(t *testing.T, minW, minH int) {
+	t.Helper()
+	oldMin, oldRender := coverMinSize, coverRender
+	t.Cleanup(func() { coverMinSize, coverRender = oldMin, oldRender })
+	coverMinSize = func() (int, int) { return minW, minH }
+	coverRender = func(w, h int, plain bool) []string {
+		lines := make([]string, minH)
+		for i := range lines {
+			lines[i] = strings.Repeat(mnCoverMark, minW)
+		}
+		return lines
+	}
+}
+
+// TestMenuFrontScreenAt80x24LeavesTheArtworkOut: at the conventional terminal
+// size there is no room beside the menu's column, so the artwork is absent and
+// the menu itself is whole — every entry on screen, nothing overflowing.
+func TestMenuFrontScreenAt80x24LeavesTheArtworkOut(t *testing.T) {
+	mnFakeCover(t, 30, 10)
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 80, 24)
+
+	frame := m.View().Content
+	shellAssertFits(t, "front screen", frame, 80, 24)
+	if strings.Contains(frame, mnCoverMark) {
+		t.Errorf("the artwork is drawn at 80x24, where the menu leaves it no room:\n%s", frame)
+	}
+	for _, o := range m.list.opts {
+		if !strings.Contains(frame, o.label) {
+			t.Errorf("the entry %q is missing at 80x24:\n%s", o.label, frame)
+		}
+	}
+}
+
+// TestMenuFrontScreenAt120x40ShowsTheArtwork: with room to spare the cover is
+// beside the menu, in the remainder only — the menu keeps its column and every
+// entry — and it belongs to the front screen alone, not to the panels.
+func TestMenuFrontScreenAt120x40ShowsTheArtwork(t *testing.T) {
+	mnFakeCover(t, 30, 10)
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 120, 40)
+
+	frame := m.View().Content
+	shellAssertFits(t, "front screen", frame, 120, 40)
+	if !strings.Contains(frame, mnCoverMark) {
+		t.Fatalf("the artwork is absent at 120x40, where there is room for it:\n%s", frame)
+	}
+	artLines := 0
+	for _, line := range strings.Split(frame, "\n") {
+		plain := ansi.Strip(line)
+		at := strings.Index(plain, mnCoverMark)
+		if at < 0 {
+			continue
+		}
+		artLines++
+		if at < menuPaneWidth+coverGap {
+			t.Errorf("the artwork starts at column %d, inside the menu's own %d columns:\n%q",
+				at, menuPaneWidth+coverGap, line)
+		}
+		// The picture is whole: every one of its rows carries the full run of
+		// marks, so no part of it was pushed over the frame's edge. Half a
+		// cover at the edge of the terminal is a layout fault, not a picture.
+		if got := strings.Count(plain, mnCoverMark); got != 30 {
+			t.Errorf("an artwork row carries %d of its 30 cells, so the picture is cut:\n%q", got, line)
+		}
+	}
+	if artLines != 10 {
+		t.Errorf("%d artwork rows on screen, want the whole 10-row picture", artLines)
+	}
+	for _, o := range m.list.opts {
+		if !strings.Contains(frame, o.label) {
+			t.Errorf("the artwork cost the menu the entry %q:\n%s", o.label, frame)
+		}
+	}
+
+	// The cover decorates the front door, not the rooms behind it.
+	mnPick(t, m, "Leaderboard")
+	if got := m.View().Content; strings.Contains(got, mnCoverMark) {
+		t.Errorf("the artwork is drawn over an open panel:\n%s", got)
+	}
+	shellSend(t, m, "esc")
+	if got := m.View().Content; !strings.Contains(got, mnCoverMark) {
+		t.Errorf("the artwork did not come back with the front screen:\n%s", got)
+	}
+}
+
+// TestMenuSurvivesAnArtworkThatExceedsItsCanvas: the cover contract promises
+// to stay inside the canvas. If that promise is ever broken the frame is
+// still clipped once, at the edge, by ui.Compose — this pins that the menu
+// reaches that single clipping point rather than overflowing around it.
+func TestMenuSurvivesAnArtworkThatExceedsItsCanvas(t *testing.T) {
+	oldMin, oldRender := coverMinSize, coverRender
+	t.Cleanup(func() { coverMinSize, coverRender = oldMin, oldRender })
+	coverMinSize = func() (int, int) { return 10, 5 }
+	coverRender = func(w, h int, plain bool) []string {
+		lines := make([]string, h+10)
+		for i := range lines {
+			lines[i] = strings.Repeat(mnCoverMark, w+40)
+		}
+		return lines
+	}
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 120, 40)
+	shellAssertFits(t, "front screen with a lying renderer", m.View().Content, 120, 40)
+}
+
+// TestMenuArtworkNeverCostsAnEntry is the bargain at its tightest: a terminal
+// just tall enough for the picture and just wide enough for the remainder to
+// hold it. Every entry must still be on screen, because the artwork is only
+// ever given what the menu did not take.
+func TestMenuArtworkNeverCostsAnEntry(t *testing.T) {
+	mnFakeCover(t, 30, 6)
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 14)
+
+	frame := m.View().Content
+	shellAssertFits(t, "front screen squeezed", frame, 100, 14)
+	if !strings.Contains(frame, mnCoverMark) {
+		t.Fatalf("the artwork is absent at 100x14, where it fits beside the menu:\n%s", frame)
+	}
+	for _, o := range m.list.opts {
+		if !strings.Contains(frame, o.label) {
+			t.Errorf("the artwork cost the menu the entry %q:\n%s", o.label, frame)
+		}
+	}
+}
+
+// Leaving. The way out has to be visible on the front screen and work from
+// every level: the plain quit letter and the Quit entry at the top, escape one
+// level down, and the shell's global quit key at any depth.
+
+func TestMenuLeavingWorksFromEveryLevel(t *testing.T) {
+	d := shellTestDeps(t)
+
+	// The plain letter quits from the front list, and the status line says so.
+	m := mnMenu(t, d, 100, 30)
+	if !strings.Contains(m.View().Content, "q quit") {
+		t.Errorf("the front screen does not name the way out:\n%s", m.View().Content)
+	}
+	cmd := shellSend(t, m, "q")
+	if cmd == nil {
+		t.Fatal("q produced no command on the front list")
+	}
+	if done, _ := cmd().(DoneMsg); !done.Quit {
+		t.Errorf("q produced %+v, want a quit", cmd())
+	}
+
+	// The Quit entry quits.
+	m = mnMenu(t, d, 100, 30)
+	cmd = mnPick(t, m, "Quit")
+	if cmd == nil {
+		t.Fatal("the Quit entry produced no command")
+	}
+	if done, _ := cmd().(DoneMsg); !done.Quit {
+		t.Errorf("the Quit entry produced %+v, want a quit", cmd())
+	}
+
+	// One level down the letter is not a trapdoor, and escape goes back up.
+	m = mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Settings")
+	if cmd := shellSend(t, m, "q"); cmd != nil {
+		if done, _ := cmd().(DoneMsg); done.Quit {
+			t.Error("q ended the program from inside a form")
+		}
+	}
+	shellSend(t, m, "esc")
+	if m.form != nil {
+		t.Fatalf("escape from one level down left %T open", m.form)
+	}
+
+	// The global quit key ends the program from any depth, because the shell
+	// answers it before the menu sees it.
+	menu := NewMenu(d, "Balint")
+	shell := NewShell(d, menu)
+	shell.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	for range 5 {
+		shellSend(t, shell, "down")
+	}
+	shellSend(t, shell, "enter")
+	if menu.form == nil {
+		t.Fatal("the walk did not open a level below the front list")
+	}
+	cmd = shellSend(t, shell, "ctrl+c")
+	if cmd == nil {
+		t.Fatal("the global quit key produced no command one level down")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("the global quit key produced %T, want the program's end", cmd())
+	}
+}
+
+// The settings panel. What it stores must be what a new game's form starts
+// from, on this menu and on the next one this machine opens.
+
+func TestMenuSettingsChangeWhatANewGameStartsWith(t *testing.T) {
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 30)
+
+	mnPick(t, m, "Settings")
+	mnPick(t, m, "Rules")
+	mnPick(t, m, "pp")
+	if got := mnChooser(t, m).title; got != "Settings" {
+		t.Fatalf("answering a settings question landed on %q, want back on Settings", got)
+	}
+	mnPick(t, m, "Board")
+	mnPick(t, m, "12x12")
+	mnPick(t, m, "Hints")
+	mnPick(t, m, "not offered")
+
+	// The list itself now reads as a summary of what was chosen.
+	frame := m.View().Content
+	for _, want := range []string{"Rules — pp", "Board — 12x12", "Hints — not offered"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("the settings list does not say %q:\n%s", want, frame)
+		}
+	}
+	shellSend(t, m, "esc")
+
+	// Pressing enter through the new-game questions now gives the configured
+	// game, which is the whole point of a default.
+	walk := func(m *Menu) GameConfig {
+		mnPick(t, m, "Play")
+		mnPick(t, m, "the computer")
+		shellSend(t, m, "enter") // how strong an opponent
+		shellSend(t, m, "enter") // which side
+		shellSend(t, m, "enter") // which rules
+		return mnStartedConfig(t, shellSend(t, m, "enter"))
+	}
+	cfg := walk(m)
+	if got := cfg.Rules.PresetName(); got != "pp" {
+		t.Errorf("the default game uses %q rules, want the stored pp", got)
+	}
+	if cfg.Rules.Size != 12 {
+		t.Errorf("the default board is %d, want the stored 12", cfg.Rules.Size)
+	}
+	if cfg.Hints {
+		t.Error("hints are offered although the setting turned them off")
+	}
+
+	// A second menu on the same machine reads the choices back from disk.
+	m2 := NewMenu(d, "Balint")
+	m2.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	cfg = walk(m2)
+	if got := cfg.Rules.PresetName(); got != "pp" || cfg.Rules.Size != 12 || cfg.Hints {
+		t.Errorf("the next menu forgot the stored defaults: %s rules, size %d, hints %v",
+			got, cfg.Rules.Size, cfg.Hints)
+	}
+}
+
+// TestMenuDefaultsSurviveACorruptFile: a broken defaults file degrades to the
+// documented game rather than to a menu that will not open.
+func TestMenuDefaultsSurviveACorruptFile(t *testing.T) {
+	d := shellTestDeps(t)
+	if err := os.WriteFile(filepath.Join(d.ConfigDir, defaultsFile), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Play")
+	mnPick(t, m, "the computer")
+	shellSend(t, m, "enter")
+	shellSend(t, m, "enter")
+	shellSend(t, m, "enter")
+	cfg := mnStartedConfig(t, shellSend(t, m, "enter"))
+	if got := cfg.Rules.PresetName(); got != game.Std.PresetName() || cfg.Rules.Size != game.Std.Size {
+		t.Errorf("a corrupt defaults file changed the game to %s at %d", got, cfg.Rules.Size)
+	}
+	if !cfg.Hints {
+		t.Error("a corrupt defaults file turned hints off")
+	}
+}
+
+// Correspondence from the menu: the third way over the network. Starting mints
+// an invitation and a stored game; accepting stores the invited game; both end
+// on the board with the exchange, and the continue list resumes one the same
+// way the command line would.
+
+func TestMenuStartsACorrespondenceGame(t *testing.T) {
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Play")
+	mnPick(t, m, "someone over the network")
+	mnPick(t, m, "start a correspondence game")
+	mnPick(t, m, "vertical")
+	mnPick(t, m, "std")
+	mnPick(t, m, "12x12")
+
+	f, ok := m.form.(*inviteForm)
+	if !ok {
+		t.Fatalf("after the terms the form is %T, want the invitation", m.form)
+	}
+	if f.code == "" {
+		t.Fatal("the invitation is empty")
+	}
+	saved := d.Games.List()
+	if len(saved) != 1 {
+		t.Fatalf("%d games stored, want the one just started", len(saved))
+	}
+	sv := saved[0]
+	if sv.Kind != gamestore.Correspondence || sv.Side != "vertical" {
+		t.Errorf("stored a %s game on side %q", sv.Kind, sv.Side)
+	}
+	if sv.Opponent != corrUnknownOpponent {
+		t.Errorf("the opponent is %q, want the stand-in the command line uses", sv.Opponent)
+	}
+	frame := m.View().Content
+	if !strings.Contains(frame, f.code[:16]) {
+		t.Errorf("the invitation is not on screen to be copied:\n%s", frame)
+	}
+
+	cfg := mnStartedConfig(t, shellSend(t, m, "enter"))
+	if !cfg.Codes || cfg.Session != nil {
+		t.Errorf("the board opened with codes=%v session=%v, want the exchange", cfg.Codes, cfg.Session != nil)
+	}
+	if cfg.StoreID != sv.ID {
+		t.Errorf("the board is bound to %q, want the stored game %q", cfg.StoreID, sv.ID)
+	}
+	if seat := cfg.Seats[game.Vertical]; !seat.Human() || seat.Profile != "Balint" {
+		t.Errorf("the vertical seat is %+v, want the local player", seat)
+	}
+	if seat := cfg.Seats[game.Horizontal]; !seat.Remote {
+		t.Errorf("the horizontal seat is %+v, want the absent opponent", seat)
+	}
+}
+
+// TestMenuCorrespondenceEscapeKeepsTheGame: escape from the invitation cannot
+// walk back into the form — going forward again would mint a second game — so
+// it returns to the front list and says where the game is.
+func TestMenuCorrespondenceEscapeKeepsTheGame(t *testing.T) {
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Play")
+	mnPick(t, m, "someone over the network")
+	mnPick(t, m, "start a correspondence game")
+	mnPick(t, m, "vertical")
+	mnPick(t, m, "std")
+	mnPick(t, m, "12x12")
+	shellSend(t, m, "esc")
+
+	if m.form != nil {
+		t.Fatalf("escape from the invitation left %T open", m.form)
+	}
+	if got := len(d.Games.List()); got != 1 {
+		t.Fatalf("%d games stored after backing out, want the one already minted", got)
+	}
+	if !strings.Contains(m.message, "Continue a saved game") {
+		t.Errorf("backing out does not say where the game went: %q", m.message)
+	}
+}
+
+func TestMenuAcceptsACorrespondenceInvitation(t *testing.T) {
+	invite, err := netplay.NewInvite(game.Std, game.Vertical, "Reka")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := netplay.EncodeInvite(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Play")
+	mnPick(t, m, "someone over the network")
+	mnPick(t, m, "accept a correspondence invitation")
+	mnTypeInto(t, m, code)
+	cfg := mnStartedConfig(t, shellSend(t, m, "enter"))
+
+	if !cfg.Codes {
+		t.Error("accepting did not open the exchange")
+	}
+	if seat := cfg.Seats[game.Horizontal]; !seat.Human() || seat.Profile != "Balint" {
+		t.Errorf("the guest of a vertical host is seated as %+v, want the local player on horizontal", seat)
+	}
+	if seat := cfg.Seats[game.Vertical]; !seat.Remote || seat.Label != "Reka" {
+		t.Errorf("the host's seat is %+v, want the remote Reka", seat)
+	}
+	saved := d.Games.List()
+	if len(saved) != 1 || saved[0].Kind != gamestore.Correspondence || saved[0].Opponent != "Reka" {
+		t.Fatalf("the accepted game is stored as %+v", saved)
+	}
+
+	// Accepting the same invitation twice is refused with a pointer to the
+	// game that already exists, on the form where the code was pasted.
+	m2 := mnMenu(t, d, 100, 30)
+	mnPick(t, m2, "Play")
+	mnPick(t, m2, "someone over the network")
+	mnPick(t, m2, "accept a correspondence invitation")
+	mnTypeInto(t, m2, code)
+	shellSend(t, m2, "enter")
+	if _, still := m2.form.(*textForm); !still {
+		t.Fatalf("a duplicate invitation replaced the form with %T", m2.form)
+	}
+	if !strings.Contains(m2.message, "already have") {
+		t.Errorf("a duplicate invitation was refused with %q", m2.message)
+	}
+	if got := len(d.Games.List()); got != 1 {
+		t.Errorf("%d games stored after a duplicate accept, want still 1", got)
+	}
+}
+
+func TestMenuResumesACorrespondenceGame(t *testing.T) {
+	for _, opponent := range []string{corrUnknownOpponent, leaderboard.RemoteName("Zsofia")} {
+		d := shellTestDeps(t)
+		sv := mnSaveGame(t, d, gamestore.Correspondence, "Balint", opponent)
+		m := mnMenu(t, d, 100, 30)
+		mnPick(t, m, "Continue a saved game")
+
+		c := mnChooser(t, m)
+		if len(c.opts) != 1 || c.opts[0].disabled {
+			t.Fatalf("the correspondence game is not offered as playable: %+v", c.opts)
+		}
+		cfg := mnStartedConfig(t, shellSend(t, m, "enter"))
+		if !cfg.Codes || cfg.Session != nil {
+			t.Errorf("opponent %q: resumed with codes=%v session=%v, want the exchange",
+				opponent, cfg.Codes, cfg.Session != nil)
+		}
+		if cfg.StoreID != sv.ID {
+			t.Errorf("opponent %q: bound to %q, want %q", opponent, cfg.StoreID, sv.ID)
+		}
+		seat := cfg.Seats[game.Horizontal]
+		if !seat.Remote {
+			t.Errorf("opponent %q: the other seat is %+v, want a remote one", opponent, seat)
+		}
+		if seat.Label != leaderboard.BareName(opponent) {
+			t.Errorf("opponent %q: the seat label is %q, want the bare name that round-trips",
+				opponent, seat.Label)
+		}
+	}
+}
+
+// Watching. Finished and imported games are for stepping through; unfinished
+// ones are for continuing; the two lists must not leak into one another.
+
+// mnSaveGameOver writes a finished game to the store.
+func mnSaveGameOver(t *testing.T, d Deps, player, opponent string) gamestore.Saved {
+	t.Helper()
+	sv := mnSaveGame(t, d, gamestore.VersusBot, player, opponent)
+	sv.Finished = true
+	if err := d.Games.Put(sv); err != nil {
+		t.Fatal(err)
+	}
+	return sv
+}
+
+func TestMenuSaysWhenThereIsNothingToWatch(t *testing.T) {
+	d := shellTestDeps(t)
+	mnSaveGame(t, d, gamestore.VersusBot, "Balint", leaderboard.BotName("beginner"))
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Watch a finished game")
+
+	if m.form != nil {
+		t.Fatalf("an empty list opened as %T", m.form)
+	}
+	if !strings.Contains(m.message, "No finished games") {
+		t.Errorf("nothing to watch said %q", m.message)
+	}
+	if !strings.Contains(m.View().Content, "No finished games") {
+		t.Errorf("the answer is not on screen:\n%s", m.View().Content)
+	}
+}
+
+func TestMenuWatchAndContinueSplitTheStore(t *testing.T) {
+	d := shellTestDeps(t)
+	open := mnSaveGame(t, d, gamestore.VersusBot, "Balint", leaderboard.BotName("beginner"))
+	over := mnSaveGameOver(t, d, "Balint", leaderboard.BotName("pro"))
+
+	m := mnMenu(t, d, 100, 30)
+	mnPick(t, m, "Continue a saved game")
+	c := mnChooser(t, m)
+	if len(c.opts) != 1 {
+		t.Fatalf("continue lists %d games, want only the unfinished one", len(c.opts))
+	}
+	if got, _ := c.opts[0].value.(gamestore.Saved); got.ID != open.ID {
+		t.Errorf("continue lists %q, want the unfinished %q", got.ID, open.ID)
+	}
+	shellSend(t, m, "esc")
+
+	mnPick(t, m, "Watch a finished game")
+	c = mnChooser(t, m)
+	if len(c.opts) != 1 {
+		t.Fatalf("watch lists %d games, want only the finished one", len(c.opts))
+	}
+	if got, _ := c.opts[0].value.(gamestore.Saved); got.ID != over.ID {
+		t.Errorf("watch lists %q, want the finished %q", got.ID, over.ID)
+	}
+}
+
+// TestMenuInitOpensNothingOnceTheIntroductionIsSeen pins the quiet half of the
+// first-run contract: a machine that has been through the introduction gets
+// the menu and nothing on top of it.
+func TestMenuInitOpensNothingOnceTheIntroductionIsSeen(t *testing.T) {
+	d := shellTestDeps(t)
+	m := mnMenu(t, d, 100, 30)
+	if !OnboardingSeen(d) {
+		t.Skip("this machine has not seen the introduction; the real onboarding branch owns that path")
+	}
+	if cmd := m.Init(); cmd != nil {
+		t.Errorf("Init produced %T although the introduction was seen", cmd())
 	}
 }
