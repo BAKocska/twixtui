@@ -99,7 +99,8 @@ func startCorrespondence(cmd *cobra.Command, deps app.Deps, player string, f *ga
 		Player: player,
 		Side:   side.String(),
 		// The invitation is open: whoever accepts it is not known here, and no
-		// code carries a name, so the host never learns it.
+		// move code carries a name, so the host never learns it. The stand-in
+		// therefore stays for the life of the game and has to read like one.
 		Opponent: unknownOpponent,
 		Record:   rec.Encode(),
 	}
@@ -122,9 +123,16 @@ func startCorrespondence(cmd *cobra.Command, deps app.Deps, player string, f *ga
 }
 
 // unknownOpponent stands in for a player whose name this end has no way of
-// learning. It is worded to read in the sentences it appears in, such as
-// "waiting for your opponent".
-const unknownOpponent = "your opponent"
+// learning: the host mints an open invitation and nothing that comes back
+// carries a name, so this is what their saved game is called for good.
+//
+// It has to read as a description of a person, because that is the slot it
+// lands in — a listing renders "Ada vs %s (vertical)". The second-person
+// "your opponent" that stood here read as a mistake in exactly that place,
+// as though a name had been lost; a noun phrase saying there is no name
+// reads as the deliberate thing it is. It also has to survive the sentences
+// the join path prints it in, such as "Joined game against %s".
+const unknownOpponent = "an unnamed opponent"
 
 // joinCorrespondence accepts an invitation.
 func joinCorrespondence(cmd *cobra.Command, deps app.Deps, player, code string) error {

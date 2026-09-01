@@ -99,6 +99,81 @@ func corruptCode(code string) string {
 	return code + "0"
 }
 
+// TestAFullLengthCodeIsNotReportedAsTruncated covers the one damaged code the
+// padding-bit check used to misname. Altering the final base32 character can
+// leave every payload byte alone and change only the bits at the end that
+// carry nothing; the refusal then said part of the code was missing, and sent
+// the player looking for a tail that was never lost. The code must still be
+// refused, and the refusal must describe damage rather than absence.
+func TestAFullLengthCodeIsNotReportedAsTruncated(t *testing.T) {
+	g := game.MustNew(testRules())
+	code, err := EncodeMove(g, "GAME", "B1")
+	if err != nil {
+		t.Fatalf("encoding: %v", err)
+	}
+	v, ok := codeValue(rune(code[len(code)-1]))
+	if !ok {
+		t.Fatalf("the code ends in %q, which is not a code character", code[len(code)-1:])
+	}
+	// Flipping the low bit of the last character is the alteration the checksum
+	// cannot see: those bits are the padding, so the payload decodes to exactly
+	// the same bytes and only the code's text differs.
+	altered := code[:len(code)-1] + string(codeAlphabet[v^1])
+	if altered == code || len(altered) != len(code) {
+		t.Fatalf("the last character was not altered: %q became %q", code, altered)
+	}
+
+	_, err = ApplyMove(g, "GAME", altered)
+	if !errors.Is(err, ErrBadCode) {
+		t.Fatalf("an altered code returned %v", err)
+	}
+	if strings.Contains(err.Error(), "missing") {
+		t.Errorf("a code of full length is refused as truncated: %v", err)
+	}
+	if !strings.Contains(err.Error(), "send it again") {
+		t.Errorf("the refusal does not ask for a fresh copy, which is the only remedy: %v", err)
+	}
+	if g.Entries() != 0 {
+		t.Fatalf("the altered code changed the game to %d entries", g.Entries())
+	}
+}
+
+// TestATruncatedCodeIsStillReportedAsALoss is the other half of the same
+// decision. Cutting characters off usually leaves a length no whole code can
+// have — five bits a character leaves at most four over — and that is the one
+// fault whose cause can be named, so it must not be flattened into the general
+// "did not survive being copied".
+func TestATruncatedCodeIsStillReportedAsALoss(t *testing.T) {
+	g := game.MustNew(testRules())
+	code, err := EncodeMove(g, "GAME", "B1")
+	if err != nil {
+		t.Fatalf("encoding: %v", err)
+	}
+	body := strings.ReplaceAll(strings.TrimPrefix(code, movePrefix+"-"), "-", "")
+	tried := 0
+	for k := 1; k < 8; k++ {
+		if (5*(len(body)-k))%8 < 5 {
+			// A length a whole code could have: only the checksum can speak.
+			continue
+		}
+		tried++
+		short := movePrefix + "-" + body[:len(body)-k]
+		_, err := ApplyMove(g, "GAME", short)
+		if !errors.Is(err, ErrBadCode) {
+			t.Fatalf("a code %d characters short returned %v", k, err)
+		}
+		if !strings.Contains(err.Error(), "missing") {
+			t.Errorf("cutting %d characters off is not reported as a loss: %v", k, err)
+		}
+	}
+	if tried == 0 {
+		t.Fatal("no truncation within eight characters leaves an impossible length")
+	}
+	if g.Entries() != 0 {
+		t.Fatalf("a truncated code changed the game to %d entries", g.Entries())
+	}
+}
+
 func TestCorrespondenceCodeRejectsMissingGameID(t *testing.T) {
 	g := game.MustNew(testRules())
 	if _, err := EncodeMove(g, "", "B1"); err == nil || !strings.Contains(err.Error(), "game identifier") {

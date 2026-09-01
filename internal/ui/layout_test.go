@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -38,7 +39,7 @@ func checkFrameInvariants(t *testing.T, frame string, w, h int) {
 		}
 	}
 	board := strings.ContainsRune(frame, glyphHole)
-	notice := strings.Contains(frame, clipTo("terminal too small", w))
+	notice := tooSmallNotice(frame)
 	if !board && !notice {
 		t.Errorf("%dx%d: neither board nor too-small notice present:\n%s", w, h, frame)
 	}
@@ -51,11 +52,17 @@ func checkFrameInvariants(t *testing.T, frame string, w, h int) {
 	}
 }
 
-func clipTo(s string, w int) string {
-	if len(s) > w {
-		return s[:w]
+// tooSmallNotice reports whether the frame is the too-small notice rather than
+// a board. The notice trims its wording to the width it has, so this asks for
+// any of its forms rather than for one fixed sentence.
+func tooSmallNotice(frame string) bool {
+	for _, line := range strings.Split(frame, "\n") {
+		switch strings.TrimSpace(line) {
+		case "terminal too small", "too small", "small", "!":
+			return true
+		}
 	}
-	return s
+	return false
 }
 
 func TestFrameInvariantsAcrossSizeMatrix(t *testing.T) {
@@ -121,8 +128,41 @@ func TestTooSmallStateIsExplicit(t *testing.T) {
 		if strings.ContainsRune(frame, glyphHole) {
 			t.Errorf("%dx%d: board rendered below the minimum size", s[0], s[1])
 		}
-		if !strings.Contains(frame, clipTo("terminal too small", s[0])) {
+		if !tooSmallNotice(frame) {
 			t.Errorf("%dx%d: no too-small notice:\n%q", s[0], s[1], frame)
+		}
+	}
+}
+
+// TestTooSmallNoticeIsNeverCutMidWord holds the one property this notice must
+// have. It is shown because the terminal is under the minimum, so at nearly
+// every width it can appear at the full sentence does not fit, and a notice cut
+// to "terminal too sm" describes the program rather than the window. Every word
+// on screen therefore has to be a whole word.
+//
+// The vocabulary is closed on purpose. A form quoting a stale bound fails here
+// as surely as a cut one, because the size below is derived from the very
+// constants that put the frame into this state.
+func TestTooSmallNoticeIsNeverCutMidWord(t *testing.T) {
+	size := strconv.Itoa(MinWidth) + "x" + strconv.Itoa(MinHeight)
+	whole := map[string]bool{
+		"terminal": true, "too": true, "small": true, "need": true, size: true, "!": true,
+	}
+	for w := 1; w < MinWidth; w++ {
+		for _, h := range []int{1, 2, MinHeight - 1, MinHeight, 24} {
+			frame := frameAt(t, w, h)
+			said := false
+			for _, line := range strings.Split(frame, "\n") {
+				for _, word := range strings.Fields(line) {
+					said = true
+					if !whole[word] {
+						t.Errorf("%dx%d: %q is not a whole word of the notice:\n%s", w, h, word, frame)
+					}
+				}
+			}
+			if !said {
+				t.Errorf("%dx%d: the notice says nothing at all", w, h)
+			}
 		}
 	}
 }

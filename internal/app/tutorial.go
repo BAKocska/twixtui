@@ -766,26 +766,40 @@ func (m *tutorialModel) arrange() ui.Arrangement {
 // tutorialArrange lays a lesson out: the board at the top, the prose panel
 // below it, and the panel set to a measure rather than to the terminal.
 //
-// ui.Arrange decides the too-small case, the drawing scale and the board's
-// natural size. What the tutorial changes is where the panel goes and how the
-// remaining rows are split, because Arrange's preference for a narrow side
-// panel is right for a game screen showing a turn line and wrong for a screen
-// whose content is several sentences: the same paragraph needs three times as
-// many lines at 36 columns as it does across a wide pane, so at every terminal
-// size a panel below the board holds more of it. Its width stops at
-// tutorialMeasure, since beyond that a wider pane costs the reader more in
-// finding the next line than it saves in lines.
+// ui.Arrange decides the too-small case. What the tutorial changes is where the
+// panel goes, how the remaining rows are split, and — because of that split —
+// which scale the board is drawn at. The panel goes below rather than beside,
+// because Arrange's preference for a narrow side panel is right for a game
+// screen showing a turn line and wrong for a screen whose content is several
+// sentences: the same paragraph needs three times as many lines at 36 columns
+// as it does across a wide pane, so at every terminal size a panel below the
+// board holds more of it. Its width stops at tutorialMeasure, since beyond that
+// a wider pane costs the reader more in finding the next line than it saves in
+// lines.
+//
+// The scale is then chosen against the rows the board is actually left with,
+// not against the terminal. Taking the panel's rows first and keeping the scale
+// Arrange picked for the whole screen is how a lesson ends up pointing at holes
+// that are behind the viewport arrow: at 100x30 the detail board is 24 rows and
+// the screen has 29, so Arrange says detail, but the prose takes eight of them
+// and the last three rows of the board — two missing corners and the whole
+// bottom group of highlighted holes — go off the bottom, while the compact
+// board is 13 rows and would have fitted whole with room to spare. The trade is
+// a coarser drawing, which costs a lesson little, against holes that are not on
+// screen at all, which costs it the lesson.
 func tutorialArrange(width, height, n int) ui.Arrangement {
 	arr := ui.Arrange(width, height, n)
 	if arr.TooSmall {
 		return arr
 	}
 	avail := height - 1 // ui.Arrange keeps the bottom row for the status line
-	boardH := arr.BoardH
-	if avail-boardH < tutorialPanelTarget {
-		boardH = min(boardH, max(tutorialMinBoardH, avail-tutorialPanelTarget))
-	}
+	budget := max(tutorialMinBoardH, avail-tutorialPanelTarget)
+	arr.Scale = ui.ScaleFor(width, budget, n)
+
+	blockW, blockH := arr.Scale.BlockSize(n)
+	boardH := min(blockH, budget)
 	arr.Panel = ui.PanelBottom
+	arr.BoardW = min(blockW, width)
 	arr.BoardH = boardH
 	arr.PanelW = min(width, tutorialMeasure)
 	arr.PanelH = avail - boardH

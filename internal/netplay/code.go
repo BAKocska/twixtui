@@ -631,7 +631,7 @@ func parseCode(code, prefix string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("%w: a %s code starts with %s-", ErrBadCode, kindOf(prefix), prefix)
 	}
-	payload, err := decode32(body)
+	payload, padded, err := decode32(body)
 	if err != nil {
 		return nil, err
 	}
@@ -642,6 +642,17 @@ func parseCode(code, prefix string) ([]byte, error) {
 	want := binary.BigEndian.Uint32(payload[split:])
 	if got := crc32.ChecksumIEEE(payload[:split]); got != want {
 		return nil, fmt.Errorf("%w: the code did not survive being copied (checksum %08x, expected %08x); ask your opponent to send it again", ErrBadCode, got, want)
+	}
+	if padded {
+		// The payload is whole and it checksums, so the damage is confined to
+		// the bits of the last character that carry nothing: only the last
+		// character can have been altered, since anything lost or changed
+		// earlier moves a payload byte and the checksum above would have
+		// spoken. This is the one message that can name where the fault is,
+		// and the one place that must not repeat the truncation story —
+		// telling a player to look for a lost tail that is not lost sends them
+		// hunting for text that was never sent.
+		return nil, fmt.Errorf("%w: the last character of the code was altered on the way; ask your opponent to send it again", ErrBadCode)
 	}
 	return payload, nil
 }
@@ -739,16 +750,25 @@ func encode32(src []byte) string {
 	return string(out)
 }
 
-// decode32 reverses encode32. The padding bits of the last character must be
-// zero: it costs nothing to check and it catches a code that lost its tail.
-func decode32(s string) ([]byte, error) {
+// decode32 reverses encode32. It returns the payload, and separately whether
+// the last character's padding bits were not zero, which the caller weighs
+// against the checksum rather than reporting on its own: non-zero padding
+// means either a lost tail or an altered final character, and only the
+// checksum can tell those apart.
+//
+// A wrong length, on the other hand, decode32 can diagnose alone. Five bits
+// per character leaves at most four over, so a code whose bits do not divide
+// that way is not the length any whole code has, and characters must have gone
+// missing. That is worth saying before the checksum is consulted, because it
+// is the only diagnosis that names a cause.
+func decode32(s string) ([]byte, bool, error) {
 	out := make([]byte, 0, len(s)*5/8)
 	var acc uint32
 	var bits uint
 	for _, r := range s {
 		v, ok := codeValue(r)
 		if !ok {
-			return nil, fmt.Errorf("%w: the code contains %q, which is not part of a code", ErrBadCode, string(r))
+			return nil, false, fmt.Errorf("%w: the code contains %q, which is not part of a code", ErrBadCode, string(r))
 		}
 		acc = acc<<5 | uint32(v)
 		bits += 5
@@ -757,10 +777,10 @@ func decode32(s string) ([]byte, error) {
 			out = append(out, byte((acc>>bits)&0xff))
 		}
 	}
-	if bits > 0 && acc&((1<<bits)-1) != 0 {
-		return nil, fmt.Errorf("%w: the code ends in the middle of a character; part of it is probably missing", ErrBadCode)
+	if bits >= 5 {
+		return nil, false, fmt.Errorf("%w: the code ends in the middle of a character; part of it is probably missing", ErrBadCode)
 	}
-	return out, nil
+	return out, bits > 0 && acc&((1<<bits)-1) != 0, nil
 }
 
 func shortSum(sum [sha256.Size]byte) string {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -53,6 +54,23 @@ type Arrangement struct {
 	PanelW, PanelH int
 }
 
+// ScaleFor picks the drawing scale for an n-hole board from the space the
+// board itself is going to get: the detail scale when its whole block fits
+// there, the compact one otherwise, which a viewport then clips if even that
+// does not fit.
+//
+// The space to pass is the board's share, not the terminal's. A caller that
+// takes rows away from the board before drawing — the tutorial gives most of
+// the screen to its prose — and asks about the terminal instead will choose
+// detail for a board that then has to be clipped, when compact would have
+// shown the whole of it.
+func ScaleFor(width, height, n int) Scale {
+	if w, h := Detail.BlockSize(n); w <= width && h <= height {
+		return Detail
+	}
+	return Compact
+}
+
 // Arrange decides the layout for a terminal of width×height showing an n-hole
 // board. The rules, in order: the detail scale is used when its full board
 // fits; otherwise the compact scale, with a viewport when even that does not
@@ -66,10 +84,7 @@ func Arrange(width, height, n int) Arrangement {
 	}
 	availH := height - 1 // status line
 
-	arr.Scale = Compact
-	if w, h := Detail.BlockSize(n); w <= width && h <= availH {
-		arr.Scale = Detail
-	}
+	arr.Scale = ScaleFor(width, availH, n)
 
 	blockW, blockH := arr.Scale.BlockSize(n)
 	arr.BoardW = min(blockW, width)
@@ -149,13 +164,32 @@ func Compose(arr Arrangement, board, panel []string, status string, st *Styles) 
 	return strings.Join(lines, "\n")
 }
 
-// composeTooSmall renders the explicit too-small notice, itself clipped to the
-// terminal. It never panics, whatever the size.
+// composeTooSmall renders the explicit too-small notice. It never panics,
+// whatever the size.
+//
+// The notice is the one message that must fit, because it appears precisely
+// when the terminal is too small to hold anything: clipped to "terminal too
+// sm" it reads as a program that is broken rather than as a window that is.
+// Each line therefore has a series of forms, widest first, and the widest one
+// that fits whole is used; a line with no form short enough is dropped rather
+// than cut. The first line's last form is a single character, since at three
+// columns saying that something is wrong is the whole of what can be said.
+// Because only whole forms are emitted, nothing here can overflow the width,
+// which matters: this is the one frame Compose does not clip afterwards.
 func composeTooSmall(arr Arrangement, st *Styles) string {
 	if arr.Width < 1 || arr.Height < 1 {
 		return ""
 	}
-	msg := []string{"terminal too small", "need 20x6"}
+	// The size is derived rather than written out, so the bounds and the
+	// notice that quotes them cannot drift apart.
+	size := strconv.Itoa(MinWidth) + "x" + strconv.Itoa(MinHeight)
+	msg := make([]string, 0, 2)
+	if m := widestFit(arr.Width, "terminal too small", "too small", "small", "!"); m != "" {
+		msg = append(msg, m)
+	}
+	if m := widestFit(arr.Width, "need "+size, size); m != "" {
+		msg = append(msg, m)
+	}
 	if len(msg) > arr.Height {
 		msg = msg[:arr.Height]
 	}
@@ -165,11 +199,20 @@ func composeTooSmall(arr Arrangement, st *Styles) string {
 		lines = append(lines, "")
 	}
 	for _, m := range msg {
-		if len(m) > arr.Width {
-			m = m[:arr.Width]
-		}
 		indent := max(0, (arr.Width-len(m))/2)
 		lines = append(lines, strings.Repeat(" ", indent)+st.apply(styLabel, m))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// widestFit returns the first of forms that fits in width, or "" when none
+// does. Callers list forms widest first. The forms are plain ASCII, so their
+// byte length is their width on screen.
+func widestFit(width int, forms ...string) string {
+	for _, f := range forms {
+		if len(f) <= width {
+			return f
+		}
+	}
+	return ""
 }
