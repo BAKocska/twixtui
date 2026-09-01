@@ -1050,12 +1050,27 @@ func TestTwoUnconnectedLinksAreDrawnApart(t *testing.T) {
 // the ruleset lets two of a player's links cross, they do have to share a cell —
 // their endpoints interleave, so no routing can separate them — and there the
 // glyph has to say they cross rather than meet. game.LinksCross is the authority
-// on which of the two it is.
-func TestEveryCrossingIsDrawnAsACrossing(t *testing.T) {
+// TestEveryCrossingIsDrawnHonestly covers two links that cross, which only the
+// paper-and-pencil ruleset permits and then only between one player's own links.
+//
+// Two things must hold, and they are different things. Where the two links reach
+// the same cell, that cell may not be drawn as a junction — a junction is the
+// picture of lines meeting and a crossing is the picture of lines that do not —
+// so it carries the crossing glyph instead. Where they reach no common cell, at
+// the compact scale two crossing steep links land one above the other, there is
+// nothing to mark: neither link's cells claim anything about the other, and the
+// only way to put a crossing glyph on the picture would be to overwrite one of
+// the two strokes, which is the defect this renderer was fixed to stop. So the
+// requirement there is that both links keep every cell they drew.
+//
+// The sweep covers steep and shallow links alike. It used to enumerate shallow
+// links only, so the whole steep half of the geometry — including every crossing
+// a steep link takes part in — went unexamined.
+func TestEveryCrossingIsDrawnHonestly(t *testing.T) {
 	const n = 8
 	for _, sc := range []Scale{Compact, Detail} {
-		links := shallowLinks(n)
-		pairs, marked := 0, 0
+		var pairs, steepPairs int
+		links := allLinks(n)
 		for i := range links {
 			for j := i + 1; j < len(links); j++ {
 				a, b := links[i], links[j]
@@ -1063,27 +1078,126 @@ func TestEveryCrossingIsDrawnAsACrossing(t *testing.T) {
 					continue
 				}
 				pairs++
-				cv, shared := paintPair(sc, n, a, b)
-				crossings := 0
-				for _, k := range shared {
-					if !cv.bits[k].joins() {
-						continue // the two merged into one straight run
-					}
-					if cv.runes[k] != glyphCross {
+				both, _ := paintPair(sc, n, a, b)
+
+				// Whatever else happens, a crossing may not read as a meeting
+				// and may not cost either link its line.
+				for k, r := range both.runes {
+					if isJunctionGlyph(r) {
 						t.Fatalf("%s: %v and %v cross, yet cell (%d,%d) draws them meeting as %q",
-							sc, a, b, k%cv.w, k/cv.w, cv.runes[k])
+							sc, a, b, k%both.w, k/both.w, r)
 					}
-					crossings++
 				}
-				if crossings > 0 {
-					marked++
+				for _, l := range []game.Link{a, b} {
+					if gaps := drawnGaps(sc, both, l); len(gaps) != 0 {
+						t.Fatalf("%s: %v and %v cross, and %v is left broken at column(s) %v",
+							sc, a, b, l, gaps)
+					}
+				}
+
+				// A steep link has no choice of cells, so two crossing steep
+				// links either share a cell or they do not, and that does not
+				// depend on the order they were drawn in. Where they do share
+				// one, it has to say so: leaving the first link's diagonal there
+				// would hide the second link completely, since at the compact
+				// scale that one cell is all it has. Where they do not, there is
+				// nothing to mark, and marking it would mean overwriting a
+				// stroke — which is the defect this renderer exists to prevent.
+				if steep(a) && steep(b) {
+					steepPairs++
+					shared := 0
+					for k := range paintAlone(sc, n, a) {
+						if paintAlone(sc, n, b)[k] {
+							shared++
+							if both.runes[k] != glyphCross {
+								t.Fatalf("%s: steep %v and %v cross in cell (%d,%d), which shows %q rather than a crossing",
+									sc, a, b, k%both.w, k/both.w, both.runes[k])
+							}
+						}
+					}
 				}
 			}
 		}
-		if pairs < 100 || marked < 100 {
-			t.Fatalf("%s: %d crossing pairs, %d of them marked; the scan is not exercising the rule", sc, pairs, marked)
+		if pairs < 500 || steepPairs < 50 {
+			t.Fatalf("%s: %d crossing pairs and %d steep ones; the scan is not exercising the rule", sc, pairs, steepPairs)
 		}
 	}
+}
+
+// steep reports whether a link is a column-one, row-two knight's move, which is
+// drawn as an exact diagonal and has no choice of cells.
+func steep(l game.Link) bool {
+	from, to := l.Ends()
+	return abs(from.Col-to.Col) == 1
+}
+
+// drawnGaps reports the canvas columns strictly between a link's ends that carry
+// no link glyph on an already-painted canvas.
+func drawnGaps(sc Scale, cv *canvas, l game.Link) []int {
+	from, to := l.Ends()
+	x1, x2 := sc.holeX(from.Col), sc.holeX(to.Col)
+	if x1 > x2 {
+		x1, x2 = x2, x1
+	}
+	var gaps []int
+	for x := x1 + 1; x < x2; x++ {
+		painted := false
+		for y := range cv.h {
+			if isLinkGlyph(cv.runes[y*cv.w+x]) {
+				painted = true
+				break
+			}
+		}
+		if !painted {
+			gaps = append(gaps, x)
+		}
+	}
+	return gaps
+}
+
+// paintAlone draws one link on an otherwise empty board and returns the canvas
+// cells it put a link glyph in.
+func paintAlone(sc Scale, n int, l game.Link) map[int]bool {
+	cv, _ := paintLinks(sc, n, l)
+	out := map[int]bool{}
+	for i, r := range cv.runes {
+		if isLinkGlyph(r) {
+			out[i] = true
+		}
+	}
+	return out
+}
+
+// allLinks returns every link the board admits, steep and shallow alike.
+func allLinks(n int) []game.Link {
+	inside := func(p game.Point) bool {
+		if p.Col < 0 || p.Row < 0 || p.Col >= n || p.Row >= n {
+			return false
+		}
+		return !((p.Col == 0 || p.Col == n-1) && (p.Row == 0 || p.Row == n-1))
+	}
+	var out []game.Link
+	for row := range n {
+		for col := range n {
+			p := game.Point{Col: col, Row: row}
+			if !inside(p) {
+				continue
+			}
+			for d := game.Dir(0); d < game.NumDirs; d++ {
+				if !d.IsCanonical() {
+					continue
+				}
+				q := p.Add(d)
+				if !inside(q) {
+					continue
+				}
+				if l, ok := game.NewLink(p, q); ok {
+					out = append(out, l)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // TestACrossingReadsAsOneUnderThePPRuleset is the reproduction, through a
