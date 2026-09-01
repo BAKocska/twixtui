@@ -72,12 +72,20 @@ type canvas struct {
 	bits   []linkBits
 	bitIDs []styleID
 	// bitLink names the first link to reach a cell, one-based into links, and
-	// links holds every link the accumulation has seen. A second link arriving
-	// in a cell has to know which link it is meeting: two links sharing a peg
-	// are one connected line and belong in a junction, two that cross belong in
-	// a crossing glyph, and two that do neither must not share the cell at all.
-	bitLink []uint16
-	links   []game.Link
+	// links holds every link the accumulation has seen. A link arriving in a
+	// cell has to know which links it is meeting there: two that share a peg are
+	// one connected line and belong in a junction, and a pair that shares none
+	// must not be drawn as one.
+	//
+	// Recording only the first arrival was not enough. A third link was compared
+	// with the first and never with the second, so three links competing for one
+	// cell could be drawn as a junction on the strength of one pair while another
+	// pair met nowhere. contenders therefore holds every link that reached a
+	// cell, and only for the cells that more than one link reached, which is a
+	// handful per frame rather than a slot on every cell.
+	bitLink    []uint16
+	contenders map[int32][]uint16
+	links      []game.Link
 }
 
 func newCanvas(w, h int) *canvas {
@@ -103,10 +111,13 @@ const (
 	linkE
 	linkS
 	linkW
-	// linkCrossed records that the links which reached a cell cross, on
-	// game.LinksCross's authority and nothing else. It is not an edge, so it is
+	// linkUnjoined records that among the links which reached a cell there is a
+	// pair that meets at no peg. Two links that share a peg are one connected
+	// line and a junction is the truth about them; a pair that shares none is
+	// either crossing or merely passing, and in both cases a junction would
+	// assert a connection the game does not have. It is not an edge, so it is
 	// masked off before the junction table is indexed.
-	linkCrossed
+	linkUnjoined
 
 	linkEdges = linkN | linkE | linkS | linkW
 )
@@ -171,14 +182,50 @@ func (cv *canvas) connect(x, y int, b linkBits, id styleID, ref uint16) {
 		return
 	}
 	i := y*cv.w + x
-	switch {
-	case cv.bits[i].edges() == 0:
+	if cv.bits[i].edges() == 0 {
 		cv.bitIDs[i] = id
 		cv.bitLink[i] = ref
-	case cv.bitLink[i] != ref && game.LinksCross(cv.links[cv.bitLink[i]-1], cv.links[ref-1]):
-		cv.bits[i] |= linkCrossed
+		cv.bits[i] |= b
+		return
 	}
+	for _, prev := range cv.refsAt(i) {
+		if prev != ref && !sharesEnd(cv.links[prev-1], cv.links[ref-1]) {
+			cv.bits[i] |= linkUnjoined
+		}
+	}
+	cv.addContender(i, ref)
 	cv.bits[i] |= b
+}
+
+// refsAt lists every link that has reached a cell.
+func (cv *canvas) refsAt(i int) []uint16 {
+	if extra, ok := cv.contenders[int32(i)]; ok {
+		return extra
+	}
+	if cv.bitLink[i] == 0 {
+		return nil
+	}
+	return cv.bitLink[i : i+1]
+}
+
+// addContender remembers that another link reached a cell.
+func (cv *canvas) addContender(i int, ref uint16) {
+	if cv.bitLink[i] == ref {
+		return
+	}
+	all := cv.contenders[int32(i)]
+	if all == nil {
+		all = []uint16{cv.bitLink[i]}
+	}
+	for _, r := range all {
+		if r == ref {
+			return
+		}
+	}
+	if cv.contenders == nil {
+		cv.contenders = make(map[int32][]uint16)
+	}
+	cv.contenders[int32(i)] = append(all, ref)
 }
 
 // addLink registers a link whose connectivity is about to be accumulated and
@@ -212,7 +259,7 @@ func (cv *canvas) resolveLinks() {
 			cv.set(x, y, glyphCross, cv.bitIDs[i])
 		default:
 			r := junction[e]
-			if b&linkCrossed != 0 && b.joins() {
+			if b&linkUnjoined != 0 && b.joins() {
 				r = glyphCross
 			}
 			cv.set(x, y, r, cv.bitIDs[i])
@@ -493,7 +540,7 @@ func (s shallow) shapeCost(cv *canvas, k, r, off, cand int) (joins, shared int, 
 			blocked = true
 			return
 		}
-		if cv.bits[i].edges() == 0 || !cv.strangers(cv.bitLink[i], s.ref) {
+		if cv.bits[i].edges() == 0 || !cv.strangerToAny(i, s.ref) {
 			return
 		}
 		shared++
@@ -514,6 +561,18 @@ func (s shallow) shapeCost(cv *canvas, k, r, off, cand int) (joins, shared int, 
 		visit(s.x(i), r+s.sy, s.back|s.fwd, false)
 	}
 	return joins, shared, blocked
+}
+
+// strangerToAny reports whether a link would be misrepresented by joining any
+// of the links already in a cell. Asking about the first arrival alone let a
+// third link route into a cell it had no business sharing.
+func (cv *canvas) strangerToAny(i int, ref uint16) bool {
+	for _, prev := range cv.refsAt(i) {
+		if cv.strangers(prev, ref) {
+			return true
+		}
+	}
+	return false
 }
 
 // strangers reports whether two links would be misrepresented by sharing a

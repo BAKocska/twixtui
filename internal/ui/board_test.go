@@ -3,6 +3,7 @@ package ui
 import (
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1131,4 +1132,261 @@ func TestACrossingReadsAsOneUnderThePPRuleset(t *testing.T) {
 			}
 		}
 	}
+}
+
+// paintLinks draws a set of links over a board of holes and pegs and returns the
+// canvas together with every cell more than one of them reached.
+func paintLinks(sc Scale, n int, links ...game.Link) (*canvas, map[int][]game.Link) {
+	cw, ch := sc.CanvasSize(n)
+	cv := newCanvas(cw, ch)
+	for row := range n {
+		for col := range n {
+			if (col == 0 || col == n-1) && (row == 0 || row == n-1) {
+				continue
+			}
+			cv.set(sc.holeX(col), sc.holeY(row), glyphHole, styHole)
+		}
+	}
+	for _, l := range links {
+		for _, p := range []game.Point{l.From, l.To()} {
+			cv.set(sc.holeX(p.Col), sc.holeY(p.Row), glyphPegVertical, styPegVertical)
+		}
+	}
+	reached := map[int][]game.Link{}
+	for _, l := range links {
+		before := make([]linkBits, len(cv.bits))
+		copy(before, cv.bits)
+		sc.drawLink(cv, l, styLinkVertical)
+		for i := range cv.bits {
+			if cv.bits[i].edges() != before[i].edges() {
+				reached[i] = append(reached[i], l)
+			}
+		}
+	}
+	cv.resolveLinks()
+	shared := map[int][]game.Link{}
+	for i, ls := range reached {
+		if len(ls) > 1 {
+			shared[i] = ls
+		}
+	}
+	return cv, shared
+}
+
+// TestThreeLinksAreNeverDrawnAsAFalseJunction is the case pairwise reasoning
+// cannot see. A cell recorded only the first link that reached it, so a third
+// arrival was compared with the first and never with the second: three links
+// competing for one cell could be drawn as a junction on the strength of one
+// pair while another pair met at no peg. A junction says the lines it joins are
+// connected, so drawing one there changes what the board says about the game.
+//
+// The rule asserted here is the honest one and does not depend on how the
+// routing happens to place a step: wherever a cell is reached by two links that
+// share no peg, that cell may not be drawn as a junction. A crossing mark is
+// allowed, being the picture of lines that do not meet.
+func TestThreeLinksAreNeverDrawnAsAFalseJunction(t *testing.T) {
+	const n = 8
+	for _, sc := range []Scale{Compact, Detail} {
+		links := shallowLinks(n)
+		triples := 0
+		for i := range links {
+			for j := i + 1; j < len(links); j++ {
+				for k := j + 1; k < len(links); k++ {
+					set := []game.Link{links[i], links[j], links[k]}
+					if !anyPairMeetsNowhere(set) {
+						continue
+					}
+					triples++
+					cv, shared := paintLinks(sc, n, set...)
+					for cell, reached := range shared {
+						if !anyPairMeetsNowhere(reached) {
+							continue
+						}
+						if isJunctionGlyph(cv.runes[cell]) {
+							t.Fatalf("%s: %v reached cell (%d,%d) and a pair of them meets at no peg, yet it draws as the junction %q",
+								sc, reached, cell%cv.w, cell/cv.w, cv.runes[cell])
+						}
+					}
+				}
+			}
+		}
+		if triples < 5000 {
+			t.Fatalf("%s: only %d triples examined, so the scan is not the exhaustive one", sc, triples)
+		}
+	}
+}
+
+// anyPairMeetsNowhere reports whether some pair in a set of links shares no peg,
+// which is what makes a junction between them a lie.
+func anyPairMeetsNowhere(links []game.Link) bool {
+	for i := range links {
+		for j := i + 1; j < len(links); j++ {
+			if !sharesEnd(links[i], links[j]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isJunctionGlyph reports whether a rune is one of the box-drawing pieces that
+// joins three or more edges, which is the picture of lines meeting.
+func isJunctionGlyph(r rune) bool {
+	for b, j := range junction {
+		if j != 0 && r == j && linkBits(b).joins() {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNoFalseJunctionInRealPositions asserts the same rule on positions a game
+// actually reaches, at every supported board size, reading the contributors out
+// of the canvas the real paint produced so the instrument cannot disagree with
+// what was drawn.
+//
+// The exhaustive triple scan works on links placed by hand; this one covers what
+// competition for cells looks like when a board fills up. Stranger pairs do share
+// cells often — a few thousand times over these positions at the compact scale —
+// which is what makes the assertion worth making: sharing is normal, and the rule
+// is only that such a cell is never drawn as lines meeting.
+func TestNoFalseJunctionInRealPositions(t *testing.T) {
+	for _, n := range []int{8, 12, 18, 24} {
+		for _, sc := range []Scale{Compact, Detail} {
+			shared := 0
+			for seed := range 200 {
+				g := crowdedBoard(t, n, int64(seed)+int64(n)*1000)
+				cv := (&BoardView{Scale: sc}).paint(g)
+				for i := range cv.bits {
+					refs := cv.refsAt(i)
+					if len(refs) < 2 {
+						continue
+					}
+					ls := make([]game.Link, 0, len(refs))
+					for _, r := range refs {
+						ls = append(ls, cv.links[r-1])
+					}
+					if !anyPairMeetsNowhere(ls) {
+						continue
+					}
+					shared++
+					if isJunctionGlyph(cv.runes[i]) {
+						t.Fatalf("n=%d %s seed=%d: %v reached cell (%d,%d) and a pair of them meets at no peg, yet it draws as the junction %q",
+							n, sc, seed, ls, i%cv.w, i/cv.w, cv.runes[i])
+					}
+				}
+			}
+			// Guards against the sweep quietly measuring nothing.
+			if sc == Compact && shared == 0 {
+				t.Fatalf("n=%d compact: no stranger pair ever shared a cell, so this proved nothing", n)
+			}
+		}
+	}
+}
+
+// crowdedBoard plays pseudo-random legal moves until the board is half full or
+// the game ends, giving a position with many links competing for cells.
+func crowdedBoard(t *testing.T, n int, seed int64) *game.Game {
+	t.Helper()
+	rng := rand.New(rand.NewSource(seed))
+	rs := game.Std
+	rs.Size = n
+	g := game.MustNew(rs)
+	for range n * n / 2 {
+		if _, err := g.PlayPeg(game.Point{Col: rng.Intn(n), Row: rng.Intn(n)}); err != nil {
+			continue
+		}
+		if g.Result().Over() {
+			break
+		}
+	}
+	return g
+}
+
+// TestAPegOnEitherMidpointDoesNotBreakTheLink covers the cells a shallow link's
+// horizontal run has to cross: the two holes in the column between its ends. A
+// peg there keeps its cell, so the run must go round it by stepping on the other
+// side, and where both are occupied the link has to give way to the pegs — which
+// is the one case that cannot be drawn whole, so it is stated rather than hidden.
+func TestAPegOnEitherMidpointDoesNotBreakTheLink(t *testing.T) {
+	from := game.Point{Col: 3, Row: 3}
+	for _, d := range []game.Dir{game.ENE, game.ESE} {
+		to := from.Add(d)
+		upper := game.Point{Col: (from.Col + to.Col) / 2, Row: from.Row}
+		lower := game.Point{Col: upper.Col, Row: to.Row}
+		for _, blocked := range [][]game.Point{{upper}, {lower}, {upper, lower}} {
+			for _, owner := range []game.Player{game.Vertical, game.Horizontal} {
+				g := linkedPairWith(t, from, to, owner, blocked...)
+				gaps, frame := strokeGaps(t, Compact, g, from, to)
+				switch len(blocked) {
+				case 2:
+					// Both holes hold pegs. The pegs win their cells, so the run
+					// cannot pass; the link is legible from the strokes either
+					// side of them and nothing else can be done at this density.
+					if len(gaps) > 1 {
+						t.Errorf("%v, pegs on both midpoints, %v: %d columns carry no stroke, want at most the one the pegs occupy\n%s",
+							d, owner, len(gaps), frame)
+					}
+				default:
+					if len(gaps) != 0 {
+						t.Errorf("%v with a %v peg at %v: column(s) %v carry no stroke\n%s",
+							d, owner, blocked, gaps, frame)
+					}
+				}
+				for _, p := range blocked {
+					got := cellAt(t, renderPlain(t, &BoardView{Scale: Compact}, g), g.Size(), Compact.holeX(p.Col), Compact.holeY(p.Row))
+					if got != glyphPegVertical && got != glyphPegHorizontal && got != glyphPegVerticalLast && got != glyphPegHorizontalLast {
+						t.Errorf("%v with a peg at %v: the peg renders %q", d, p, got)
+					}
+				}
+			}
+		}
+	}
+}
+
+// linkedPairWith plays a vertical link from-to and gives the named holes to one
+// player or the other, so a midpoint can be blocked by either colour. Vertical
+// moves first, so the fillers are interleaved to put each peg in the right hands
+// without either side forming a link of its own near the one under test.
+func linkedPairWith(t *testing.T, from, to game.Point, owner game.Player, blocked ...game.Point) *game.Game {
+	t.Helper()
+	rs := game.Std
+	rs.Size = 12
+	g := game.MustNew(rs)
+	// Far corner holes for whichever side needs to lose a turn. Vertical may not
+	// play the border columns and Horizontal may not play the border rows, so
+	// each filler is legal only for its own side.
+	vFill := []game.Point{{Col: 5, Row: 0}, {Col: 7, Row: 0}, {Col: 9, Row: 0}}
+	hFill := []game.Point{{Col: 0, Row: 5}, {Col: 0, Row: 7}, {Col: 0, Row: 9}}
+	var vi, hi int
+	play := func(p game.Point, want game.Player) {
+		for g.Turn() != want {
+			var filler game.Point
+			if g.Turn() == game.Vertical {
+				filler, vi = vFill[vi], vi+1
+			} else {
+				filler, hi = hFill[hi], hi+1
+			}
+			if _, err := g.PlayPeg(filler); err != nil {
+				t.Fatalf("filler at %v: %v", filler, err)
+			}
+		}
+		if _, err := g.PlayPeg(p); err != nil {
+			t.Fatalf("%v for %v: %v", p, want, err)
+		}
+	}
+	play(from, game.Vertical)
+	for _, p := range blocked {
+		play(p, owner)
+	}
+	play(to, game.Vertical)
+
+	l, ok := game.NewLink(from, to)
+	if !ok {
+		t.Fatalf("%v-%v is not a knight's move", from, to)
+	}
+	if g.LinkOwner(l) != game.Vertical {
+		t.Fatalf("no vertical link formed between %v and %v with pegs at %v", from, to, blocked)
+	}
+	return g
 }
