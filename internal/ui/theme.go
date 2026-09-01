@@ -29,6 +29,31 @@ const (
 	glyphMarkLeft          = '('
 	glyphMarkRight         = ')'
 
+	// An overlay also has to be visible where a link stroke owns the cells
+	// either side of the hole, which at the compact scale is what a peg looks
+	// like the moment it is linked. An overlay left with no bracket falls back
+	// to the hole's own cell, and a mark there still has to say what the hole
+	// holds, because an overlay may never hide a peg.
+	//
+	// Three shapes for the three things the fallback can mean: a diamond is the
+	// cursor, a square is a highlight, a triangle is a highlighted hole with
+	// the cursor on it, which is what a peg is for the rest of the turn that
+	// staged it. Within each shape the fill says what the hole holds, the same
+	// way round as the pegs themselves: solid is the vertical player, and an
+	// empty hole is the plain outline, so a peg can never be read as an empty
+	// hole. The horizontal player is the outline with a mark inside it, except
+	// in the triangle, which has no such form in the fonts a terminal can be
+	// relied on for, and uses the inverted outline instead.
+	glyphCursorHole              = '◇'
+	glyphCursorPegVertical       = '◆'
+	glyphCursorPegHorizontal     = '◈'
+	glyphMarkHole                = '□'
+	glyphMarkPegVertical         = '■'
+	glyphMarkPegHorizontal       = '▣'
+	glyphCursorMarkHole          = '△'
+	glyphCursorMarkPegVertical   = '▲'
+	glyphCursorMarkPegHorizontal = '▽'
+
 	// Steep links (column ±1, row ±2) render at slope 1 in screen cells under
 	// both scales, so a plain diagonal works.
 	glyphRise = '╱'

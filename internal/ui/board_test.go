@@ -2,6 +2,7 @@ package ui
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,78 +143,216 @@ func TestDetailLinkGlyphs(t *testing.T) {
 	}
 }
 
+// pegOwner maps every glyph that stands for a peg to the side that owns it. A
+// peg is drawn as itself, as the last move, or under either overlay, and the
+// owner has to be readable in every form, because nothing may hide a peg.
+func pegOwner(r rune) game.Player {
+	switch r {
+	case glyphPegVertical, glyphPegVerticalLast,
+		glyphCursorPegVertical, glyphMarkPegVertical, glyphCursorMarkPegVertical:
+		return game.Vertical
+	case glyphPegHorizontal, glyphPegHorizontalLast,
+		glyphCursorPegHorizontal, glyphMarkPegHorizontal, glyphCursorMarkPegHorizontal:
+		return game.Horizontal
+	}
+	return game.NoPlayer
+}
+
+// isEmptyHoleGlyph reports whether a glyph says "a hole with nothing in it":
+// its own dot, or an overlay's mark for an empty hole.
+func isEmptyHoleGlyph(r rune) bool {
+	switch r {
+	case glyphHole, glyphCursorHole, glyphMarkHole, glyphCursorMarkHole:
+		return true
+	}
+	return false
+}
+
+func inMarks(r rune, m overlayMarks) bool {
+	return r == m.hole || r == m.vertical || r == m.horizontal
+}
+
+// cursorShown reports whether the frame says the cursor is on p: a bracket in
+// one of the two cells beside the hole, or a mark on the hole's own cell from a
+// set that includes the cursor.
+func cursorShown(t *testing.T, lines []string, n int, sc Scale, p game.Point) bool {
+	t.Helper()
+	x, y := sc.holeX(p.Col), sc.holeY(p.Row)
+	if cellAt(t, lines, n, x-1, y) == glyphCursorLeft || cellAt(t, lines, n, x+1, y) == glyphCursorRight {
+		return true
+	}
+	own := cellAt(t, lines, n, x, y)
+	return inMarks(own, cursorMarks) || inMarks(own, cursorHighlightMarks)
+}
+
+// highlightShown is cursorShown for a highlight.
+func highlightShown(t *testing.T, lines []string, n int, sc Scale, p game.Point) bool {
+	t.Helper()
+	x, y := sc.holeX(p.Col), sc.holeY(p.Row)
+	if cellAt(t, lines, n, x-1, y) == glyphMarkLeft || cellAt(t, lines, n, x+1, y) == glyphMarkRight {
+		return true
+	}
+	own := cellAt(t, lines, n, x, y)
+	return inMarks(own, highlightMarks) || inMarks(own, cursorHighlightMarks)
+}
+
+// TestPegsHolesCornersDistinguishableWithoutColour is the whole glyph set held
+// to its promise: with colour off, every cell of the board still says what it
+// is. It is run over three overlay placements, because an overlay's shape
+// depends on what the links around it left free: brackets either side where
+// there is room, and a mark on the hole's own cell where a link owns both
+// bracket cells. The last placement is the hard one — a highlighted hole under
+// the cursor whose own links own both cells — where one glyph has to carry the
+// cursor, the highlight and the peg's owner at once.
 func TestPegsHolesCornersDistinguishableWithoutColour(t *testing.T) {
 	g := hubGame(t)
+	// The hub's centre peg carries links in all eight directions, so both of
+	// its bracket cells are taken and the overlay has to fall back.
+	hub := game.Point{Col: 5, Row: 5}
+	placements := []struct {
+		what      string
+		cursor    game.Point
+		highlight game.Point
+		fallback  bool
+	}{
+		{"brackets free", game.Point{Col: 5, Row: 8}, game.Point{Col: 8, Row: 8}, false},
+		{"cursor on the hub peg", hub, game.Point{Col: 8, Row: 8}, true},
+		{"cursor and highlight both on the hub peg", hub, hub, true},
+	}
 	for _, sc := range []Scale{Compact, Detail} {
-		bv := &BoardView{
-			Scale:      sc,
-			Cursor:     game.Point{Col: 5, Row: 8},
-			ShowCursor: true,
-			Highlights: []game.Point{{Col: 8, Row: 8}},
-		}
-		lines := renderPlain(t, bv, g)
-		all := strings.Join(lines, "\n")
-		if esc := strings.IndexByte(all, 0x1b); esc >= 0 {
-			t.Fatalf("%s: plain render contains an escape byte at %d", sc, esc)
-		}
-		counts := map[rune]int{}
-		for _, r := range all {
-			counts[r]++
-		}
-		if counts[glyphPegVertical] != 9 {
-			t.Errorf("%s: %d vertical pegs rendered, want 9", sc, counts[glyphPegVertical])
-		}
-		if counts[glyphPegHorizontal] != 8 {
-			t.Errorf("%s: %d horizontal pegs rendered, want 8", sc, counts[glyphPegHorizontal])
-		}
-		// Every hole is accounted for: an occupied one shows its peg, an empty
-		// one shows its dot unless a shallow link legitimately crosses the cell.
-		// The detail scale has a spare row for every crossing, so there it must
-		// never come to that and all 123 dots survive.
-		covered := 0
-		for row := range g.Size() {
-			for col := range g.Size() {
-				p := game.Point{Col: col, Row: row}
-				if !g.Exists(p) {
-					continue
+		for _, pl := range placements {
+			bv := &BoardView{
+				Scale:      sc,
+				Cursor:     pl.cursor,
+				ShowCursor: true,
+				Highlights: []game.Point{pl.highlight},
+			}
+			lines := renderPlain(t, bv, g)
+			all := strings.Join(lines, "\n")
+			if esc := strings.IndexByte(all, 0x1b); esc >= 0 {
+				t.Fatalf("%s %s: plain render contains an escape byte at %d", sc, pl.what, esc)
+			}
+			vertical, horizontal, dots := 0, 0, 0
+			for _, r := range all {
+				switch {
+				case pegOwner(r) == game.Vertical:
+					vertical++
+				case pegOwner(r) == game.Horizontal:
+					horizontal++
+				case isEmptyHoleGlyph(r):
+					dots++
 				}
-				got := cellAt(t, lines, g.Size(), sc.holeX(col), sc.holeY(row))
-				switch g.At(p) {
-				case game.Vertical:
-					if got != glyphPegVertical {
-						t.Errorf("%s: %v holds a vertical peg but renders %q", sc, p, got)
+			}
+			if vertical != 9 {
+				t.Errorf("%s %s: %d vertical pegs rendered, want 9", sc, pl.what, vertical)
+			}
+			if horizontal != 8 {
+				t.Errorf("%s %s: %d horizontal pegs rendered, want 8", sc, pl.what, horizontal)
+			}
+			// Every hole is accounted for: an occupied one shows its peg, an
+			// empty one shows its dot unless a shallow link legitimately
+			// crosses the cell. The detail scale has a spare row for every
+			// crossing, so there it must never come to that.
+			covered := 0
+			for row := range g.Size() {
+				for col := range g.Size() {
+					p := game.Point{Col: col, Row: row}
+					if !g.Exists(p) {
+						continue
 					}
-				case game.Horizontal:
-					if got != glyphPegHorizontal {
-						t.Errorf("%s: %v holds a horizontal peg but renders %q", sc, p, got)
-					}
-				default:
-					switch {
-					case got == glyphHole:
+					got := cellAt(t, lines, g.Size(), sc.holeX(col), sc.holeY(row))
+					switch want := g.At(p); {
+					case want != game.NoPlayer:
+						if pegOwner(got) != want {
+							t.Errorf("%s %s: %v holds a %v peg but renders %q",
+								sc, pl.what, p, want, got)
+						}
+					case isEmptyHoleGlyph(got):
 					case isLinkGlyph(got):
 						covered++
 					default:
-						t.Errorf("%s: empty hole %v renders %q, want a dot or a link stroke", sc, p, got)
+						t.Errorf("%s %s: empty hole %v renders %q, want a dot or a link stroke",
+							sc, pl.what, p, got)
 					}
 				}
 			}
+			if sc == Detail && covered != 0 {
+				t.Errorf("detail %s: %d hole dots were covered by link strokes; the scale has room for every crossing",
+					pl.what, covered)
+			}
+			if dots+covered != 12*12-4-17 {
+				t.Errorf("%s %s: %d dots plus %d covered holes, want %d holes in total",
+					sc, pl.what, dots, covered, 12*12-4-17)
+			}
+			// The two overlays, each identifiable on its own hole and never as
+			// each other. On the last placement they share one hole, so both
+			// facts have to come out of the same cell.
+			if !cursorShown(t, lines, g.Size(), sc, pl.cursor) {
+				t.Errorf("%s %s: nothing on the frame says the cursor is on %v:\n%s",
+					sc, pl.what, pl.cursor, all)
+			}
+			if !highlightShown(t, lines, g.Size(), sc, pl.highlight) {
+				t.Errorf("%s %s: nothing on the frame says %v is highlighted:\n%s",
+					sc, pl.what, pl.highlight, all)
+			}
+			if pl.cursor != pl.highlight && highlightShown(t, lines, g.Size(), sc, pl.cursor) {
+				t.Errorf("%s %s: the cursor's hole %v reads as highlighted", sc, pl.what, pl.cursor)
+			}
+			// Keep the fixture honest: if the links stop owning both bracket
+			// cells of the hub peg, the fallback goes untested and this test
+			// quietly weakens.
+			own := cellAt(t, lines, g.Size(), sc.holeX(pl.cursor.Col), sc.holeY(pl.cursor.Row))
+			marked := inMarks(own, cursorMarks) || inMarks(own, cursorHighlightMarks)
+			if marked != pl.fallback {
+				t.Fatalf("%s %s: the hole's own cell is %q, so fallback=%v, want %v",
+					sc, pl.what, own, marked, pl.fallback)
+			}
+			// Corners are absent: the top-left board cell must be blank.
+			if got := cellAt(t, lines, g.Size(), sc.holeX(0), sc.holeY(0)); got != ' ' {
+				t.Errorf("%s %s: corner hole rendered as %q, want blank", sc, pl.what, got)
+			}
 		}
-		if sc == Detail && covered != 0 {
-			t.Errorf("detail: %d hole dots were covered by link strokes; the scale has room for every crossing", covered)
+	}
+}
+
+// TestEveryBoardGlyphIsItsOwnMark is the premise the rest of the glyph
+// assertions rest on: no two of the marks the board draws are the same
+// character, so telling them apart is possible at all with colour off.
+func TestEveryBoardGlyphIsItsOwnMark(t *testing.T) {
+	named := map[rune]string{}
+	for _, m := range []struct {
+		name  string
+		glyph rune
+	}{
+		{"hole", glyphHole},
+		{"vertical peg", glyphPegVertical},
+		{"horizontal peg", glyphPegHorizontal},
+		{"vertical last move", glyphPegVerticalLast},
+		{"horizontal last move", glyphPegHorizontalLast},
+		{"cursor left", glyphCursorLeft},
+		{"cursor right", glyphCursorRight},
+		{"highlight left", glyphMarkLeft},
+		{"highlight right", glyphMarkRight},
+		{"cursor on an empty hole", glyphCursorHole},
+		{"cursor on a vertical peg", glyphCursorPegVertical},
+		{"cursor on a horizontal peg", glyphCursorPegHorizontal},
+		{"highlight on an empty hole", glyphMarkHole},
+		{"highlight on a vertical peg", glyphMarkPegVertical},
+		{"highlight on a horizontal peg", glyphMarkPegHorizontal},
+		{"both on an empty hole", glyphCursorMarkHole},
+		{"both on a vertical peg", glyphCursorMarkPegVertical},
+		{"both on a horizontal peg", glyphCursorMarkPegHorizontal},
+		{"rising link", glyphRise},
+		{"falling link", glyphFall},
+		{"crossing", glyphCross},
+	} {
+		if prev, seen := named[m.glyph]; seen {
+			t.Errorf("%q is both the %s and the %s", m.glyph, prev, m.name)
+			continue
 		}
-		if counts[glyphHole]+covered != 12*12-4-17 {
-			t.Errorf("%s: %d dots plus %d covered holes, want %d holes in total",
-				sc, counts[glyphHole], covered, 12*12-4-17)
-		}
-		if counts[glyphCursorLeft] != 1 || counts[glyphCursorRight] != 1 {
-			t.Errorf("%s: cursor brackets not rendered exactly once", sc)
-		}
-		if counts[glyphMarkLeft] != 1 || counts[glyphMarkRight] != 1 {
-			t.Errorf("%s: highlight brackets not rendered exactly once", sc)
-		}
-		// Corners are absent: the top-left board cell must be blank.
-		if got := cellAt(t, lines, g.Size(), sc.holeX(0), sc.holeY(0)); got != ' ' {
-			t.Errorf("%s: corner hole rendered as %q, want blank", sc, got)
+		named[m.glyph] = m.name
+		if isLinkGlyph(m.glyph) && m.glyph != glyphRise && m.glyph != glyphFall && m.glyph != glyphCross {
+			t.Errorf("the %s, %q, is also a link stroke", m.name, m.glyph)
 		}
 	}
 }
@@ -267,7 +406,11 @@ func TestViewportKeepsCursorVisibleAndLabelsTrue(t *testing.T) {
 				t.Fatalf("cursor %s: line %q is %d cells wide", c, l, n)
 			}
 		}
-		if !strings.ContainsRune(all, glyphCursorLeft) || !strings.ContainsRune(all, glyphCursorRight) {
+		// What marks the cursor depends on what the links around the hole left
+		// free, so this asks only that something does. The subject here is
+		// scrolling, not the shape of the mark.
+		if !strings.ContainsAny(all, string([]rune{glyphCursorLeft, glyphCursorRight,
+			glyphCursorHole, glyphCursorPegVertical, glyphCursorPegHorizontal})) {
 			t.Errorf("cursor %s not visible in 20x8 viewport:\n%s", c, all)
 		}
 	}
@@ -334,30 +477,45 @@ func TestViewportAbsentWhenBoardFits(t *testing.T) {
 
 func TestGoldenFrames(t *testing.T) {
 	g := hubGame(t)
+	// Two frames per scale. The first has the cursor and the highlight on holes
+	// with room either side, which is what the board mostly looks like. The
+	// second puts both of them on the hub peg, whose own links own the two
+	// cells the brackets would use, so the frame shows what an overlay falls
+	// back to when there is nowhere to put a bracket.
+	views := []struct {
+		name       string
+		cursor     game.Point
+		highlights []game.Point
+	}{
+		{"hub", game.Point{Col: 5, Row: 8}, []game.Point{{Col: 8, Row: 8}}},
+		{"hub_marked", game.Point{Col: 5, Row: 5}, []game.Point{{Col: 5, Row: 5}, {Col: 3, Row: 6}}},
+	}
 	for _, sc := range []Scale{Compact, Detail} {
-		bv := &BoardView{
-			Scale:      sc,
-			Cursor:     game.Point{Col: 5, Row: 8},
-			ShowCursor: true,
-			Highlights: []game.Point{{Col: 8, Row: 8}},
-		}
-		got := strings.Join(renderPlain(t, bv, g), "\n") + "\n"
-		path := filepath.Join("testdata", "hub_"+sc.String()+".golden")
-		if *update {
-			if err := os.MkdirAll("testdata", 0o755); err != nil {
-				t.Fatal(err)
+		for _, v := range views {
+			bv := &BoardView{
+				Scale:      sc,
+				Cursor:     v.cursor,
+				ShowCursor: true,
+				Highlights: v.highlights,
 			}
-			if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-				t.Fatal(err)
+			got := strings.Join(renderPlain(t, bv, g), "\n") + "\n"
+			path := filepath.Join("testdata", v.name+"_"+sc.String()+".golden")
+			if *update {
+				if err := os.MkdirAll("testdata", 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				continue
 			}
-			continue
-		}
-		want, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("golden file missing (run with -update after eyeballing): %v", err)
-		}
-		if got != string(want) {
-			t.Errorf("%s frame drifted from golden:\ngot:\n%s\nwant:\n%s", sc, got, want)
+			want, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("golden file missing (run with -regen after eyeballing): %v", err)
+			}
+			if got != string(want) {
+				t.Errorf("%s %s frame drifted from golden:\ngot:\n%s\nwant:\n%s", sc, v.name, got, want)
+			}
 		}
 	}
 }
@@ -498,4 +656,479 @@ func linkedPair(t *testing.T, from, to, opponent game.Point) *game.Game {
 		t.Fatalf("no vertical link formed between %v and %v", from, to)
 	}
 	return g
+}
+
+// boxEdges returns the edges a drawn box glyph claims, and whether the glyph is
+// one of them at all. It is derived from the junction table rather than listed,
+// so the two cannot drift apart.
+func boxEdges(r rune) (linkBits, bool) {
+	for b, j := range junction {
+		if j != 0 && j == r {
+			return linkBits(b), true
+		}
+	}
+	return 0, false
+}
+
+// opaqueToLinks reports whether a glyph is one a link stroke may legitimately
+// run into: a peg in any of its forms, another stroke that is not a box glyph,
+// or an overlay's mark on a hole's own cell. All of them stand where a line
+// passes and leave it legible from the cells either side, which is the rule a
+// peg has always followed.
+func opaqueToLinks(r rune) bool {
+	if pegOwner(r) != game.NoPlayer || isEmptyHoleGlyph(r) {
+		return true
+	}
+	return r == glyphRise || r == glyphFall || r == glyphCross
+}
+
+// danglingEdges lists every cell of a frame whose stroke claims an edge that
+// nothing on the other side joins. That is the visible symptom the geometry
+// audit named: a line drawn to an edge of its cell with no line, peg or mark
+// beyond it reads as a connection to something that is not there.
+func danglingEdges(t *testing.T, sc Scale, n int, lines []string) []string {
+	t.Helper()
+	cw, ch := sc.CanvasSize(n)
+	sides := [4]struct {
+		edge, back linkBits
+		dx, dy     int
+	}{
+		{linkN, linkS, 0, -1},
+		{linkE, linkW, 1, 0},
+		{linkS, linkN, 0, 1},
+		{linkW, linkE, -1, 0},
+	}
+	var out []string
+	for y := range ch {
+		for x := range cw {
+			here := cellAt(t, lines, n, x, y)
+			edges, ok := boxEdges(here)
+			if !ok {
+				continue
+			}
+			for _, s := range sides {
+				if edges&s.edge == 0 {
+					continue
+				}
+				nx, ny := x+s.dx, y+s.dy
+				if nx < 0 || ny < 0 || nx >= cw || ny >= ch {
+					out = append(out, fmt.Sprintf("(%d,%d) %q claims an edge off the canvas", x, y, here))
+					continue
+				}
+				beyond := cellAt(t, lines, n, nx, ny)
+				if nb, ok := boxEdges(beyond); ok {
+					if nb&s.back == 0 {
+						out = append(out, fmt.Sprintf("(%d,%d) %q meets %q at (%d,%d), which does not join back",
+							x, y, here, beyond, nx, ny))
+					}
+					continue
+				}
+				if !opaqueToLinks(beyond) {
+					out = append(out, fmt.Sprintf("(%d,%d) %q claims an edge onto %q at (%d,%d)",
+						x, y, here, beyond, nx, ny))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// TestAnOverlayNeverBreaksALink is the cursor-and-highlight complaint made
+// precise. The brackets sit at holeX±1, which at the compact scale are the only
+// cells a link touching that hole can use, so drawing them over a stroke either
+// detaches a link from its own peg or erases a one-cell steep link outright.
+//
+// The rule asserted here is that an overlay may take the hole's own cell, as a
+// peg does, and nothing else: every other cell that carried a stroke without
+// the overlay still carries the same stroke with it, and no frame is left with
+// a stroke claiming an edge onto nothing.
+func TestAnOverlayNeverBreaksALink(t *testing.T) {
+	g := hubGame(t)
+	for _, sc := range []Scale{Compact, Detail} {
+		bare := renderPlain(t, &BoardView{Scale: sc}, g)
+		if bad := danglingEdges(t, sc, g.Size(), bare); len(bad) != 0 {
+			t.Fatalf("%s: the bare frame already has dangling edges %v:\n%s",
+				sc, bad, strings.Join(bare, "\n"))
+		}
+		cw, ch := sc.CanvasSize(g.Size())
+		for row := range g.Size() {
+			for col := range g.Size() {
+				p := game.Point{Col: col, Row: row}
+				if !g.Exists(p) {
+					continue
+				}
+				views := []struct {
+					what string
+					bv   *BoardView
+				}{
+					{"cursor", &BoardView{Scale: sc, ShowCursor: true, Cursor: p}},
+					{"highlight", &BoardView{Scale: sc, Highlights: []game.Point{p}}},
+					{"both", &BoardView{Scale: sc, ShowCursor: true, Cursor: p, Highlights: []game.Point{p}}},
+				}
+				hx, hy := sc.holeX(col), sc.holeY(row)
+				for _, v := range views {
+					got := renderPlain(t, v.bv, g)
+					for y := range ch {
+						for x := range cw {
+							if x == hx && y == hy {
+								continue // the hole's own cell, which an overlay may take
+							}
+							was := cellAt(t, bare, g.Size(), x, y)
+							if !isLinkGlyph(was) {
+								continue
+							}
+							if now := cellAt(t, got, g.Size(), x, y); now != was {
+								t.Fatalf("%s: the %s on %v replaced the stroke %q at (%d,%d) with %q:\n%s",
+									sc, v.what, p, was, x, y, now, strings.Join(got, "\n"))
+							}
+						}
+					}
+					if bad := danglingEdges(t, sc, g.Size(), got); len(bad) != 0 {
+						t.Fatalf("%s: the %s on %v left %v:\n%s",
+							sc, v.what, p, bad, strings.Join(got, "\n"))
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestTheStagedPegKeepsTheLinkItJustMade is the case that fires on an ordinary
+// turn rather than at an unusual cursor position: placing a peg stages it, the
+// screen highlights it, and the cursor is already on it, so both overlays land
+// on the one hole whose link has only just been drawn.
+func TestTheStagedPegKeepsTheLinkItJustMade(t *testing.T) {
+	rs := game.Std
+	rs.Size = 12
+	g := game.MustNew(rs)
+	for _, p := range []game.Point{{Col: 5, Row: 3}, {Col: 9, Row: 9}} {
+		if _, err := g.PlayPeg(p); err != nil {
+			t.Fatalf("opening move %v: %v", p, err)
+		}
+	}
+	staged := game.Point{Col: 3, Row: 4}
+	if err := g.PlacePeg(staged); err != nil {
+		t.Fatalf("staging %v: %v", staged, err)
+	}
+	l, ok := game.NewLink(staged, game.Point{Col: 5, Row: 3})
+	if !ok || g.LinkOwner(l) != game.Vertical {
+		t.Fatalf("the placement did not form the link the test is about")
+	}
+	for _, sc := range []Scale{Compact, Detail} {
+		bare := renderPlain(t, &BoardView{Scale: sc}, g)
+		over := renderPlain(t, &BoardView{
+			Scale: sc, ShowCursor: true, Cursor: staged,
+			Highlights: []game.Point{staged},
+		}, g)
+		if bareN, overN := strokeCells(t, sc, g, bare), strokeCells(t, sc, g, over); overN != bareN {
+			t.Errorf("%s: the staged peg's overlay took the link down from %d cells to %d:\n%s",
+				sc, bareN, overN, strings.Join(over, "\n"))
+		}
+		if bad := danglingEdges(t, sc, g.Size(), over); len(bad) != 0 {
+			t.Errorf("%s: %v:\n%s", sc, bad, strings.Join(over, "\n"))
+		}
+		if !cursorShown(t, over, g.Size(), sc, staged) {
+			t.Errorf("%s: the cursor is not visible on the staged peg:\n%s", sc, strings.Join(over, "\n"))
+		}
+		if !highlightShown(t, over, g.Size(), sc, staged) {
+			t.Errorf("%s: the staged peg does not read as highlighted:\n%s", sc, strings.Join(over, "\n"))
+		}
+	}
+}
+
+// TestACompactSteepLinkSurvivesAnOverlay is the sharpest form of the same
+// defect: a steep link at the compact scale is one cell, and that cell is a
+// bracket column of the holes either side of it, so an overlay on a hole the
+// link only passes used to erase the link completely.
+func TestACompactSteepLinkSurvivesAnOverlay(t *testing.T) {
+	from, to := game.Point{Col: 4, Row: 1}, game.Point{Col: 3, Row: 3}
+	g := linkedPair(t, from, to, game.Point{})
+	passed := game.Point{Col: 3, Row: 2} // the hole the link passes, between the two
+	bare := renderPlain(t, &BoardView{Scale: Compact}, g)
+	want := strokeCells(t, Compact, g, bare)
+	if want != 1 {
+		t.Fatalf("the fixture draws %d stroke cells, want the single steep cell", want)
+	}
+	for _, v := range []struct {
+		what string
+		bv   *BoardView
+	}{
+		{"cursor", &BoardView{Scale: Compact, ShowCursor: true, Cursor: passed}},
+		{"highlight", &BoardView{Scale: Compact, Highlights: []game.Point{passed}}},
+	} {
+		got := renderPlain(t, v.bv, g)
+		if n := strokeCells(t, Compact, g, got); n != want {
+			t.Errorf("the %s on %v left %d stroke cells, want %d:\n%s",
+				v.what, passed, n, want, strings.Join(got, "\n"))
+		}
+	}
+}
+
+// strokeCells counts the cells of a frame holding a link stroke.
+func strokeCells(t *testing.T, sc Scale, g *game.Game, lines []string) int {
+	t.Helper()
+	cw, ch := sc.CanvasSize(g.Size())
+	n := 0
+	for y := range ch {
+		for x := range cw {
+			if isLinkGlyph(cellAt(t, lines, g.Size(), x, y)) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// shallowLinks lists every shallow link an n-hole board can hold. Steep links
+// are left out: one draws a single diagonal and has no polyline to route.
+func shallowLinks(n int) []game.Link {
+	inside := func(p game.Point) bool {
+		if p.Col < 0 || p.Row < 0 || p.Col >= n || p.Row >= n {
+			return false
+		}
+		return !((p.Col == 0 || p.Col == n-1) && (p.Row == 0 || p.Row == n-1))
+	}
+	var out []game.Link
+	for row := range n {
+		for col := range n {
+			p := game.Point{Col: col, Row: row}
+			if !inside(p) {
+				continue
+			}
+			for d := game.Dir(0); d < game.NumDirs; d++ {
+				if !d.IsCanonical() {
+					continue
+				}
+				if dCol, _ := d.Offset(); abs(dCol) != 2 {
+					continue
+				}
+				q := p.Add(d)
+				if !inside(q) {
+					continue
+				}
+				if l, ok := game.NewLink(p, q); ok {
+					out = append(out, l)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// paintPair lays a board out the way paint does — a dot in every hole, a peg on
+// each of the four endpoints — draws the two links in order, resolves them, and
+// returns the canvas together with the cells both links reached.
+func paintPair(sc Scale, n int, a, b game.Link) (*canvas, []int) {
+	cw, ch := sc.CanvasSize(n)
+	cv := newCanvas(cw, ch)
+	for row := range n {
+		for col := range n {
+			if (col == 0 || col == n-1) && (row == 0 || row == n-1) {
+				continue
+			}
+			cv.set(sc.holeX(col), sc.holeY(row), glyphHole, styHole)
+		}
+	}
+	for _, p := range []game.Point{a.From, a.To(), b.From, b.To()} {
+		cv.set(sc.holeX(p.Col), sc.holeY(p.Row), glyphPegVertical, styPegVertical)
+	}
+	sc.drawLink(cv, a, styLinkVertical)
+	first := make([]linkBits, len(cv.bits))
+	copy(first, cv.bits)
+	sc.drawLink(cv, b, styLinkVertical)
+	var shared []int
+	for i := range cv.bits {
+		if first[i].edges() != 0 && cv.bits[i].edges() != first[i].edges() {
+			shared = append(shared, i)
+		}
+	}
+	cv.resolveLinks()
+	return cv, shared
+}
+
+// junctionCells lists the cells of a frame drawn as a box junction, which is the
+// picture of three or four lines meeting in one cell.
+func junctionCells(t *testing.T, sc Scale, n int, lines []string) []string {
+	t.Helper()
+	cw, ch := sc.CanvasSize(n)
+	var out []string
+	for y := range ch {
+		for x := range cw {
+			r := cellAt(t, lines, n, x, y)
+			if edges, ok := boxEdges(r); ok && edges.joins() {
+				out = append(out, fmt.Sprintf("(%d,%d)=%q", x, y, r))
+			}
+		}
+	}
+	return out
+}
+
+// TestLinksThatMeetNowhereAreNeverDrawnJoined is the connectivity complaint made
+// precise, over every pair of shallow links an eight-square board can hold.
+//
+// Two links that share no peg and do not cross are two separate things on the
+// board. A junction glyph says the lines in its cell meet, so a junction built
+// out of both of them draws a connection between two chains that have none, and
+// connectivity is the one thing a player reads off a TwixT board. The routing
+// has to keep them apart instead.
+func TestLinksThatMeetNowhereAreNeverDrawnJoined(t *testing.T) {
+	const n = 8
+	for _, sc := range []Scale{Compact, Detail} {
+		links := shallowLinks(n)
+		pairs := 0
+		for i := range links {
+			for j := i + 1; j < len(links); j++ {
+				a, b := links[i], links[j]
+				if sharesEnd(a, b) || game.LinksCross(a, b) {
+					continue
+				}
+				pairs++
+				cv, shared := paintPair(sc, n, a, b)
+				for _, k := range shared {
+					if cv.bits[k].joins() {
+						t.Fatalf("%s: %v and %v meet at no peg and do not cross, yet cell (%d,%d) draws them joined as %q",
+							sc, a, b, k%cv.w, k/cv.w, cv.runes[k])
+					}
+				}
+			}
+		}
+		if pairs < 2000 {
+			t.Fatalf("%s: only %d pairs examined, so the scan is not the exhaustive one", sc, pairs)
+		}
+	}
+}
+
+// TestTwoUnconnectedLinksAreDrawnApart is the reproduction from the geometry
+// audit, driven through a rendered frame rather than the canvas: two links, no
+// shared peg, no crossing, and under the default ruleset.
+func TestTwoUnconnectedLinksAreDrawnApart(t *testing.T) {
+	rs := game.Std
+	rs.Size = 12
+	g := game.MustNew(rs)
+	for _, p := range []game.Point{
+		{Col: 1, Row: 0}, {Col: 8, Row: 8},
+		{Col: 3, Row: 1}, {Col: 9, Row: 8},
+		{Col: 1, Row: 1}, {Col: 10, Row: 8},
+		{Col: 3, Row: 2},
+	} {
+		if _, err := g.PlayPeg(p); err != nil {
+			t.Fatalf("move %v: %v", p, err)
+		}
+	}
+	first, ok := game.NewLink(game.Point{Col: 1, Row: 0}, game.Point{Col: 3, Row: 1})
+	if !ok {
+		t.Fatal("B1-D2 is not a knight's move")
+	}
+	second, ok := game.NewLink(game.Point{Col: 1, Row: 1}, game.Point{Col: 3, Row: 2})
+	if !ok {
+		t.Fatal("B2-D3 is not a knight's move")
+	}
+	if g.LinkOwner(first) != game.Vertical || g.LinkOwner(second) != game.Vertical {
+		t.Fatal("the fixture does not hold both links")
+	}
+	if sharesEnd(first, second) || game.LinksCross(first, second) {
+		t.Fatal("the fixture's links are not the independent pair the test is about")
+	}
+	for _, sc := range []Scale{Compact, Detail} {
+		lines := renderPlain(t, &BoardView{Scale: sc}, g)
+		if bad := junctionCells(t, sc, g.Size(), lines); len(bad) != 0 {
+			t.Errorf("%s: only two links are on the board and they meet nowhere, yet %v draw them joined:\n%s",
+				sc, bad, strings.Join(lines, "\n"))
+		}
+		for _, l := range []game.Link{first, second} {
+			from, to := l.Ends()
+			if gaps, frame := strokeGaps(t, sc, g, from, to); len(gaps) != 0 {
+				t.Errorf("%s: keeping %v apart broke it: no stroke in column(s) %v\n%s", sc, l, gaps, frame)
+			}
+		}
+	}
+}
+
+// TestEveryCrossingIsDrawnAsACrossing is the other half of the same rule. Where
+// the ruleset lets two of a player's links cross, they do have to share a cell —
+// their endpoints interleave, so no routing can separate them — and there the
+// glyph has to say they cross rather than meet. game.LinksCross is the authority
+// on which of the two it is.
+func TestEveryCrossingIsDrawnAsACrossing(t *testing.T) {
+	const n = 8
+	for _, sc := range []Scale{Compact, Detail} {
+		links := shallowLinks(n)
+		pairs, marked := 0, 0
+		for i := range links {
+			for j := i + 1; j < len(links); j++ {
+				a, b := links[i], links[j]
+				if !game.LinksCross(a, b) {
+					continue
+				}
+				pairs++
+				cv, shared := paintPair(sc, n, a, b)
+				crossings := 0
+				for _, k := range shared {
+					if !cv.bits[k].joins() {
+						continue // the two merged into one straight run
+					}
+					if cv.runes[k] != glyphCross {
+						t.Fatalf("%s: %v and %v cross, yet cell (%d,%d) draws them meeting as %q",
+							sc, a, b, k%cv.w, k/cv.w, cv.runes[k])
+					}
+					crossings++
+				}
+				if crossings > 0 {
+					marked++
+				}
+			}
+		}
+		if pairs < 100 || marked < 100 {
+			t.Fatalf("%s: %d crossing pairs, %d of them marked; the scan is not exercising the rule", sc, pairs, marked)
+		}
+	}
+}
+
+// TestACrossingReadsAsOneUnderThePPRuleset is the reproduction, through a
+// rendered frame: two of one player's links crossing, which the paper-and-pencil
+// ruleset allows, used to come out as a pair of tee junctions claiming a
+// horizontal connection between two pegs two columns apart in the same row,
+// which is not a knight's move and can never be a link.
+func TestACrossingReadsAsOneUnderThePPRuleset(t *testing.T) {
+	rs := game.PP
+	rs.Size = 12
+	g := game.MustNew(rs)
+	for _, p := range []game.Point{
+		{Col: 3, Row: 4}, {Col: 9, Row: 2},
+		{Col: 5, Row: 3}, {Col: 0, Row: 9},
+		{Col: 3, Row: 3}, {Col: 10, Row: 5},
+		{Col: 5, Row: 4},
+	} {
+		if _, err := g.PlayPeg(p); err != nil {
+			t.Fatalf("move %v: %v", p, err)
+		}
+	}
+	first, _ := game.NewLink(game.Point{Col: 3, Row: 4}, game.Point{Col: 5, Row: 3})
+	second, _ := game.NewLink(game.Point{Col: 3, Row: 3}, game.Point{Col: 5, Row: 4})
+	if g.LinkOwner(first) != game.Vertical || g.LinkOwner(second) != game.Vertical {
+		t.Fatal("the fixture does not hold both of the crossing links")
+	}
+	if !game.LinksCross(first, second) {
+		t.Fatal("the fixture's links do not cross, so it is not this reproduction")
+	}
+	for _, sc := range []Scale{Compact, Detail} {
+		lines := renderPlain(t, &BoardView{Scale: sc}, g)
+		if bad := junctionCells(t, sc, g.Size(), lines); len(bad) != 0 {
+			t.Errorf("%s: the only two links on the board cross, yet %v draw them meeting:\n%s",
+				sc, bad, strings.Join(lines, "\n"))
+		}
+		crossings := 0
+		for _, l := range lines {
+			crossings += strings.Count(l, string(glyphCross))
+		}
+		if crossings == 0 {
+			t.Errorf("%s: nothing on the frame says the two links cross:\n%s", sc, strings.Join(lines, "\n"))
+		}
+		for _, l := range []game.Link{first, second} {
+			from, to := l.Ends()
+			if gaps, frame := strokeGaps(t, sc, g, from, to); len(gaps) != 0 {
+				t.Errorf("%s: %v has no stroke in column(s) %v\n%s", sc, l, gaps, frame)
+			}
+		}
+	}
 }
