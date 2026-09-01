@@ -62,10 +62,6 @@ func humanAge(t time.Time) string {
 	}
 }
 
-// currentProfileFile remembers which profile was used last, so that the bare
-// command and the subcommands agree on who is playing.
-const currentProfileFile = "current-profile"
-
 func newProfileCommand(opts *options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "profile",
@@ -120,7 +116,7 @@ and TAB completion will still find you if you misremember the spelling.`,
 			if err != nil {
 				return err
 			}
-			if err := opts.setCurrentProfile(p.Name); err != nil {
+			if _, err := store.UseCurrent(p.Name); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "created %s and made it current\n", p.Name)
@@ -146,10 +142,7 @@ several profiles match, they are listed and nothing is changed.`,
 			if err != nil {
 				return err
 			}
-			if err := store.Touch(name); err != nil {
-				return err
-			}
-			if err := opts.setCurrentProfile(name); err != nil {
+			if _, err := store.UseCurrent(name); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "playing as %s\n", name)
@@ -173,11 +166,6 @@ what happened rather than a table that can be rewritten.`,
 			}
 			if err := store.Rename(args[0], args[1]); err != nil {
 				return err
-			}
-			if current, _ := opts.currentProfile(store); current == args[0] {
-				if err := opts.setCurrentProfile(args[1]); err != nil {
-					return err
-				}
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "renamed %s to %s\n", args[0], args[1])
 			return err

@@ -1153,7 +1153,13 @@ func (s *gameScreen) save(finished bool) error {
 // depart is the tidying every way out of this screen shares: the searches are
 // stopped, the staged turn is dropped, an unfinished game is saved so it can be
 // picked up again, and the opponent is told the connection is going.
+//
+// It is idempotent, because the shell also calls it through Depart on the way
+// out and a screen may already have departed by then.
 func (s *gameScreen) depart() error {
+	if s.leaving {
+		return nil
+	}
 	s.leaving = true
 	s.cancelBot()
 	s.botThinking = false
@@ -1172,6 +1178,18 @@ func (s *gameScreen) depart() error {
 		return fmt.Errorf("saving the game: %w", err)
 	}
 	return nil
+}
+
+// Depart satisfies Departing, so that the shell answering the global quit key
+// itself does not skip the save. Without it, leaving with the plain letter saved
+// an unfinished game and leaving with the control key discarded it, which is the
+// same act as far as the player is concerned.
+func (s *gameScreen) Depart() {
+	if err := s.depart(); err != nil {
+		// There is no screen left to show this on, so the best that can be done
+		// is to put it where a player looking for their lost game will find it.
+		fmt.Fprintf(os.Stderr, "twixtui: %v\n", err)
+	}
 }
 
 // leave hands control back to the shell.

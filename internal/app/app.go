@@ -112,12 +112,20 @@ type GameConfig struct {
 	// game against one and may be a separate engine otherwise.
 	HintFor bot.Bot
 
-	// Session is the network connection for a remote game, nil otherwise.
+	// Session is the network connection for a live remote game, nil otherwise.
 	Session netplay.Session
+
+	// Codes drives a remote seat by move codes the players exchange by hand,
+	// with no connection at all. It is mutually exclusive with Session: a
+	// correspondence game has a remote seat and no session, which is the one
+	// case where that combination is legitimate.
+	Codes bool
 
 	// Resume, when set, continues a stored game instead of starting a new one.
 	Resume *gamestore.Saved
-	// StoreID is the identifier the game is saved under. Empty means allocate one.
+	// StoreID is the identifier the game is saved under, and for a
+	// correspondence game it is also the identifier its move codes are bound
+	// to, so a code from another game is refused. Empty means allocate one.
 	StoreID string
 }
 

@@ -78,7 +78,7 @@ func (s *Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := m.String()
 		for _, q := range s.quitKeys {
 			if key == q {
-				return s, tea.Quit
+				return s, s.quit()
 			}
 		}
 		if s.banner != nil {
@@ -87,7 +87,7 @@ func (s *Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// while the banner covers it.
 			s.banner = nil
 			if len(s.stack) == 0 {
-				return s, tea.Quit
+				return s, s.quit()
 			}
 			return s, nil
 		}
@@ -133,7 +133,7 @@ func (s *Shell) Push(sc Screen) tea.Cmd {
 // leave acts on a screen that has finished.
 func (s *Shell) leave(m DoneMsg) tea.Cmd {
 	if m.Quit {
-		return tea.Quit
+		return s.quit()
 	}
 	// The banner is set before the stack changes so that the error is shown
 	// over whatever the player ends up looking at.
@@ -152,7 +152,7 @@ func (s *Shell) leave(m DoneMsg) tea.Cmd {
 			// yet. Dismissing the banner ends the program.
 			return nil
 		}
-		return tea.Quit
+		return s.quit()
 	}
 	// A buried screen received no size messages while it was covered, so it is
 	// re-sized on the way back rather than redrawing at a stale size.
@@ -198,6 +198,32 @@ func (s *Shell) setTop(m tea.Model) {
 type ThemeChangedMsg struct {
 	Theme  theme.Theme
 	Styles *ui.Styles
+}
+
+// Departing is implemented by a screen that has something to finish before the
+// program ends, such as saving a game that is still in progress.
+//
+// The shell answers the global quit key itself so that a busy screen cannot trap
+// the player, but that means the key never reaches the screen. Without this, a
+// screen's own handling of it is dead code: quitting with the plain letter saved
+// an unfinished game while quitting with the control key silently discarded it,
+// which is the same act from the player's point of view.
+type Departing interface {
+	// Depart is called once, on the way out, before the program ends. It must
+	// not block for long and must not expect to draw again.
+	Depart()
+}
+
+// quit lets every screen on the stack finish, innermost first, and then ends the
+// program. It is the only place that calls tea.Quit.
+func (s *Shell) quit() tea.Cmd {
+	for i := len(s.stack) - 1; i >= 0; i-- {
+		if d, ok := s.stack[i].(Departing); ok {
+			d.Depart()
+		}
+	}
+	s.stack = nil
+	return tea.Quit
 }
 
 // globalQuitKeys returns the keys the shell answers before the screen does:

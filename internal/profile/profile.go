@@ -246,7 +246,11 @@ func (s *Store) Rename(oldName, newName string) error {
 	if err := ValidateName(newName); err != nil {
 		return fmt.Errorf("%q: %w", newName, err)
 	}
-	return s.mutate(func(ps *[]Profile) error {
+	wasCurrent := false
+	if cur, ok := s.Current(); ok && foldKey(cur.Name) == foldKey(oldName) {
+		wasCurrent = true
+	}
+	err := s.mutate(func(ps *[]Profile) error {
 		i := indexOf(*ps, oldName)
 		if i < 0 {
 			return fmt.Errorf("%q: %w", oldName, ErrNotFound)
@@ -257,13 +261,26 @@ func (s *Store) Rename(oldName, newName string) error {
 		(*ps)[i].Name = newName
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// The recorded choice follows the rename, so it cannot be left pointing at
+	// a name that no longer exists.
+	if wasCurrent {
+		return s.SetCurrent(newName)
+	}
+	return nil
 }
 
 // Delete removes a profile. Recorded results are not touched: the leaderboard
 // keeps its own history, and deleting an identity is not meant to rewrite the
 // record of games that were played.
 func (s *Store) Delete(name string) error {
-	return s.mutate(func(ps *[]Profile) error {
+	wasCurrent := false
+	if cur, ok := s.Current(); ok && foldKey(cur.Name) == foldKey(name) {
+		wasCurrent = true
+	}
+	err := s.mutate(func(ps *[]Profile) error {
 		i := indexOf(*ps, name)
 		if i < 0 {
 			return fmt.Errorf("%q: %w", name, ErrNotFound)
@@ -271,4 +288,11 @@ func (s *Store) Delete(name string) error {
 		*ps = append((*ps)[:i], (*ps)[i+1:]...)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if wasCurrent {
+		return s.ClearCurrent()
+	}
+	return nil
 }

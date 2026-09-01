@@ -182,10 +182,14 @@ func (p *Picker) commit() tea.Cmd {
 	return p.choose(r.name)
 }
 
-// choose records that the profile was used and hands the name on. Touch is
-// what makes the most-recently-played order real rather than nominal.
+// choose records that the profile is the one playing and hands the name on.
+//
+// Recording it is not decoration: the command line reads the same stored choice,
+// so a profile picked here has to be persisted or a later subcommand reports
+// that nobody is playing. UseCurrent both marks the profile as used, which is
+// what makes the most-recently-played order real, and records the choice.
 func (p *Picker) choose(name string) tea.Cmd {
-	if err := p.deps.Profiles.Touch(name); err != nil {
+	if _, err := p.deps.Profiles.UseCurrent(name); err != nil {
 		if !errors.Is(err, profile.ErrNotFound) {
 			// A write failure is worth showing, but not worth throwing the
 			// player out of the only screen that can get them into a game.
