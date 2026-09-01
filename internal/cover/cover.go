@@ -20,12 +20,14 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"io"
 	// The formats the projector accepts: the shipped picture is PNG, and a
 	// player pointing the cover at their own scan will be holding a JPEG as
 	// often as not.
 	_ "image/jpeg"
 	_ "image/png"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/BAKocska/twixtui/assets"
@@ -52,7 +54,12 @@ const (
 // shipped picture itself is decoded once, on the first render that wants it,
 // because a menu must not owe its first frame to a PNG decode it may never
 // need.
+// photoMu guards userPhoto. Rendering is a read and configuring is a write, and
+// the two can happen at once as soon as anything offers the picture as a setting
+// while a menu is on screen. The shipped picture needs no lock: sync.Once already
+// orders its one write against every read.
 var (
+	photoMu     sync.RWMutex
 	userPhoto   image.Image
 	shippedOnce sync.Once
 	shippedImg  image.Image
@@ -63,8 +70,11 @@ var (
 // embedded asset failed to decode, which a build would have to go out of its
 // way to achieve; Render answers it with the homage rather than a blank box.
 func currentPhoto() image.Image {
-	if userPhoto != nil {
-		return userPhoto
+	photoMu.RLock()
+	user := userPhoto
+	photoMu.RUnlock()
+	if user != nil {
+		return user
 	}
 	shippedOnce.Do(func() {
 		img, _, err := image.Decode(bytes.NewReader(assets.CoverPNG))
@@ -86,13 +96,40 @@ func SetPhoto(path string) error {
 		return err
 	}
 	defer f.Close()
+
+	// The header is read before the pixels, because a file's size on disk says
+	// nothing about the allocation decoding it will ask for: a seventy-kilobyte
+	// PNG can declare twelve thousand pixels a side and cost hundreds of
+	// megabytes, held for the life of the process. A picture is only ever drawn
+	// as character cells, so anything past a few thousand pixels a side is
+	// detail nobody will see, and refusing it is cheaper than carrying it.
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return fmt.Errorf("reading the header of %s: %w", path, err)
+	}
+	if cfg.Width > maxPhotoSide || cfg.Height > maxPhotoSide {
+		return fmt.Errorf("%s is %dx%d, larger than the %d-pixel limit either side; "+
+			"a terminal cannot use that detail, so scale it down first",
+			path, cfg.Width, cfg.Height, maxPhotoSide)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return fmt.Errorf("decoding %s: %w", path, err)
 	}
+	photoMu.Lock()
 	userPhoto = img
+	photoMu.Unlock()
 	return nil
 }
+
+// maxPhotoSide bounds either dimension of a player-supplied picture. The
+// densest grid a terminal offers is a few hundred cells across and the
+// projection samples four dots a cell, so a couple of thousand pixels is
+// already more than can be resolved.
+const maxPhotoSide = 4096
 
 // Render lays the artwork out to fit within w by h character cells and returns
 // the lines to draw, which may be fewer and narrower than the box. Styling is
@@ -127,18 +164,28 @@ func MinSize(art Art) (w, h int) {
 
 // Best says which artwork a box deserves, which is the rule the side-by-side
 // evaluation of both artworks settled (.work/cover-evaluation.md in the
-// development tree). In monochrome the homage always answers: it is drawn
+// development tree, where the frames for the shipped converters are kept; the
+// two that were dropped were judged before their code was removed and their
+// frames were not retained). In monochrome the homage always answers: it is drawn
 // for runes, where a dithered projection is noise. In colour the projection
 // answers once the grid its picture actually occupies is fine enough to keep
 // the wordmark and the figure readable — under that, the homage. A player
 // who wants the other answer passes their choice to Render; EnvArt overrides
 // this default from the environment.
 func Best(w, h int, depth Depth) Art {
-	switch os.Getenv(EnvArt) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvArt))) {
+	case "":
 	case "homage":
 		return Homage
 	case "photo":
 		return Photo
+	default:
+		// Reported rather than dropped, for the reason the image variable is
+		// reported: a typo that silently does nothing leaves the player looking
+		// at the wrong artwork with no way to find out why. Best cannot return an
+		// error, so the complaint goes to the environment's own channel.
+		fmt.Fprintf(os.Stderr, "twixtui: %s is %q, which is neither \"homage\" nor \"photo\"; using the size-appropriate default\n",
+			EnvArt, os.Getenv(EnvArt))
 	}
 	if depth == DepthMono {
 		return Homage

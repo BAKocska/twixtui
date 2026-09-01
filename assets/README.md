@@ -16,9 +16,14 @@ treats the projection into terminal characters as the alteration.
 The shipped file is deliberately small (213x320, sixteen colours): the
 picture is only ever drawn as character cells, so detail beyond about twice
 the densest cell grid would be bytes every binary carries for nothing.
-Regenerate it from a full-resolution source with:
+cover-source.png is that full-resolution source, 1024x1535, carried here so the
+recipe below is not a dead one. A regeneration command whose input lives only in
+somebody's temporary directory turns the shipped file into a blob the moment that
+directory is cleared, which is the thing this note exists to prevent.
 
-    go run ./assets/gen -in /path/to/poster.png -out assets/cover.png -colors 16
+Regenerate with:
+
+    go run ./assets/gen -in assets/cover-source.png -out assets/cover.png -colors 16
 
 The generator reduces by area-averaging in linear light — the same filtering
 the renderer in internal/cover applies — and then snaps the result back onto
