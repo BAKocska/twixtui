@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -167,13 +168,22 @@ func TestSendTextAndKeys(t *testing.T) {
 
 // TestWaitSettledReturnsTheFinalFrame checks the settle detector waits for output
 // to stop rather than sampling mid-render.
+//
+// The gap between steps is derived from settleQuiet rather than written out. It
+// was 80ms against a 120ms threshold, a margin of one and a half, which is a race
+// and not a test: it held on one machine and failed on a macOS runner the first
+// time one ran this suite. Scheduling jitter and the sampling interval together
+// are the same order as the margin was. At a quarter of the threshold the
+// relationship is explicit and cannot drift when either constant is retuned.
 func TestWaitSettledReturnsTheFinalFrame(t *testing.T) {
 	t.Parallel()
-	prog := `sh -c 'for i in 1 2 3 4 5; do echo step-$i; sleep 0.08; done; echo FINAL; sleep 30'`
+	gap := settleQuiet / 4
+	prog := fmt.Sprintf(`sh -c 'for i in 1 2 3 4 5; do echo step-$i; sleep %.3f; done; echo FINAL; sleep 30'`,
+		gap.Seconds())
 	tm := Start(t, prog, Options{Width: 40, Height: 15})
 	screen := tm.WaitSettled(10 * time.Second)
 	if !strings.Contains(screen, "FINAL") {
-		t.Errorf("settled frame does not contain the last output:\n%s", screen)
+		t.Errorf("settled frame does not contain the last output, so the detector sampled mid-stream:\n%s", screen)
 	}
 }
 
