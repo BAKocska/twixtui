@@ -239,19 +239,36 @@ func TestProgramResizeEndToEnd(t *testing.T) {
 	d := newDemo(t, 24)
 	tm := teatest.NewTestModel(t, d, teatest.WithInitialTermSize(80, 24))
 
-	// The compact scheme puts one space between column labels.
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return strings.Contains(string(b), "A B C")
-	}, teatest.WithDuration(wait))
+	// One space between holes is the compact scheme and cannot occur in the
+	// other, so this is the scale and not merely the board.
+	waitForFrame(t, tm, wait, "· · ·")
 
 	tm.Send(tea.WindowSizeMsg{Width: 200, Height: 60})
 
-	// The detail scheme puts three, which only the larger size can produce, so
-	// this fails if the resize is dropped rather than merely being slow.
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return strings.Contains(string(b), "A   B   C")
-	}, teatest.WithDuration(wait))
+	// Three spaces is the detail scheme, which only the larger size can produce,
+	// so this fails if the resize is dropped rather than merely being slow.
+	waitForFrame(t, tm, wait, "·   ·   ·")
 
 	tm.Send(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
 	tm.WaitFinished(t, teatest.WithFinalTimeout(wait))
+}
+
+// waitForFrame waits until the program's output carries want.
+//
+// What it looks for is a run inside one board row rather than the row of column
+// labels. Bubble Tea redraws differentially: on the resize it moved the cursor
+// and printed "  B   C   D ..." without reprinting the "A" that was already in
+// the right place, so a test looking for "A   B   C" was looking for something
+// that was on the screen and not in the bytes. It passed here and failed on the
+// continuous-integration runner, which is the signature of a test measuring the
+// renderer's choice of full or partial repaint rather than the program.
+//
+// A board row changes completely when the scale changes, so it is repainted
+// whole, and the spacing between holes belongs to one scale or the other: one
+// space cannot appear in a detail frame nor three in a compact one.
+func waitForFrame(t *testing.T, tm *teatest.TestModel, wait time.Duration, want string) {
+	t.Helper()
+	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+		return strings.Contains(string(b), want)
+	}, teatest.WithDuration(wait))
 }

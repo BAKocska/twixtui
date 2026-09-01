@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1253,11 +1254,23 @@ func isJunctionGlyph(r rune) bool {
 func TestNoFalseJunctionInRealPositions(t *testing.T) {
 	for _, n := range []int{8, 12, 18, 24} {
 		for _, sc := range []Scale{Compact, Detail} {
-			shared := 0
+			shared, bridges := 0, 0
 			for seed := range 200 {
 				g := crowdedBoard(t, n, int64(seed)+int64(n)*1000)
 				cv := (&BoardView{Scale: sc}).paint(g)
 				for i := range cv.bits {
+					// A peg carrying a run is drawn through, and only a run: a
+					// corner or a junction on a peg would say the line turns or
+					// branches at that peg, which is a different untruth from
+					// passing through it. A link may step on its own end peg, so
+					// this is reachable rather than defensive.
+					if r := cv.runes[i]; r == glyphPegVerticalBridge || r == glyphPegHorizontalBridge {
+						bridges++
+						if e := cv.bits[i].edges(); e != linkE|linkW {
+							t.Fatalf("n=%d %s seed=%d: cell (%d,%d) draws a peg bridged by %q but its edges are %04b, not a straight run",
+								n, sc, seed, i%cv.w, i/cv.w, r, e)
+						}
+					}
 					refs := cv.refsAt(i)
 					if len(refs) < 2 {
 						continue
@@ -1279,6 +1292,9 @@ func TestNoFalseJunctionInRealPositions(t *testing.T) {
 			// Guards against the sweep quietly measuring nothing.
 			if sc == Compact && shared == 0 {
 				t.Fatalf("n=%d compact: no stranger pair ever shared a cell, so this proved nothing", n)
+			}
+			if sc == Compact && bridges == 0 {
+				t.Fatalf("n=%d compact: no run ever crossed a peg, so the bridge rule proved nothing", n)
 			}
 		}
 	}
@@ -1305,9 +1321,15 @@ func crowdedBoard(t *testing.T, n int, seed int64) *game.Game {
 
 // TestAPegOnEitherMidpointDoesNotBreakTheLink covers the cells a shallow link's
 // horizontal run has to cross: the two holes in the column between its ends. A
-// peg there keeps its cell, so the run must go round it by stepping on the other
-// side, and where both are occupied the link has to give way to the pegs — which
-// is the one case that cannot be drawn whole, so it is stated rather than hidden.
+// peg keeps its cell, so with one of them occupied the run goes round by stepping
+// on the other side. With both occupied there is no free cell left, and the run is
+// drawn through one of the pegs rather than stopped by it: the peg glyph carries
+// the run through it and keeps the filled-or-hollow distinction that names the
+// owner, so the link stays whole and the peg stays a peg of the right colour.
+//
+// The link must come out unbroken in every one of those cases. Blessing a gap
+// here would be blessing exactly the appearance this whole change set exists to
+// remove.
 func TestAPegOnEitherMidpointDoesNotBreakTheLink(t *testing.T) {
 	from := game.Point{Col: 3, Row: 3}
 	for _, d := range []game.Dir{game.ENE, game.ESE} {
@@ -1317,31 +1339,37 @@ func TestAPegOnEitherMidpointDoesNotBreakTheLink(t *testing.T) {
 		for _, blocked := range [][]game.Point{{upper}, {lower}, {upper, lower}} {
 			for _, owner := range []game.Player{game.Vertical, game.Horizontal} {
 				g := linkedPairWith(t, from, to, owner, blocked...)
-				gaps, frame := strokeGaps(t, Compact, g, from, to)
-				switch len(blocked) {
-				case 2:
-					// Both holes hold pegs. The pegs win their cells, so the run
-					// cannot pass; the link is legible from the strokes either
-					// side of them and nothing else can be done at this density.
-					if len(gaps) > 1 {
-						t.Errorf("%v, pegs on both midpoints, %v: %d columns carry no stroke, want at most the one the pegs occupy\n%s",
-							d, owner, len(gaps), frame)
-					}
-				default:
-					if len(gaps) != 0 {
-						t.Errorf("%v with a %v peg at %v: column(s) %v carry no stroke\n%s",
-							d, owner, blocked, gaps, frame)
-					}
+				if gaps, frame := strokeGaps(t, Compact, g, from, to); len(gaps) != 0 {
+					t.Errorf("%v with %v pegs at %v: column(s) %v carry no stroke\n%s",
+						d, owner, blocked, gaps, frame)
 				}
+				lines := renderPlain(t, &BoardView{Scale: Compact}, g)
 				for _, p := range blocked {
-					got := cellAt(t, renderPlain(t, &BoardView{Scale: Compact}, g), g.Size(), Compact.holeX(p.Col), Compact.holeY(p.Row))
-					if got != glyphPegVertical && got != glyphPegHorizontal && got != glyphPegVerticalLast && got != glyphPegHorizontalLast {
-						t.Errorf("%v with a peg at %v: the peg renders %q", d, p, got)
+					got := cellAt(t, lines, g.Size(), Compact.holeX(p.Col), Compact.holeY(p.Row))
+					mine, theirs := pegGlyphsFor(owner)
+					if !slices.Contains(mine, got) {
+						t.Errorf("%v with a %v peg at %v: renders %q, which is not a %v peg",
+							d, owner, p, got, owner)
+					}
+					if slices.Contains(theirs, got) {
+						t.Errorf("%v with a %v peg at %v: renders %q, which reads as the other player",
+							d, owner, p, got)
 					}
 				}
 			}
 		}
 	}
+}
+
+// pegGlyphsFor returns the glyphs that mean a peg of this player, and those that
+// mean the other one, so a test can check the owner survived as well as the peg.
+func pegGlyphsFor(p game.Player) (mine, theirs []rune) {
+	vertical := []rune{glyphPegVertical, glyphPegVerticalLast, glyphPegVerticalBridge}
+	horizontal := []rune{glyphPegHorizontal, glyphPegHorizontalLast, glyphPegHorizontalBridge}
+	if p == game.Horizontal {
+		return horizontal, vertical
+	}
+	return vertical, horizontal
 }
 
 // linkedPairWith plays a vertical link from-to and gives the named holes to one

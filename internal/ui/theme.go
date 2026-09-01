@@ -62,6 +62,15 @@ const (
 	// A cell where a diagonal meets another stroke.
 	glyphCross = '╳'
 
+	// A peg with a link's horizontal run passing through its cell. A shallow
+	// link has to cross the column of holes between its two ends, and where both
+	// of those holes hold pegs there is no free cell left: the run either gives
+	// way, which breaks the link, or it is drawn through the peg. These say both
+	// things at once, and keep the filled-or-hollow distinction that names the
+	// owner, so nothing is lost that the plain peg said.
+	glyphPegVerticalBridge   = '⊕'
+	glyphPegHorizontalBridge = '⊖'
+
 	glyphUp    = '↑'
 	glyphDown  = '↓'
 	glyphLeft  = '←'

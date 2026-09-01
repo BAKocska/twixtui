@@ -159,9 +159,20 @@ var junction = [16]rune{
 	linkN | linkE | linkS | linkW: '┼',
 }
 
+// bridgeFor returns the peg glyph that also carries a horizontal run.
+func bridgeFor(peg rune) rune {
+	switch peg {
+	case glyphPegHorizontal, glyphPegHorizontalLast:
+		return glyphPegHorizontalBridge
+	default:
+		return glyphPegVerticalBridge
+	}
+}
+
 // isLinkGlyph reports whether a rune is part of a drawn link.
 func isLinkGlyph(r rune) bool {
-	if r == glyphRise || r == glyphFall || r == glyphCross {
+	switch r {
+	case glyphRise, glyphFall, glyphCross, glyphPegVerticalBridge, glyphPegHorizontalBridge:
 		return true
 	}
 	for _, j := range junction {
@@ -255,6 +266,13 @@ func (cv *canvas) resolveLinks() {
 		x, y := i%cv.w, i/cv.w
 		switch cv.runes[i] {
 		case glyphPegVertical, glyphPegHorizontal, glyphPegVerticalLast, glyphPegHorizontalLast:
+			// A straight run through a peg is drawn through it rather than
+			// stopped by it. Only a straight run: a corner or a junction on a
+			// peg would claim the line turns or branches there, which is a
+			// different and larger untruth than passing through.
+			if e == linkE|linkW {
+				cv.set(x, y, bridgeFor(cv.runes[i]), cv.bitIDs[i])
+			}
 		case glyphRise, glyphFall, glyphCross:
 			cv.set(x, y, glyphCross, cv.bitIDs[i])
 		default:
@@ -302,7 +320,8 @@ func (cv *canvas) hasPeg(x, y int) bool {
 		return false
 	}
 	switch cv.runes[y*cv.w+x] {
-	case glyphPegVertical, glyphPegHorizontal, glyphPegVerticalLast, glyphPegHorizontalLast:
+	case glyphPegVertical, glyphPegHorizontal, glyphPegVerticalLast, glyphPegHorizontalLast,
+		glyphPegVerticalBridge, glyphPegHorizontalBridge:
 		return true
 	}
 	return false
