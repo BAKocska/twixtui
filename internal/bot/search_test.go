@@ -14,9 +14,6 @@ import (
 // three.
 var testTiers = []Tier{Beginner, Intermediate, Pro}
 
-// fastParams shortens a tier's budget without changing what separates it from
-// the others, so that the property tests can run all three tiers over many
-// positions in seconds.
 // boundedEngine is an engine of the given tier whose search is bounded by depth
 // rather than by the clock, so the same seed and position must give the same
 // answer however loaded the machine is. The depth is small enough that the search
@@ -31,6 +28,9 @@ func boundedEngine(t Tier, seed int64) *engine {
 	return &engine{tier: t, seed: seed, p: p, play: newSearcher(p)}
 }
 
+// fastEngine shortens a tier's budget without changing what separates it from
+// the others, so that the property tests can run all three tiers over many
+// positions in seconds.
 func fastEngine(t Tier, seed int64, budget time.Duration) *engine {
 	p := tierParams(t)
 	p.budget = budget

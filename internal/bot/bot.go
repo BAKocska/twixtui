@@ -35,7 +35,7 @@ var tierNames = [...]string{"beginner", "intermediate", "pro"}
 // its whole budget thinking; the two weaker tiers are capped in depth and so
 // answer well inside theirs, which the wording must not overstate.
 var tierSummaries = [...]string{
-	"one move ahead on peg count alone, answered at once: takes a win and blocks one, but has no plan",
+	"one move ahead, counting only how many pegs each side still needs, answered at once: takes a win and blocks one, but has no plan",
 	"three moves ahead with the full evaluation, still near-instant: punishes a loose chain",
 	"thinks for up to three seconds, five to seven moves ahead, extending forced lines: the strongest play on offer",
 }
@@ -173,9 +173,11 @@ type engine struct {
 	hint *searcher
 }
 
-// New returns a bot of the given tier. The seed fixes its choices: the same
-// seed in the same position always produces the same move, which is what makes
-// a game reproducible and a strength measurement repeatable.
+// New returns a bot of the given tier. The seed fixes its choices where the
+// search is bounded by depth: the beginner and intermediate tiers always answer
+// the same way from the same seed and position. The pro tier is bounded by the
+// clock, so a loaded machine can stop its search earlier and answer
+// differently; its games are reproducible in practice rather than by guarantee.
 func New(t Tier, seed int64) Bot {
 	if t < Beginner || t > Pro {
 		t = Beginner
