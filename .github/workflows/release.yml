@@ -8,7 +8,16 @@ permissions:
   contents: write
 
 jobs:
+  # A tag is the one ref that must not skip the checks: ci runs on branch
+  # pushes and pull requests, and a pushed tag is neither, so before this job
+  # existed `git push --tags` published binaries for a tree that nothing had
+  # tested. The checks are the same workflow ci runs everywhere else, called
+  # rather than copied, so the two cannot drift apart.
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

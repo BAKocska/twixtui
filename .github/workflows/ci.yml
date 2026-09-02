@@ -4,6 +4,9 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # So the release workflow can run these same checks on a pushed tag before
+  # publishing anything built from it.
+  workflow_call:
 
 permissions:
   contents: read
