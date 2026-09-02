@@ -1,7 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="twixtui — TwixT in the terminal">
 <title>twixtui — TwixT in the terminal</title>
-<rect width="1280" height="320" rx="10" fill="#fbfaf8"/>
-<g fill="#ddd9d2">
+<rect width="1280" height="320" rx="10" fill="#f5eed4"/>
+<rect x="10" y="10" width="1260" height="300" rx="6" fill="#a897b2"/>
+<g fill="#756386">
 <circle cx="880" cy="82" r="2.0"/>
 <circle cx="880" cy="108" r="2.0"/>
 <circle cx="880" cy="134" r="2.0"/>
@@ -105,27 +106,35 @@
 <circle cx="1192" cy="212" r="2.0"/>
 <circle cx="1192" cy="238" r="2.0"/>
 </g>
-<line x1="1036" y1="56" x2="1010" y2="108" stroke="#a8241c" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1010" y1="108" x2="1036" y2="160" stroke="#a8241c" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1036" y1="160" x2="1010" y2="212" stroke="#a8241c" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1010" y1="212" x2="1036" y2="264" stroke="#a8241c" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="880" y1="186" x2="932" y2="160" stroke="#1b4a72" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="932" y1="160" x2="984" y2="186" stroke="#1b4a72" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1088" y1="160" x2="1140" y2="186" stroke="#1b4a72" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1140" y1="186" x2="1192" y2="160" stroke="#1b4a72" stroke-width="2.5" stroke-linecap="round"/>
-<circle cx="1036" cy="56" r="7.0" fill="#a8241c"/>
-<circle cx="1010" cy="108" r="7.0" fill="#a8241c"/>
-<circle cx="1036" cy="160" r="7.0" fill="#a8241c"/>
-<circle cx="1010" cy="212" r="7.0" fill="#a8241c"/>
-<circle cx="1036" cy="264" r="7.0" fill="#a8241c"/>
-<circle cx="880" cy="186" r="7.0" fill="#1b4a72"/>
-<circle cx="932" cy="160" r="7.0" fill="#1b4a72"/>
-<circle cx="984" cy="186" r="7.0" fill="#1b4a72"/>
-<circle cx="1088" cy="160" r="7.0" fill="#1b4a72"/>
-<circle cx="1140" cy="186" r="7.0" fill="#1b4a72"/>
-<circle cx="1192" cy="160" r="7.0" fill="#1b4a72"/>
-<text x="88" y="172" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="108" font-weight="bold" letter-spacing="-3"><tspan fill="#a8241c">twixt</tspan><tspan fill="#1b4a72">ui</tspan></text>
-<rect x="92" y="198" width="146" height="5" rx="2.5" fill="#a8241c"/>
-<text x="92" y="240" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="27" fill="#55606d">TwixT in the terminal</text>
-<text x="92" y="275" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#55606d">Alex Randolph’s connection game, out of a single binary</text>
+<rect x="840" y="88" width="12" height="18" rx="2" fill="#aa2d28"/>
+<rect x="834" y="104" width="24" height="10" rx="3" fill="#aa2d28"/>
+<path d="M 833,114 C 837,150 839.5,180 840.5,210 C 839.5,245 836,275 830,298 L 862,298 C 856,275 852.5,245 851.5,210 C 852.5,180 855,150 859,114 Z" fill="#aa2d28"/>
+<rect x="828" y="296" width="36" height="8" rx="3" fill="#aa2d28"/>
+<rect x="1220" y="88" width="12" height="18" rx="2" fill="#aa2d28"/>
+<rect x="1214" y="104" width="24" height="10" rx="3" fill="#aa2d28"/>
+<path d="M 1213,114 C 1217,150 1219.5,180 1220.5,210 C 1219.5,245 1216,275 1210,298 L 1242,298 C 1236,275 1232.5,245 1231.5,210 C 1232.5,180 1235,150 1239,114 Z" fill="#aa2d28"/>
+<rect x="1208" y="296" width="36" height="8" rx="3" fill="#aa2d28"/>
+<line x1="1036" y1="56" x2="1010" y2="108" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="1010" y1="108" x2="1036" y2="160" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="1036" y1="160" x2="1010" y2="212" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="1010" y1="212" x2="1036" y2="264" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="880" y1="186" x2="932" y2="160" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="932" y1="160" x2="984" y2="186" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="1088" y1="160" x2="1140" y2="186" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="1140" y1="186" x2="1192" y2="160" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<circle cx="1036" cy="56" r="7.0" fill="#aa2d28"/>
+<circle cx="1010" cy="108" r="7.0" fill="#aa2d28"/>
+<circle cx="1036" cy="160" r="7.0" fill="#aa2d28"/>
+<circle cx="1010" cy="212" r="7.0" fill="#aa2d28"/>
+<circle cx="1036" cy="264" r="7.0" fill="#aa2d28"/>
+<circle cx="880" cy="186" r="7.0" fill="#221b26"/>
+<circle cx="932" cy="160" r="7.0" fill="#221b26"/>
+<circle cx="984" cy="186" r="7.0" fill="#221b26"/>
+<circle cx="1088" cy="160" r="7.0" fill="#221b26"/>
+<circle cx="1140" cy="186" r="7.0" fill="#221b26"/>
+<circle cx="1192" cy="160" r="7.0" fill="#221b26"/>
+<text x="88" y="172" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="108" font-weight="bold" letter-spacing="-3"><tspan fill="#aa2d28">twixt</tspan><tspan fill="#221b26">ui</tspan></text>
+<rect x="92" y="198" width="146" height="5" rx="2.5" fill="#aa2d28"/>
+<text x="92" y="240" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="27" fill="#221b26">TwixT in the terminal</text>
+<text x="92" y="275" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#561d25">Alex Randolph’s connection game, out of a single binary</text>
 </svg>

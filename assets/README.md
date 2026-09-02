@@ -40,19 +40,40 @@ below is for.
 
 ## banner-light.svg, banner-dark.svg
 
-The front page's hero: the wordmark, a tagline, and a fragment of a board. Two
-files rather than one because README.md selects between them with a `<picture>`
-element and `prefers-color-scheme`, so the banner sits on GitHub's own
-background in either theme instead of carrying a panel of its own.
+The front page's hero: the wordmark, a tagline, and a fragment of a board,
+drawn as the object the project is named after — the cream-bordered violet
+lid of the 1962 box. Two files rather than one because README.md selects
+between them with a `<picture>` element and `prefers-color-scheme`. The
+composition is identical in both; the dark file is one step duskier, its
+field `homageSky` where the light file's is `homageSkyHigh` and its frame
+`homageCream` where the light file's is the lid's own cream, so the panel
+sits quietly on either of GitHub's backgrounds without pretending to be one
+of them.
 
-The wordmark splits the way the project's own site splits it: `twixt` takes the
-vertical player's colour and `ui` the horizontal player's, which is the whole
-identity in two words — the two players are the two goals that cut across each
-other. The colours in each file are copied from web/style.css, the light set
-from `:root` and the dark set from its `prefers-color-scheme: dark` block, so
-the page and the banner cannot drift apart without someone editing both. Those
-are deliberately the site's colours and not internal/theme's: the banner is
-branding on a web page, not a picture of a terminal.
+The colours are internal/cover/homage.go's, hex for hex — `homageRed` for
+the vertical player, the underline and the flanking pegs, `homageInk` for
+the horizontal player and the lettering, `homageFar` for the field of holes,
+and the field and frame values named above — the same bytes the program puts
+on screen when it draws the cover beside the menu. Two values have no name
+in the code: the light file's frame `#f5eed4` and the slogan's maroon
+`#561d25`, measured from assets/cover-source.png as the dominant colours of
+its border and of the watcher's jacket. An earlier revision copied the
+banner's colours from web/style.css so page and banner could not drift
+apart; that pin is deliberately gone — the owner directed that the front
+page evoke the 1962 lid, and the site keeps its own red and blue — so the
+banner now drifts with the cover art instead, and anyone re-tuning
+homage.go's palette should carry these two files along.
+
+The wordmark still splits the way the project's site splits it — `twixt` is
+the vertical player and `ui` the horizontal, the two goals that cut across
+each other — but in the colours of the 1962 set, red pegs against black,
+rather than the site's red and blue.
+
+The two tall tapered pegs flanking the board fragment are the lid's
+composition — two tall red pegs flanking a row of linked pegs over a field
+of holes — drawn as silhouettes seen from the side. They stand outside the
+grid and claim nothing about the position; the discipline below applies to
+the chains, not to them.
 
 The board fragment is honest geometry, not decoration. Every peg sits on a grid
 point, every link joins two pegs a knight's move apart, and the gap in the
