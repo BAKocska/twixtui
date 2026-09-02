@@ -5,208 +5,123 @@
 <text x="30" y="41" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="21"><tspan fill="#a897b2">$ </tspan><tspan fill="#eae0c9">twixtui █</tspan></text>
 <text x="1246" y="41" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#a897b2">TwixT in the terminal</text>
 <rect x="28" y="60" width="1224" height="232" fill="#9d8ba8"/>
-<circle cx="874" cy="103" r="26" fill="#a185a3"/>
-<path d="M 800,188 C 806,160 826,142 850,133 C 858,130 868,129 874,129 C 880,129 890,130 898,133 C 922,142 942,160 948,188 Z" fill="#a185a3"/>
-<rect x="28" y="188" width="1224" height="104" fill="#d3a24b"/>
+<path d="M 850,213 C 854,188 870,172 894,165 C 906,161 920,160 934,160 L 952,160 C 980,163 1000,177 1008,196 C 1011,202 1013,208 1014,213 Z" fill="#561d25"/>
+<path d="M 972,210 C 974,192 966,178 950,167 L 940,158 L 930,172 C 942,178 950,192 953,208 Z" fill="#561d25"/>
+<ellipse cx="932" cy="130" rx="23" ry="26" fill="#e9b23d"/>
+<circle cx="924" cy="158" r="10" fill="#e9b23d"/>
+<path d="M 908,124 C 907,106 919,97 933,97 C 948,97 957,107 957,123 C 957,130 953,135 944,138 C 944,126 938,120 929,119 C 918,118 911,120 908,124 Z" fill="#561d25"/>
+<rect x="28" y="213" width="1224" height="79" fill="#d3a24b"/>
 <g fill="#6e5628">
-<circle cx="106" cy="206" r="2.6"/>
-<circle cx="132" cy="206" r="2.6"/>
-<circle cx="184" cy="206" r="2.6"/>
-<circle cx="210" cy="206" r="2.6"/>
-<circle cx="236" cy="206" r="2.6"/>
-<circle cx="262" cy="206" r="2.6"/>
-<circle cx="288" cy="206" r="2.6"/>
-<circle cx="314" cy="206" r="2.6"/>
-<circle cx="340" cy="206" r="2.6"/>
-<circle cx="366" cy="206" r="2.6"/>
-<circle cx="392" cy="206" r="2.6"/>
-<circle cx="418" cy="206" r="2.6"/>
-<circle cx="444" cy="206" r="2.6"/>
-<circle cx="496" cy="206" r="2.6"/>
-<circle cx="522" cy="206" r="2.6"/>
-<circle cx="548" cy="206" r="2.6"/>
-<circle cx="574" cy="206" r="2.6"/>
-<circle cx="600" cy="206" r="2.6"/>
-<circle cx="626" cy="206" r="2.6"/>
-<circle cx="652" cy="206" r="2.6"/>
-<circle cx="730" cy="206" r="2.6"/>
-<circle cx="756" cy="206" r="2.6"/>
-<circle cx="782" cy="206" r="2.6"/>
-<circle cx="808" cy="206" r="2.6"/>
-<circle cx="834" cy="206" r="2.6"/>
-<circle cx="860" cy="206" r="2.6"/>
-<circle cx="912" cy="206" r="2.6"/>
-<circle cx="938" cy="206" r="2.6"/>
-<circle cx="964" cy="206" r="2.6"/>
-<circle cx="990" cy="206" r="2.6"/>
-<circle cx="1016" cy="206" r="2.6"/>
-<circle cx="1042" cy="206" r="2.6"/>
-<circle cx="1068" cy="206" r="2.6"/>
-<circle cx="1094" cy="206" r="2.6"/>
-<circle cx="1120" cy="206" r="2.6"/>
-<circle cx="1146" cy="206" r="2.6"/>
-<circle cx="1172" cy="206" r="2.6"/>
-<circle cx="132" cy="232" r="2.6"/>
-<circle cx="158" cy="232" r="2.6"/>
-<circle cx="184" cy="232" r="2.6"/>
-<circle cx="236" cy="232" r="2.6"/>
-<circle cx="262" cy="232" r="2.6"/>
-<circle cx="288" cy="232" r="2.6"/>
-<circle cx="314" cy="232" r="2.6"/>
-<circle cx="340" cy="232" r="2.6"/>
-<circle cx="366" cy="232" r="2.6"/>
-<circle cx="392" cy="232" r="2.6"/>
-<circle cx="444" cy="232" r="2.6"/>
-<circle cx="470" cy="232" r="2.6"/>
-<circle cx="496" cy="232" r="2.6"/>
-<circle cx="548" cy="232" r="2.6"/>
-<circle cx="574" cy="232" r="2.6"/>
-<circle cx="600" cy="232" r="2.6"/>
-<circle cx="652" cy="232" r="2.6"/>
-<circle cx="678" cy="232" r="2.6"/>
-<circle cx="704" cy="232" r="2.6"/>
-<circle cx="730" cy="232" r="2.6"/>
-<circle cx="756" cy="232" r="2.6"/>
-<circle cx="782" cy="232" r="2.6"/>
-<circle cx="860" cy="232" r="2.6"/>
-<circle cx="886" cy="232" r="2.6"/>
-<circle cx="912" cy="232" r="2.6"/>
-<circle cx="964" cy="232" r="2.6"/>
-<circle cx="990" cy="232" r="2.6"/>
-<circle cx="1016" cy="232" r="2.6"/>
-<circle cx="1042" cy="232" r="2.6"/>
-<circle cx="1068" cy="232" r="2.6"/>
-<circle cx="1094" cy="232" r="2.6"/>
-<circle cx="1120" cy="232" r="2.6"/>
-<circle cx="1172" cy="232" r="2.6"/>
-<circle cx="106" cy="258" r="2.6"/>
-<circle cx="132" cy="258" r="2.6"/>
-<circle cx="158" cy="258" r="2.6"/>
-<circle cx="184" cy="258" r="2.6"/>
-<circle cx="210" cy="258" r="2.6"/>
-<circle cx="236" cy="258" r="2.6"/>
-<circle cx="288" cy="258" r="2.6"/>
-<circle cx="314" cy="258" r="2.6"/>
-<circle cx="340" cy="258" r="2.6"/>
-<circle cx="392" cy="258" r="2.6"/>
-<circle cx="418" cy="258" r="2.6"/>
-<circle cx="444" cy="258" r="2.6"/>
-<circle cx="470" cy="258" r="2.6"/>
-<circle cx="496" cy="258" r="2.6"/>
-<circle cx="522" cy="258" r="2.6"/>
-<circle cx="548" cy="258" r="2.6"/>
-<circle cx="600" cy="258" r="2.6"/>
-<circle cx="626" cy="258" r="2.6"/>
-<circle cx="652" cy="258" r="2.6"/>
-<circle cx="678" cy="258" r="2.6"/>
-<circle cx="704" cy="258" r="2.6"/>
-<circle cx="756" cy="258" r="2.6"/>
-<circle cx="782" cy="258" r="2.6"/>
-<circle cx="808" cy="258" r="2.6"/>
-<circle cx="834" cy="258" r="2.6"/>
-<circle cx="860" cy="258" r="2.6"/>
-<circle cx="886" cy="258" r="2.6"/>
-<circle cx="912" cy="258" r="2.6"/>
-<circle cx="938" cy="258" r="2.6"/>
-<circle cx="964" cy="258" r="2.6"/>
-<circle cx="1016" cy="258" r="2.6"/>
-<circle cx="1042" cy="258" r="2.6"/>
-<circle cx="1068" cy="258" r="2.6"/>
-<circle cx="1120" cy="258" r="2.6"/>
-<circle cx="1146" cy="258" r="2.6"/>
-<circle cx="1172" cy="258" r="2.6"/>
-<circle cx="106" cy="284" r="2.6"/>
-<circle cx="132" cy="284" r="2.6"/>
-<circle cx="158" cy="284" r="2.6"/>
-<circle cx="184" cy="284" r="2.6"/>
-<circle cx="210" cy="284" r="2.6"/>
-<circle cx="236" cy="284" r="2.6"/>
-<circle cx="262" cy="284" r="2.6"/>
-<circle cx="288" cy="284" r="2.6"/>
-<circle cx="340" cy="284" r="2.6"/>
-<circle cx="366" cy="284" r="2.6"/>
-<circle cx="392" cy="284" r="2.6"/>
-<circle cx="418" cy="284" r="2.6"/>
-<circle cx="444" cy="284" r="2.6"/>
-<circle cx="470" cy="284" r="2.6"/>
-<circle cx="496" cy="284" r="2.6"/>
-<circle cx="522" cy="284" r="2.6"/>
-<circle cx="548" cy="284" r="2.6"/>
-<circle cx="574" cy="284" r="2.6"/>
-<circle cx="600" cy="284" r="2.6"/>
-<circle cx="626" cy="284" r="2.6"/>
-<circle cx="652" cy="284" r="2.6"/>
-<circle cx="678" cy="284" r="2.6"/>
-<circle cx="704" cy="284" r="2.6"/>
-<circle cx="730" cy="284" r="2.6"/>
-<circle cx="756" cy="284" r="2.6"/>
-<circle cx="808" cy="284" r="2.6"/>
-<circle cx="834" cy="284" r="2.6"/>
-<circle cx="860" cy="284" r="2.6"/>
-<circle cx="886" cy="284" r="2.6"/>
-<circle cx="912" cy="284" r="2.6"/>
-<circle cx="938" cy="284" r="2.6"/>
-<circle cx="964" cy="284" r="2.6"/>
-<circle cx="990" cy="284" r="2.6"/>
-<circle cx="1016" cy="284" r="2.6"/>
-<circle cx="1068" cy="284" r="2.6"/>
-<circle cx="1094" cy="284" r="2.6"/>
-<circle cx="1120" cy="284" r="2.6"/>
-<circle cx="1146" cy="284" r="2.6"/>
+<circle cx="96" cy="228" r="2.0"/>
+<circle cx="148" cy="228" r="2.0"/>
+<circle cx="200" cy="228" r="2.0"/>
+<circle cx="252" cy="228" r="2.0"/>
+<circle cx="304" cy="228" r="2.0"/>
+<circle cx="356" cy="228" r="2.0"/>
+<circle cx="408" cy="228" r="2.0"/>
+<circle cx="460" cy="228" r="2.0"/>
+<circle cx="564" cy="228" r="2.0"/>
+<circle cx="616" cy="228" r="2.0"/>
+<circle cx="668" cy="228" r="2.0"/>
+<circle cx="720" cy="228" r="2.0"/>
+<circle cx="772" cy="228" r="2.0"/>
+<circle cx="824" cy="228" r="2.0"/>
+<circle cx="876" cy="228" r="2.0"/>
+<circle cx="928" cy="228" r="2.0"/>
+<circle cx="1032" cy="228" r="2.0"/>
+<circle cx="1084" cy="228" r="2.0"/>
+<circle cx="1136" cy="228" r="2.0"/>
+<circle cx="1188" cy="228" r="2.0"/>
+<circle cx="96" cy="250" r="2.5"/>
+<circle cx="148" cy="250" r="2.5"/>
+<circle cx="252" cy="250" r="2.5"/>
+<circle cx="304" cy="250" r="2.5"/>
+<circle cx="356" cy="250" r="2.5"/>
+<circle cx="460" cy="250" r="2.5"/>
+<circle cx="512" cy="250" r="2.5"/>
+<circle cx="564" cy="250" r="2.5"/>
+<circle cx="616" cy="250" r="2.5"/>
+<circle cx="720" cy="250" r="2.5"/>
+<circle cx="772" cy="250" r="2.5"/>
+<circle cx="824" cy="250" r="2.5"/>
+<circle cx="928" cy="250" r="2.5"/>
+<circle cx="980" cy="250" r="2.5"/>
+<circle cx="1032" cy="250" r="2.5"/>
+<circle cx="1084" cy="250" r="2.5"/>
+<circle cx="1188" cy="250" r="2.5"/>
+<circle cx="148" cy="276" r="3.0"/>
+<circle cx="200" cy="276" r="3.0"/>
+<circle cx="252" cy="276" r="3.0"/>
+<circle cx="356" cy="276" r="3.0"/>
+<circle cx="408" cy="276" r="3.0"/>
+<circle cx="460" cy="276" r="3.0"/>
+<circle cx="512" cy="276" r="3.0"/>
+<circle cx="616" cy="276" r="3.0"/>
+<circle cx="668" cy="276" r="3.0"/>
+<circle cx="720" cy="276" r="3.0"/>
+<circle cx="824" cy="276" r="3.0"/>
+<circle cx="876" cy="276" r="3.0"/>
+<circle cx="928" cy="276" r="3.0"/>
+<circle cx="980" cy="276" r="3.0"/>
+<circle cx="1084" cy="276" r="3.0"/>
+<circle cx="1136" cy="276" r="3.0"/>
+<circle cx="1188" cy="276" r="3.0"/>
 </g>
-<line x1="106" y1="232" x2="158" y2="206" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="158" y1="206" x2="210" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="210" y1="232" x2="262" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="262" y1="258" x2="314" y2="284" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="314" y1="284" x2="366" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="366" y1="258" x2="418" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="418" y1="232" x2="470" y2="206" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="470" y1="206" x2="522" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="522" y1="232" x2="574" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="574" y1="258" x2="626" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="626" y1="232" x2="678" y2="206" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="834" y1="232" x2="886" y2="206" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="886" y1="206" x2="938" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="938" y1="232" x2="990" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="990" y1="258" x2="1042" y2="284" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1042" y1="284" x2="1094" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1094" y1="258" x2="1146" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1146" y1="232" x2="1172" y2="284" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="704" y1="206" x2="730" y2="258" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="730" y1="258" x2="782" y2="284" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="782" y1="284" x2="808" y2="232" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
-<circle cx="106" cy="232" r="7.0" fill="#2b241f"/>
-<circle cx="158" cy="206" r="7.0" fill="#2b241f"/>
-<circle cx="210" cy="232" r="7.0" fill="#2b241f"/>
-<circle cx="262" cy="258" r="7.0" fill="#2b241f"/>
-<circle cx="314" cy="284" r="7.0" fill="#2b241f"/>
-<circle cx="366" cy="258" r="7.0" fill="#2b241f"/>
-<circle cx="418" cy="232" r="7.0" fill="#2b241f"/>
-<circle cx="470" cy="206" r="7.0" fill="#2b241f"/>
-<circle cx="522" cy="232" r="7.0" fill="#2b241f"/>
-<circle cx="574" cy="258" r="7.0" fill="#2b241f"/>
-<circle cx="626" cy="232" r="7.0" fill="#2b241f"/>
-<circle cx="678" cy="206" r="7.0" fill="#2b241f"/>
-<circle cx="834" cy="232" r="7.0" fill="#2b241f"/>
-<circle cx="886" cy="206" r="7.0" fill="#2b241f"/>
-<circle cx="938" cy="232" r="7.0" fill="#2b241f"/>
-<circle cx="990" cy="258" r="7.0" fill="#2b241f"/>
-<circle cx="1042" cy="284" r="7.0" fill="#2b241f"/>
-<circle cx="1094" cy="258" r="7.0" fill="#2b241f"/>
-<circle cx="1146" cy="232" r="7.0" fill="#2b241f"/>
-<circle cx="1172" cy="284" r="7.0" fill="#2b241f"/>
-<circle cx="704" cy="206" r="7.0" fill="#aa2d28"/>
-<circle cx="730" cy="258" r="7.0" fill="#aa2d28"/>
-<circle cx="782" cy="284" r="7.0" fill="#aa2d28"/>
-<circle cx="808" cy="232" r="7.0" fill="#aa2d28"/>
-<rect x="64" y="96" width="12" height="16" rx="2" fill="#aa2d28"/>
-<rect x="58" y="110" width="24" height="9" rx="3" fill="#aa2d28"/>
-<path d="M 57,119 C 61,150 63.5,175 64.5,200 C 63.5,235 60,262 55,282 L 85,282 C 80,262 76.5,235 75.5,200 C 76.5,175 79,150 83,119 Z" fill="#aa2d28"/>
-<rect x="52" y="280" width="36" height="8" rx="3" fill="#aa2d28"/>
-<rect x="1204" y="96" width="12" height="16" rx="2" fill="#aa2d28"/>
-<rect x="1198" y="110" width="24" height="9" rx="3" fill="#aa2d28"/>
-<path d="M 1197,119 C 1201,150 1203.5,175 1204.5,200 C 1203.5,235 1200,262 1195,282 L 1225,282 C 1220,262 1216.5,235 1215.5,200 C 1216.5,175 1219,150 1223,119 Z" fill="#aa2d28"/>
-<rect x="1192" y="280" width="36" height="8" rx="3" fill="#aa2d28"/>
-<text x="94" y="142" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="88" font-weight="bold" letter-spacing="-3"><tspan fill="#aa2d28">twixt</tspan><tspan fill="#221b26">ui</tspan></text>
-<text x="98" y="178" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#561d25">Alex Randolph’s connection game, out of a single binary</text>
+<line x1="96" y1="184" x2="200" y2="188" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="200" y1="188" x2="304" y2="184" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="304" y1="184" x2="408" y2="188" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="408" y1="188" x2="512" y2="188" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="512" y1="188" x2="564" y2="184" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="564" y1="184" x2="668" y2="188" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="668" y1="188" x2="772" y2="184" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="772" y1="184" x2="876" y2="188" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="876" y1="188" x2="980" y2="188" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="980" y1="188" x2="1032" y2="184" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="1032" y1="184" x2="1136" y2="188" stroke="#221b26" stroke-width="3.5" stroke-linecap="round"/>
+<rect x="73.6" y="184" width="44.8" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 76.7,190 C 86.5,210.8 87.5,224.9 87.5,228.9 C 87.5,254.7 73.0,264.7 73.0,273 L 119.0,273 C 119.0,264.7 104.5,254.7 104.5,228.9 C 104.5,224.9 105.5,210.8 115.3,190 Z" fill="#2b241f"/>
+<rect x="67.5" y="270" width="57.0" height="8" rx="3" fill="#2b241f"/>
+<rect x="184.9" y="188" width="30.2" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 187.0,194 C 193.3,207.2 194.3,216.3 194.3,220.3 C 194.3,235.3 184.5,241.7 184.5,247 L 215.5,247 C 215.5,241.7 205.7,235.3 205.7,220.3 C 205.7,216.3 206.7,207.2 213.0,194 Z" fill="#2b241f"/>
+<rect x="180.8" y="244" width="38.4" height="8" rx="3" fill="#2b241f"/>
+<rect x="281.6" y="184" width="44.8" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 284.7,190 C 294.5,210.8 295.5,224.9 295.5,228.9 C 295.5,254.7 281.0,264.7 281.0,273 L 327.0,273 C 327.0,264.7 312.5,254.7 312.5,228.9 C 312.5,224.9 313.5,210.8 323.3,190 Z" fill="#2b241f"/>
+<rect x="275.5" y="270" width="57.0" height="8" rx="3" fill="#2b241f"/>
+<rect x="392.9" y="188" width="30.2" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 395.0,194 C 401.3,207.2 402.3,216.3 402.3,220.3 C 402.3,235.3 392.5,241.7 392.5,247 L 423.5,247 C 423.5,241.7 413.7,235.3 413.7,220.3 C 413.7,216.3 414.7,207.2 421.0,194 Z" fill="#2b241f"/>
+<rect x="388.8" y="244" width="38.4" height="8" rx="3" fill="#2b241f"/>
+<rect x="502.3" y="188" width="19.5" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 503.6,194 C 507.3,201.8 508.3,207.0 508.3,211.0 C 508.3,218.2 502.0,221.9 502.0,225 L 522.0,225 C 522.0,221.9 515.7,218.2 515.7,211.0 C 515.7,207.0 516.7,201.8 520.4,194 Z" fill="#2b241f"/>
+<rect x="499.6" y="222" width="24.8" height="8" rx="3" fill="#2b241f"/>
+<rect x="541.6" y="184" width="44.8" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 544.7,190 C 554.5,210.8 555.5,224.9 555.5,228.9 C 555.5,254.7 541.0,264.7 541.0,273 L 587.0,273 C 587.0,264.7 572.5,254.7 572.5,228.9 C 572.5,224.9 573.5,210.8 583.3,190 Z" fill="#2b241f"/>
+<rect x="535.5" y="270" width="57.0" height="8" rx="3" fill="#2b241f"/>
+<rect x="652.9" y="188" width="30.2" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 655.0,194 C 661.3,207.2 662.3,216.3 662.3,220.3 C 662.3,235.3 652.5,241.7 652.5,247 L 683.5,247 C 683.5,241.7 673.7,235.3 673.7,220.3 C 673.7,216.3 674.7,207.2 681.0,194 Z" fill="#2b241f"/>
+<rect x="648.8" y="244" width="38.4" height="8" rx="3" fill="#2b241f"/>
+<rect x="749.6" y="184" width="44.8" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 752.7,190 C 762.5,210.8 763.5,224.9 763.5,228.9 C 763.5,254.7 749.0,264.7 749.0,273 L 795.0,273 C 795.0,264.7 780.5,254.7 780.5,228.9 C 780.5,224.9 781.5,210.8 791.3,190 Z" fill="#2b241f"/>
+<rect x="743.5" y="270" width="57.0" height="8" rx="3" fill="#2b241f"/>
+<rect x="860.9" y="188" width="30.2" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 863.0,194 C 869.3,207.2 870.3,216.3 870.3,220.3 C 870.3,235.3 860.5,241.7 860.5,247 L 891.5,247 C 891.5,241.7 881.7,235.3 881.7,220.3 C 881.7,216.3 882.7,207.2 889.0,194 Z" fill="#2b241f"/>
+<rect x="856.8" y="244" width="38.4" height="8" rx="3" fill="#2b241f"/>
+<rect x="970.3" y="188" width="19.5" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 971.6,194 C 975.3,201.8 976.3,207.0 976.3,211.0 C 976.3,218.2 970.0,221.9 970.0,225 L 990.0,225 C 990.0,221.9 983.7,218.2 983.7,211.0 C 983.7,207.0 984.7,201.8 988.4,194 Z" fill="#2b241f"/>
+<rect x="967.6" y="222" width="24.8" height="8" rx="3" fill="#2b241f"/>
+<rect x="1009.6" y="184" width="44.8" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 1012.7,190 C 1022.5,210.8 1023.5,224.9 1023.5,228.9 C 1023.5,254.7 1009.0,264.7 1009.0,273 L 1055.0,273 C 1055.0,264.7 1040.5,254.7 1040.5,228.9 C 1040.5,224.9 1041.5,210.8 1051.3,190 Z" fill="#2b241f"/>
+<rect x="1003.5" y="270" width="57.0" height="8" rx="3" fill="#2b241f"/>
+<rect x="1120.9" y="188" width="30.2" height="7" rx="2.5" fill="#2b241f"/>
+<path d="M 1123.0,194 C 1129.3,207.2 1130.3,216.3 1130.3,220.3 C 1130.3,235.3 1120.5,241.7 1120.5,247 L 1151.5,247 C 1151.5,241.7 1141.7,235.3 1141.7,220.3 C 1141.7,216.3 1142.7,207.2 1149.0,194 Z" fill="#2b241f"/>
+<rect x="1116.8" y="244" width="38.4" height="8" rx="3" fill="#2b241f"/>
+<rect x="62.0" y="62" width="16.0" height="18.0" rx="2.5" fill="#aa2d28"/>
+<rect x="53.0" y="78.0" width="34.0" height="12.0" rx="3.5" fill="#aa2d28"/>
+<path d="M 47.0,88.0 C 58.5,137.2 59.5,170.7 59.5,174.7 C 59.5,241.7 43.0,265.3 43.0,285 L 97.0,285 C 97.0,265.3 80.5,241.7 80.5,174.7 C 80.5,170.7 81.5,137.2 93.0,88.0 Z" fill="#aa2d28"/>
+<rect x="41.0" y="283" width="58.0" height="9" rx="3.5" fill="#aa2d28"/>
+<rect x="1203.2" y="96" width="13.6" height="15.3" rx="2.5" fill="#aa2d28"/>
+<rect x="1195.5" y="109.6" width="28.9" height="10.2" rx="3.5" fill="#aa2d28"/>
+<path d="M 1190.5,118.1 C 1200.1,158.3 1201.1,185.7 1201.1,189.7 C 1201.1,243.6 1187.0,262.9 1187.0,279 L 1233.0,279 C 1233.0,262.9 1218.9,243.6 1218.9,189.7 C 1218.9,185.7 1219.9,158.3 1229.5,118.1 Z" fill="#aa2d28"/>
+<rect x="1185.3" y="277" width="49.3" height="9" rx="3.5" fill="#aa2d28"/>
+<text x="100" y="138" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="88" font-weight="bold" letter-spacing="-3"><tspan fill="#aa2d28">twixt</tspan><tspan fill="#221b26">ui</tspan></text>
+<text x="104" y="170" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#561d25">Alex Randolph’s connection game, out of a single binary</text>
 </svg>

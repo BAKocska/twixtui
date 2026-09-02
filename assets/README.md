@@ -40,19 +40,26 @@ below is for.
 
 ## banner-light.svg, banner-dark.svg
 
-The front page's hero: the 1962 lid put on a terminal screen. A cream bezel
-frames an ink screen; the screen's top band is terminal chrome — a
-`$ twixtui` prompt with a block cursor, and a status line reading "TwixT in
-the terminal" — and below it, as the command's output, the lid itself:
-wordmark and watcher over a violet sky, an ochre board full of holes across
-the bottom, two black chains marching over it with a red wall cutting
-between them, and a tall red peg standing at each flank. Two files rather
-than one because README.md selects between them with a `<picture>` element
-and `prefers-color-scheme`. The composition is identical in both; the dark
-file is one step duskier, its sky `homageSky` where the light file's is
-`homageSkyHigh` and its bezel `homageCream` where the light file's is the
-lid's own cream, so the picture sits quietly on either of GitHub's
-backgrounds without pretending to be one of them.
+The front page's hero: the 1962 lid re-staged for a wide box, on a terminal
+screen. What the lid communicates, and what this picture is built to carry,
+is contemplation rather than fun. The lid's camera stands at board level,
+inside the game, so the pieces are architecture — two red pegs tower over
+the frame while the linked black chain reads as a bridge going up — and the
+player is the smallest thing in the picture: a suited man, faceless, chin
+on fist, behind the chain being built across his chest, because the
+position is bigger than anyone inside it. Over half the canvas is flat
+empty violet, the silence around concentration, and the one bright thing in
+it is the man's lit face and hand. The banner restates those devices at
+1280x320 rather than cropping the lid into it: a monumental red peg at
+each flank, taller than everything, one nearer and one farther; a chain of
+black pegs racing the whole width of a board of drilled holes, feet
+receding while the caps hold almost level, linked cap to cap by a taut
+line; the watcher small behind the board with the chain crossing his
+chest; the wordmark floating in the empty sky. The terminal carries it:
+a cream bezel frames an ink screen whose top band is chrome — a
+`$ twixtui` prompt with a block cursor, a status line — and the lid is
+what the command printed, which is true to the program, since the cover
+really is drawn beside the menu.
 
 The terminal is drawn, not captured: nothing here claims to be a
 screenshot. The prompt says what starting the program looks like, and the
@@ -60,51 +67,56 @@ cursor after it is the character `█` in the same run of text, so it sits
 where the reader's own monospace font puts it instead of where some other
 font's metrics were guessed to.
 
+Two files rather than one because README.md selects between them with a
+`<picture>` element and `prefers-color-scheme`. The composition is
+identical in both; the dark file is one step duskier, its sky `homageSky`
+where the light file's is `homageSkyHigh` and its bezel `homageCream`
+where the light file's is the lid's own cream, so the picture sits quietly
+on either of GitHub's backgrounds without pretending to be one of them.
+
 The colours are internal/cover/homage.go's, hex for hex, in the roles the
 program's own cover gives them wherever this picture has the same role:
-`homageInk` for the screen, the black player's links and the `ui` of the
-wordmark; `homageBlack` for the black player's pegs; `homageRed` for the
-red player entire — wall, flankers and `twixt`;
-`homageBoard` for the board and `homageHole` for its holes; `homageSkyDusk`
-for the watcher; `homageCream` for the prompt and cursor; and
-`homageSkyHigh`, doing double duty, as the light file's sky and as the dim
-chrome text of both files. Two values have no name in the code: the light
-file's bezel `#f5eed4` and the Randolph line's maroon `#561d25`, measured
-from assets/cover-source.png as the dominant colours of its border and of
-the watcher's jacket. An earlier revision copied the banner's colours from
-web/style.css so page and banner could not drift apart; that pin is
-deliberately gone — the owner directed that the front page evoke the 1962
-lid, and the site keeps its own red and blue — so the banner drifts with
-the cover art instead, and anyone re-tuning homage.go's palette should
-carry these two files along.
+`homageInk` for the screen, the chain's links and the `ui` of the
+wordmark; `homageBlack` for the chain's pegs; `homageRed` for the flanking
+pegs and `twixt`; `homageBoard` for the board and `homageHole` for its
+holes; `homageCream` for the prompt and cursor; and `homageSkyHigh`,
+doing double duty, as the light file's sky and as the dim chrome text of
+both files. Three values have no name in the code, all measured from
+assets/cover-source.png: the light file's bezel `#f5eed4` and the maroon
+`#561d25` are the dominant colours of the source's border and of the
+watcher's jacket — the maroon now paints that jacket, his hair and the
+Randolph line — and the face and fist take `#e9b23d`, the dominant colour
+of the man's lit face and of the board's lit wedge, the lid's one bright
+accent; a fresh cluster pass over the source reproduces all three within
+a couple of least-significant steps. An earlier revision copied the
+banner's colours from web/style.css so page and banner could not drift
+apart; that pin is deliberately gone — the owner directed that the front
+page evoke the 1962 lid, and the site keeps its own red and blue — so the
+banner drifts with the cover art instead, and anyone re-tuning homage.go's
+palette should carry these two files along.
 
-The wordmark still splits the way the project's site splits it — `twixt` is
-the vertical player and `ui` the horizontal, the two goals that cut across
-each other — but in the colours of the 1962 set, red pegs against black,
-rather than the site's red and blue.
+The wordmark still splits the way the project's site splits it — `twixt`
+is the vertical player and `ui` the horizontal, the two goals that cut
+across each other — but in the colours of the 1962 set, red pegs against
+black, rather than the site's red and blue.
 
-The two tall tapered pegs flanking the board are the lid's composition —
-two tall red pegs flanking a chain of linked pegs over a field of holes —
-drawn as silhouettes seen from the side, standing on the board. They stand
-outside the grid and claim nothing about the position; the discipline below
-applies to the chains, not to them. The watcher is the lid's third element,
-reduced the way the homage's drawWatcher reduces him: a head-and-shoulders
-silhouette one shade duskier than the sky, cut off by the board, present
-when looked for and ignorable when not.
-
-The board fragment is honest geometry, not decoration. The holes are a grid
-at a fixed pitch, every peg sits on a grid point, and every link joins two
-pegs a knight's move apart. The black chain runs from the fragment's first
-column to its last — the horizontal player racing between its borders — and
-the red wall touches all four visible rows on its way across it. The gap in
-the black chain is a link that is genuinely refused: the segment it wants,
-from its last peg to the empty hole two columns on, was checked to
-intersect the red link that crosses it, and the twenty-one links that are
-drawn were checked pairwise to cross nowhere. The fragment is a crop of a
-larger board, and what the two black fragments do to each other beyond the
-frame is not claimed. Anyone editing the pegs should keep all of that true
-or drop the gap, because a banner showing an impossible position teaches
-the rule wrongly to everybody who never reads on.
+The board is honest where it claims and silent where it cannot. The holes
+are a grid of 22 columns at a fixed pitch and three rows of equal board
+spacing drawn foreshortened — the far gap smaller, the near holes larger —
+and every chain peg's foot stands on a grid point, with consecutive feet a
+knight's move apart in board units, checked for all eleven links, and the
+cap-to-cap lines checked pairwise to cross nowhere. The chain is a side
+view: the linked line joins the pegs' caps the way the physical set's
+links ride near the peg tops, and ownership is carried by colour alone.
+The two red flankers stand on the board but outside the grid and claim
+nothing about the position, and the fragment is a crop — what the chain
+does beyond the frame is not claimed. The watcher is drawn in the lid's
+own colours rather than the ghost the character-cell homage reduces him
+to, because at SVG resolution the lid's device — the small thinker behind
+the monumental pieces — survives intact; his torso is cut by the board's
+far edge exactly as on the lid. Anyone editing the pegs should keep the
+foot geometry true or unclaim it, because a banner showing an impossible
+position teaches the rule wrongly to everybody who never reads on.
 
 ## board.svg
 
