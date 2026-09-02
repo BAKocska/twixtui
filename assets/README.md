@@ -77,9 +77,13 @@ strokes take `VerticalLink` and `HorizontalLink`, the peg just played takes
 `LastMove` rather than its owner's colour, the cursor brackets take `Cursor`
 while the hole between them stays a hole, and the gutter numbers of the top and
 bottom rows and the outermost column letters take their own player's colour
-unbolded, the rest `BorderRow`. Seven of those were confirmed against a real
-render — `twixtui --theme classic learn board` in a 200x50 tmux pane, read back
-with `capture-pane -e` — and the emitted RGB matched what this file uses.
+unbolded, the rest `BorderRow`. Five of those roles were also checked against a
+real render rather than only against the source: `twixtui --theme classic learn
+board` in a 200x50 tmux pane, read back with `capture-pane -e`, emits exactly the
+hex this file uses for holes, for the gutter and column labels, for both players'
+pegs and for the cursor brackets. The link colours and `LastMove` are taken from
+the source alone, because that lesson opens on a position with no links on it and
+no peg just played, so the capture had nothing to say about them.
 
 Which stroke belongs to which player cannot be read off a glyph, because a run
 of `-` looks the same whoever owns it. It was resolved from the geometry: each
