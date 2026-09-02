@@ -208,6 +208,5 @@
 <path d="M 1197,119 C 1201,150 1203.5,175 1204.5,200 C 1203.5,235 1200,262 1195,282 L 1225,282 C 1220,262 1216.5,235 1215.5,200 C 1216.5,175 1219,150 1223,119 Z" fill="#aa2d28"/>
 <rect x="1192" y="280" width="36" height="8" rx="3" fill="#aa2d28"/>
 <text x="94" y="142" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="88" font-weight="bold" letter-spacing="-3"><tspan fill="#aa2d28">twixt</tspan><tspan fill="#221b26">ui</tspan></text>
-<rect x="98" y="154" width="150" height="5" rx="2.5" fill="#aa2d28"/>
 <text x="98" y="178" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#561d25">Alex Randolph’s connection game, out of a single binary</text>
 </svg>

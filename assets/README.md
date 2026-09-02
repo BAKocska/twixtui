@@ -64,7 +64,7 @@ The colours are internal/cover/homage.go's, hex for hex, in the roles the
 program's own cover gives them wherever this picture has the same role:
 `homageInk` for the screen, the black player's links and the `ui` of the
 wordmark; `homageBlack` for the black player's pegs; `homageRed` for the
-red player entire — wall, flankers, `twixt` and its underline;
+red player entire — wall, flankers and `twixt`;
 `homageBoard` for the board and `homageHole` for its holes; `homageSkyDusk`
 for the watcher; `homageCream` for the prompt and cursor; and
 `homageSkyHigh`, doing double duty, as the light file's sky and as the dim
