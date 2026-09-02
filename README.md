@@ -12,7 +12,7 @@ someone at the same keyboard, or against someone on another machine, without lea
 your shell.
 
 <p align="center">
-  <a href="docs/MANUAL.md"><img src="https://img.shields.io/badge/FULL%20DOCUMENTATION-docs%2FMANUAL.md-2b6cb0?style=for-the-badge" alt="Full documentation: docs/MANUAL.md"></a>
+  <a href="docs/MANUAL.md"><img src="https://img.shields.io/badge/FULL%20DOCUMENTATION-docs%2FMANUAL.md-561d25?style=for-the-badge" alt="Full documentation: docs/MANUAL.md"></a>
 </p>
 
 <p align="center">
@@ -20,8 +20,8 @@ your shell.
 </p>
 
 <p align="center">
-  <a href="https://github.com/BAKocska/twixtui/actions/workflows/ci.yml"><img src="https://github.com/BAKocska/twixtui/actions/workflows/ci.yml/badge.svg" alt="CI"></a> <a href="https://github.com/BAKocska/twixtui/releases/latest"><img src="https://img.shields.io/github/v/release/BAKocska/twixtui?sort=semver" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26 or newer"> <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-blue" alt="MIT licence"></a> <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey" alt="macOS and Linux, arm64 and x86-64">
+  <a href="https://github.com/BAKocska/twixtui/actions/workflows/ci.yml"><img src="https://github.com/BAKocska/twixtui/actions/workflows/ci.yml/badge.svg" alt="CI"></a> <a href="https://github.com/BAKocska/twixtui/releases/latest"><img src="https://img.shields.io/github/v/release/BAKocska/twixtui?sort=semver&color=561d25" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26 or newer"> <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-561d25" alt="MIT licence"></a> <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey" alt="macOS and Linux, arm64 and x86-64">
 </p>
 
 > [!NOTE]
