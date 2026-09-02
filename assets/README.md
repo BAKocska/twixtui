@@ -40,48 +40,71 @@ below is for.
 
 ## banner-light.svg, banner-dark.svg
 
-The front page's hero: the wordmark, a tagline, and a fragment of a board,
-drawn as the object the project is named after — the cream-bordered violet
-lid of the 1962 box. Two files rather than one because README.md selects
-between them with a `<picture>` element and `prefers-color-scheme`. The
-composition is identical in both; the dark file is one step duskier, its
-field `homageSky` where the light file's is `homageSkyHigh` and its frame
-`homageCream` where the light file's is the lid's own cream, so the panel
-sits quietly on either of GitHub's backgrounds without pretending to be one
-of them.
+The front page's hero: the 1962 lid put on a terminal screen. A cream bezel
+frames an ink screen; the screen's top band is terminal chrome — a
+`$ twixtui` prompt with a block cursor, and a status line reading "TwixT in
+the terminal" — and below it, as the command's output, the lid itself:
+wordmark and watcher over a violet sky, an ochre board full of holes across
+the bottom, two black chains marching over it with a red wall cutting
+between them, and a tall red peg standing at each flank. Two files rather
+than one because README.md selects between them with a `<picture>` element
+and `prefers-color-scheme`. The composition is identical in both; the dark
+file is one step duskier, its sky `homageSky` where the light file's is
+`homageSkyHigh` and its bezel `homageCream` where the light file's is the
+lid's own cream, so the picture sits quietly on either of GitHub's
+backgrounds without pretending to be one of them.
 
-The colours are internal/cover/homage.go's, hex for hex — `homageRed` for
-the vertical player, the underline and the flanking pegs, `homageInk` for
-the horizontal player and the lettering, `homageFar` for the field of holes,
-and the field and frame values named above — the same bytes the program puts
-on screen when it draws the cover beside the menu. Two values have no name
-in the code: the light file's frame `#f5eed4` and the slogan's maroon
-`#561d25`, measured from assets/cover-source.png as the dominant colours of
-its border and of the watcher's jacket. An earlier revision copied the
-banner's colours from web/style.css so page and banner could not drift
-apart; that pin is deliberately gone — the owner directed that the front
-page evoke the 1962 lid, and the site keeps its own red and blue — so the
-banner now drifts with the cover art instead, and anyone re-tuning
-homage.go's palette should carry these two files along.
+The terminal is drawn, not captured: nothing here claims to be a
+screenshot. The prompt says what starting the program looks like, and the
+cursor after it is the character `█` in the same run of text, so it sits
+where the reader's own monospace font puts it instead of where some other
+font's metrics were guessed to.
+
+The colours are internal/cover/homage.go's, hex for hex, in the roles the
+program's own cover gives them wherever this picture has the same role:
+`homageInk` for the screen, the black player's links and the `ui` of the
+wordmark; `homageBlack` for the black player's pegs; `homageRed` for the
+red player entire — wall, flankers, `twixt` and its underline;
+`homageBoard` for the board and `homageHole` for its holes; `homageSkyDusk`
+for the watcher; `homageCream` for the prompt and cursor; and
+`homageSkyHigh`, doing double duty, as the light file's sky and as the dim
+chrome text of both files. Two values have no name in the code: the light
+file's bezel `#f5eed4` and the Randolph line's maroon `#561d25`, measured
+from assets/cover-source.png as the dominant colours of its border and of
+the watcher's jacket. An earlier revision copied the banner's colours from
+web/style.css so page and banner could not drift apart; that pin is
+deliberately gone — the owner directed that the front page evoke the 1962
+lid, and the site keeps its own red and blue — so the banner drifts with
+the cover art instead, and anyone re-tuning homage.go's palette should
+carry these two files along.
 
 The wordmark still splits the way the project's site splits it — `twixt` is
 the vertical player and `ui` the horizontal, the two goals that cut across
 each other — but in the colours of the 1962 set, red pegs against black,
 rather than the site's red and blue.
 
-The two tall tapered pegs flanking the board fragment are the lid's
-composition — two tall red pegs flanking a row of linked pegs over a field
-of holes — drawn as silhouettes seen from the side. They stand outside the
-grid and claim nothing about the position; the discipline below applies to
-the chains, not to them.
+The two tall tapered pegs flanking the board are the lid's composition —
+two tall red pegs flanking a chain of linked pegs over a field of holes —
+drawn as silhouettes seen from the side, standing on the board. They stand
+outside the grid and claim nothing about the position; the discipline below
+applies to the chains, not to them. The watcher is the lid's third element,
+reduced the way the homage's drawWatcher reduces him: a head-and-shoulders
+silhouette one shade duskier than the sky, cut off by the board, present
+when looked for and ignorable when not.
 
-The board fragment is honest geometry, not decoration. Every peg sits on a grid
-point, every link joins two pegs a knight's move apart, and the gap in the
-horizontal chain is a link that is genuinely refused: the segment it wants and
-the vertical link that crosses it were checked to intersect, which is the same
-argument the position on the front page makes at full size. Anyone editing the
-pegs should keep that true or drop the gap, because a banner showing an
-impossible position teaches the rule wrongly to everybody who never reads on.
+The board fragment is honest geometry, not decoration. The holes are a grid
+at a fixed pitch, every peg sits on a grid point, and every link joins two
+pegs a knight's move apart. The black chain runs from the fragment's first
+column to its last — the horizontal player racing between its borders — and
+the red wall touches all four visible rows on its way across it. The gap in
+the black chain is a link that is genuinely refused: the segment it wants,
+from its last peg to the empty hole two columns on, was checked to
+intersect the red link that crosses it, and the twenty-one links that are
+drawn were checked pairwise to cross nowhere. The fragment is a crop of a
+larger board, and what the two black fragments do to each other beyond the
+frame is not claimed. Anyone editing the pegs should keep all of that true
+or drop the gap, because a banner showing an impossible position teaches
+the rule wrongly to everybody who never reads on.
 
 ## board.svg
 

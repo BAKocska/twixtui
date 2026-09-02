@@ -1,140 +1,213 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="twixtui — TwixT in the terminal">
 <title>twixtui — TwixT in the terminal</title>
 <rect width="1280" height="320" rx="10" fill="#eae0c9"/>
-<rect x="10" y="10" width="1260" height="300" rx="6" fill="#9d8ba8"/>
-<g fill="#756386">
-<circle cx="880" cy="82" r="2.0"/>
-<circle cx="880" cy="108" r="2.0"/>
-<circle cx="880" cy="134" r="2.0"/>
-<circle cx="880" cy="160" r="2.0"/>
-<circle cx="880" cy="212" r="2.0"/>
-<circle cx="880" cy="238" r="2.0"/>
-<circle cx="906" cy="56" r="2.0"/>
-<circle cx="906" cy="82" r="2.0"/>
-<circle cx="906" cy="108" r="2.0"/>
-<circle cx="906" cy="134" r="2.0"/>
-<circle cx="906" cy="160" r="2.0"/>
-<circle cx="906" cy="186" r="2.0"/>
-<circle cx="906" cy="212" r="2.0"/>
-<circle cx="906" cy="238" r="2.0"/>
-<circle cx="906" cy="264" r="2.0"/>
-<circle cx="932" cy="56" r="2.0"/>
-<circle cx="932" cy="82" r="2.0"/>
-<circle cx="932" cy="108" r="2.0"/>
-<circle cx="932" cy="134" r="2.0"/>
-<circle cx="932" cy="186" r="2.0"/>
-<circle cx="932" cy="212" r="2.0"/>
-<circle cx="932" cy="238" r="2.0"/>
-<circle cx="932" cy="264" r="2.0"/>
-<circle cx="958" cy="56" r="2.0"/>
-<circle cx="958" cy="82" r="2.0"/>
-<circle cx="958" cy="108" r="2.0"/>
-<circle cx="958" cy="134" r="2.0"/>
-<circle cx="958" cy="160" r="2.0"/>
-<circle cx="958" cy="186" r="2.0"/>
-<circle cx="958" cy="212" r="2.0"/>
-<circle cx="958" cy="238" r="2.0"/>
-<circle cx="958" cy="264" r="2.0"/>
-<circle cx="984" cy="56" r="2.0"/>
-<circle cx="984" cy="82" r="2.0"/>
-<circle cx="984" cy="108" r="2.0"/>
-<circle cx="984" cy="134" r="2.0"/>
-<circle cx="984" cy="160" r="2.0"/>
-<circle cx="984" cy="212" r="2.0"/>
-<circle cx="984" cy="238" r="2.0"/>
-<circle cx="984" cy="264" r="2.0"/>
-<circle cx="1010" cy="56" r="2.0"/>
-<circle cx="1010" cy="82" r="2.0"/>
-<circle cx="1010" cy="134" r="2.0"/>
-<circle cx="1010" cy="160" r="2.0"/>
-<circle cx="1010" cy="186" r="2.0"/>
-<circle cx="1010" cy="238" r="2.0"/>
-<circle cx="1010" cy="264" r="2.0"/>
-<circle cx="1036" cy="82" r="2.0"/>
-<circle cx="1036" cy="108" r="2.0"/>
-<circle cx="1036" cy="134" r="2.0"/>
-<circle cx="1036" cy="186" r="2.0"/>
-<circle cx="1036" cy="212" r="2.0"/>
-<circle cx="1036" cy="238" r="2.0"/>
-<circle cx="1062" cy="56" r="2.0"/>
-<circle cx="1062" cy="82" r="2.0"/>
-<circle cx="1062" cy="108" r="2.0"/>
-<circle cx="1062" cy="134" r="2.0"/>
-<circle cx="1062" cy="160" r="2.0"/>
-<circle cx="1062" cy="186" r="2.0"/>
-<circle cx="1062" cy="212" r="2.0"/>
-<circle cx="1062" cy="238" r="2.0"/>
-<circle cx="1062" cy="264" r="2.0"/>
-<circle cx="1088" cy="56" r="2.0"/>
-<circle cx="1088" cy="82" r="2.0"/>
-<circle cx="1088" cy="108" r="2.0"/>
-<circle cx="1088" cy="134" r="2.0"/>
-<circle cx="1088" cy="186" r="2.0"/>
-<circle cx="1088" cy="212" r="2.0"/>
-<circle cx="1088" cy="238" r="2.0"/>
-<circle cx="1088" cy="264" r="2.0"/>
-<circle cx="1114" cy="56" r="2.0"/>
-<circle cx="1114" cy="82" r="2.0"/>
-<circle cx="1114" cy="108" r="2.0"/>
-<circle cx="1114" cy="134" r="2.0"/>
-<circle cx="1114" cy="160" r="2.0"/>
-<circle cx="1114" cy="186" r="2.0"/>
-<circle cx="1114" cy="212" r="2.0"/>
-<circle cx="1114" cy="238" r="2.0"/>
-<circle cx="1114" cy="264" r="2.0"/>
-<circle cx="1140" cy="56" r="2.0"/>
-<circle cx="1140" cy="82" r="2.0"/>
-<circle cx="1140" cy="108" r="2.0"/>
-<circle cx="1140" cy="134" r="2.0"/>
-<circle cx="1140" cy="160" r="2.0"/>
-<circle cx="1140" cy="212" r="2.0"/>
-<circle cx="1140" cy="238" r="2.0"/>
-<circle cx="1140" cy="264" r="2.0"/>
-<circle cx="1166" cy="56" r="2.0"/>
-<circle cx="1166" cy="82" r="2.0"/>
-<circle cx="1166" cy="108" r="2.0"/>
-<circle cx="1166" cy="134" r="2.0"/>
-<circle cx="1166" cy="160" r="2.0"/>
-<circle cx="1166" cy="186" r="2.0"/>
-<circle cx="1166" cy="212" r="2.0"/>
-<circle cx="1166" cy="238" r="2.0"/>
-<circle cx="1166" cy="264" r="2.0"/>
-<circle cx="1192" cy="82" r="2.0"/>
-<circle cx="1192" cy="108" r="2.0"/>
-<circle cx="1192" cy="134" r="2.0"/>
-<circle cx="1192" cy="186" r="2.0"/>
-<circle cx="1192" cy="212" r="2.0"/>
-<circle cx="1192" cy="238" r="2.0"/>
+<rect x="8" y="8" width="1264" height="304" rx="6" fill="#221b26"/>
+<text x="30" y="41" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="21"><tspan fill="#a897b2">$ </tspan><tspan fill="#eae0c9">twixtui █</tspan></text>
+<text x="1246" y="41" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#a897b2">TwixT in the terminal</text>
+<rect x="28" y="60" width="1224" height="232" fill="#9d8ba8"/>
+<circle cx="874" cy="103" r="26" fill="#a185a3"/>
+<path d="M 800,188 C 806,160 826,142 850,133 C 858,130 868,129 874,129 C 880,129 890,130 898,133 C 922,142 942,160 948,188 Z" fill="#a185a3"/>
+<rect x="28" y="188" width="1224" height="104" fill="#d3a24b"/>
+<g fill="#6e5628">
+<circle cx="106" cy="206" r="2.6"/>
+<circle cx="132" cy="206" r="2.6"/>
+<circle cx="184" cy="206" r="2.6"/>
+<circle cx="210" cy="206" r="2.6"/>
+<circle cx="236" cy="206" r="2.6"/>
+<circle cx="262" cy="206" r="2.6"/>
+<circle cx="288" cy="206" r="2.6"/>
+<circle cx="314" cy="206" r="2.6"/>
+<circle cx="340" cy="206" r="2.6"/>
+<circle cx="366" cy="206" r="2.6"/>
+<circle cx="392" cy="206" r="2.6"/>
+<circle cx="418" cy="206" r="2.6"/>
+<circle cx="444" cy="206" r="2.6"/>
+<circle cx="496" cy="206" r="2.6"/>
+<circle cx="522" cy="206" r="2.6"/>
+<circle cx="548" cy="206" r="2.6"/>
+<circle cx="574" cy="206" r="2.6"/>
+<circle cx="600" cy="206" r="2.6"/>
+<circle cx="626" cy="206" r="2.6"/>
+<circle cx="652" cy="206" r="2.6"/>
+<circle cx="730" cy="206" r="2.6"/>
+<circle cx="756" cy="206" r="2.6"/>
+<circle cx="782" cy="206" r="2.6"/>
+<circle cx="808" cy="206" r="2.6"/>
+<circle cx="834" cy="206" r="2.6"/>
+<circle cx="860" cy="206" r="2.6"/>
+<circle cx="912" cy="206" r="2.6"/>
+<circle cx="938" cy="206" r="2.6"/>
+<circle cx="964" cy="206" r="2.6"/>
+<circle cx="990" cy="206" r="2.6"/>
+<circle cx="1016" cy="206" r="2.6"/>
+<circle cx="1042" cy="206" r="2.6"/>
+<circle cx="1068" cy="206" r="2.6"/>
+<circle cx="1094" cy="206" r="2.6"/>
+<circle cx="1120" cy="206" r="2.6"/>
+<circle cx="1146" cy="206" r="2.6"/>
+<circle cx="1172" cy="206" r="2.6"/>
+<circle cx="132" cy="232" r="2.6"/>
+<circle cx="158" cy="232" r="2.6"/>
+<circle cx="184" cy="232" r="2.6"/>
+<circle cx="236" cy="232" r="2.6"/>
+<circle cx="262" cy="232" r="2.6"/>
+<circle cx="288" cy="232" r="2.6"/>
+<circle cx="314" cy="232" r="2.6"/>
+<circle cx="340" cy="232" r="2.6"/>
+<circle cx="366" cy="232" r="2.6"/>
+<circle cx="392" cy="232" r="2.6"/>
+<circle cx="444" cy="232" r="2.6"/>
+<circle cx="470" cy="232" r="2.6"/>
+<circle cx="496" cy="232" r="2.6"/>
+<circle cx="548" cy="232" r="2.6"/>
+<circle cx="574" cy="232" r="2.6"/>
+<circle cx="600" cy="232" r="2.6"/>
+<circle cx="652" cy="232" r="2.6"/>
+<circle cx="678" cy="232" r="2.6"/>
+<circle cx="704" cy="232" r="2.6"/>
+<circle cx="730" cy="232" r="2.6"/>
+<circle cx="756" cy="232" r="2.6"/>
+<circle cx="782" cy="232" r="2.6"/>
+<circle cx="860" cy="232" r="2.6"/>
+<circle cx="886" cy="232" r="2.6"/>
+<circle cx="912" cy="232" r="2.6"/>
+<circle cx="964" cy="232" r="2.6"/>
+<circle cx="990" cy="232" r="2.6"/>
+<circle cx="1016" cy="232" r="2.6"/>
+<circle cx="1042" cy="232" r="2.6"/>
+<circle cx="1068" cy="232" r="2.6"/>
+<circle cx="1094" cy="232" r="2.6"/>
+<circle cx="1120" cy="232" r="2.6"/>
+<circle cx="1172" cy="232" r="2.6"/>
+<circle cx="106" cy="258" r="2.6"/>
+<circle cx="132" cy="258" r="2.6"/>
+<circle cx="158" cy="258" r="2.6"/>
+<circle cx="184" cy="258" r="2.6"/>
+<circle cx="210" cy="258" r="2.6"/>
+<circle cx="236" cy="258" r="2.6"/>
+<circle cx="288" cy="258" r="2.6"/>
+<circle cx="314" cy="258" r="2.6"/>
+<circle cx="340" cy="258" r="2.6"/>
+<circle cx="392" cy="258" r="2.6"/>
+<circle cx="418" cy="258" r="2.6"/>
+<circle cx="444" cy="258" r="2.6"/>
+<circle cx="470" cy="258" r="2.6"/>
+<circle cx="496" cy="258" r="2.6"/>
+<circle cx="522" cy="258" r="2.6"/>
+<circle cx="548" cy="258" r="2.6"/>
+<circle cx="600" cy="258" r="2.6"/>
+<circle cx="626" cy="258" r="2.6"/>
+<circle cx="652" cy="258" r="2.6"/>
+<circle cx="678" cy="258" r="2.6"/>
+<circle cx="704" cy="258" r="2.6"/>
+<circle cx="756" cy="258" r="2.6"/>
+<circle cx="782" cy="258" r="2.6"/>
+<circle cx="808" cy="258" r="2.6"/>
+<circle cx="834" cy="258" r="2.6"/>
+<circle cx="860" cy="258" r="2.6"/>
+<circle cx="886" cy="258" r="2.6"/>
+<circle cx="912" cy="258" r="2.6"/>
+<circle cx="938" cy="258" r="2.6"/>
+<circle cx="964" cy="258" r="2.6"/>
+<circle cx="1016" cy="258" r="2.6"/>
+<circle cx="1042" cy="258" r="2.6"/>
+<circle cx="1068" cy="258" r="2.6"/>
+<circle cx="1120" cy="258" r="2.6"/>
+<circle cx="1146" cy="258" r="2.6"/>
+<circle cx="1172" cy="258" r="2.6"/>
+<circle cx="106" cy="284" r="2.6"/>
+<circle cx="132" cy="284" r="2.6"/>
+<circle cx="158" cy="284" r="2.6"/>
+<circle cx="184" cy="284" r="2.6"/>
+<circle cx="210" cy="284" r="2.6"/>
+<circle cx="236" cy="284" r="2.6"/>
+<circle cx="262" cy="284" r="2.6"/>
+<circle cx="288" cy="284" r="2.6"/>
+<circle cx="340" cy="284" r="2.6"/>
+<circle cx="366" cy="284" r="2.6"/>
+<circle cx="392" cy="284" r="2.6"/>
+<circle cx="418" cy="284" r="2.6"/>
+<circle cx="444" cy="284" r="2.6"/>
+<circle cx="470" cy="284" r="2.6"/>
+<circle cx="496" cy="284" r="2.6"/>
+<circle cx="522" cy="284" r="2.6"/>
+<circle cx="548" cy="284" r="2.6"/>
+<circle cx="574" cy="284" r="2.6"/>
+<circle cx="600" cy="284" r="2.6"/>
+<circle cx="626" cy="284" r="2.6"/>
+<circle cx="652" cy="284" r="2.6"/>
+<circle cx="678" cy="284" r="2.6"/>
+<circle cx="704" cy="284" r="2.6"/>
+<circle cx="730" cy="284" r="2.6"/>
+<circle cx="756" cy="284" r="2.6"/>
+<circle cx="808" cy="284" r="2.6"/>
+<circle cx="834" cy="284" r="2.6"/>
+<circle cx="860" cy="284" r="2.6"/>
+<circle cx="886" cy="284" r="2.6"/>
+<circle cx="912" cy="284" r="2.6"/>
+<circle cx="938" cy="284" r="2.6"/>
+<circle cx="964" cy="284" r="2.6"/>
+<circle cx="990" cy="284" r="2.6"/>
+<circle cx="1016" cy="284" r="2.6"/>
+<circle cx="1068" cy="284" r="2.6"/>
+<circle cx="1094" cy="284" r="2.6"/>
+<circle cx="1120" cy="284" r="2.6"/>
+<circle cx="1146" cy="284" r="2.6"/>
 </g>
-<rect x="840" y="88" width="12" height="18" rx="2" fill="#aa2d28"/>
-<rect x="834" y="104" width="24" height="10" rx="3" fill="#aa2d28"/>
-<path d="M 833,114 C 837,150 839.5,180 840.5,210 C 839.5,245 836,275 830,298 L 862,298 C 856,275 852.5,245 851.5,210 C 852.5,180 855,150 859,114 Z" fill="#aa2d28"/>
-<rect x="828" y="296" width="36" height="8" rx="3" fill="#aa2d28"/>
-<rect x="1220" y="88" width="12" height="18" rx="2" fill="#aa2d28"/>
-<rect x="1214" y="104" width="24" height="10" rx="3" fill="#aa2d28"/>
-<path d="M 1213,114 C 1217,150 1219.5,180 1220.5,210 C 1219.5,245 1216,275 1210,298 L 1242,298 C 1236,275 1232.5,245 1231.5,210 C 1232.5,180 1235,150 1239,114 Z" fill="#aa2d28"/>
-<rect x="1208" y="296" width="36" height="8" rx="3" fill="#aa2d28"/>
-<line x1="1036" y1="56" x2="1010" y2="108" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1010" y1="108" x2="1036" y2="160" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1036" y1="160" x2="1010" y2="212" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1010" y1="212" x2="1036" y2="264" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="880" y1="186" x2="932" y2="160" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="932" y1="160" x2="984" y2="186" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1088" y1="160" x2="1140" y2="186" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<line x1="1140" y1="186" x2="1192" y2="160" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
-<circle cx="1036" cy="56" r="7.0" fill="#aa2d28"/>
-<circle cx="1010" cy="108" r="7.0" fill="#aa2d28"/>
-<circle cx="1036" cy="160" r="7.0" fill="#aa2d28"/>
-<circle cx="1010" cy="212" r="7.0" fill="#aa2d28"/>
-<circle cx="1036" cy="264" r="7.0" fill="#aa2d28"/>
-<circle cx="880" cy="186" r="7.0" fill="#221b26"/>
-<circle cx="932" cy="160" r="7.0" fill="#221b26"/>
-<circle cx="984" cy="186" r="7.0" fill="#221b26"/>
-<circle cx="1088" cy="160" r="7.0" fill="#221b26"/>
-<circle cx="1140" cy="186" r="7.0" fill="#221b26"/>
-<circle cx="1192" cy="160" r="7.0" fill="#221b26"/>
-<text x="88" y="172" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="108" font-weight="bold" letter-spacing="-3"><tspan fill="#aa2d28">twixt</tspan><tspan fill="#221b26">ui</tspan></text>
-<rect x="92" y="198" width="146" height="5" rx="2.5" fill="#aa2d28"/>
-<text x="92" y="240" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="27" fill="#221b26">TwixT in the terminal</text>
-<text x="92" y="275" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#561d25">Alex Randolph’s connection game, out of a single binary</text>
+<line x1="106" y1="232" x2="158" y2="206" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="158" y1="206" x2="210" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="210" y1="232" x2="262" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="262" y1="258" x2="314" y2="284" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="314" y1="284" x2="366" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="366" y1="258" x2="418" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="418" y1="232" x2="470" y2="206" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="470" y1="206" x2="522" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="522" y1="232" x2="574" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="574" y1="258" x2="626" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="626" y1="232" x2="678" y2="206" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="834" y1="232" x2="886" y2="206" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="886" y1="206" x2="938" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="938" y1="232" x2="990" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="990" y1="258" x2="1042" y2="284" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="1042" y1="284" x2="1094" y2="258" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="1094" y1="258" x2="1146" y2="232" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="1146" y1="232" x2="1172" y2="284" stroke="#221b26" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="704" y1="206" x2="730" y2="258" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="730" y1="258" x2="782" y2="284" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="782" y1="284" x2="808" y2="232" stroke="#aa2d28" stroke-width="2.5" stroke-linecap="round"/>
+<circle cx="106" cy="232" r="7.0" fill="#2b241f"/>
+<circle cx="158" cy="206" r="7.0" fill="#2b241f"/>
+<circle cx="210" cy="232" r="7.0" fill="#2b241f"/>
+<circle cx="262" cy="258" r="7.0" fill="#2b241f"/>
+<circle cx="314" cy="284" r="7.0" fill="#2b241f"/>
+<circle cx="366" cy="258" r="7.0" fill="#2b241f"/>
+<circle cx="418" cy="232" r="7.0" fill="#2b241f"/>
+<circle cx="470" cy="206" r="7.0" fill="#2b241f"/>
+<circle cx="522" cy="232" r="7.0" fill="#2b241f"/>
+<circle cx="574" cy="258" r="7.0" fill="#2b241f"/>
+<circle cx="626" cy="232" r="7.0" fill="#2b241f"/>
+<circle cx="678" cy="206" r="7.0" fill="#2b241f"/>
+<circle cx="834" cy="232" r="7.0" fill="#2b241f"/>
+<circle cx="886" cy="206" r="7.0" fill="#2b241f"/>
+<circle cx="938" cy="232" r="7.0" fill="#2b241f"/>
+<circle cx="990" cy="258" r="7.0" fill="#2b241f"/>
+<circle cx="1042" cy="284" r="7.0" fill="#2b241f"/>
+<circle cx="1094" cy="258" r="7.0" fill="#2b241f"/>
+<circle cx="1146" cy="232" r="7.0" fill="#2b241f"/>
+<circle cx="1172" cy="284" r="7.0" fill="#2b241f"/>
+<circle cx="704" cy="206" r="7.0" fill="#aa2d28"/>
+<circle cx="730" cy="258" r="7.0" fill="#aa2d28"/>
+<circle cx="782" cy="284" r="7.0" fill="#aa2d28"/>
+<circle cx="808" cy="232" r="7.0" fill="#aa2d28"/>
+<rect x="64" y="96" width="12" height="16" rx="2" fill="#aa2d28"/>
+<rect x="58" y="110" width="24" height="9" rx="3" fill="#aa2d28"/>
+<path d="M 57,119 C 61,150 63.5,175 64.5,200 C 63.5,235 60,262 55,282 L 85,282 C 80,262 76.5,235 75.5,200 C 76.5,175 79,150 83,119 Z" fill="#aa2d28"/>
+<rect x="52" y="280" width="36" height="8" rx="3" fill="#aa2d28"/>
+<rect x="1204" y="96" width="12" height="16" rx="2" fill="#aa2d28"/>
+<rect x="1198" y="110" width="24" height="9" rx="3" fill="#aa2d28"/>
+<path d="M 1197,119 C 1201,150 1203.5,175 1204.5,200 C 1203.5,235 1200,262 1195,282 L 1225,282 C 1220,262 1216.5,235 1215.5,200 C 1216.5,175 1219,150 1223,119 Z" fill="#aa2d28"/>
+<rect x="1192" y="280" width="36" height="8" rx="3" fill="#aa2d28"/>
+<text x="94" y="142" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="88" font-weight="bold" letter-spacing="-3"><tspan fill="#aa2d28">twixt</tspan><tspan fill="#221b26">ui</tspan></text>
+<rect x="98" y="154" width="150" height="5" rx="2.5" fill="#aa2d28"/>
+<text x="98" y="178" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#561d25">Alex Randolph’s connection game, out of a single binary</text>
 </svg>
