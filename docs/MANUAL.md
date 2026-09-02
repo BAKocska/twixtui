@@ -163,7 +163,9 @@ Every command accepts these:
 
 A 24×24 game in progress, drawn at the compact scale, which puts neighbouring holes
 two columns and one row apart. The renderer switches to a larger scale, four
-columns and two rows, when the terminal is big enough for it.
+columns and two rows, when the terminal is big enough for it. First, the position
+exactly as the program prints it — the verbatim monochrome shape every theme
+starts from:
 
 ```
     A B C D E F G H I J K L M N O P Q R S T U V W X

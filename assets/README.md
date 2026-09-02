@@ -85,8 +85,10 @@ impossible position teaches the rule wrongly to everybody who never reads on.
 
 ## board.svg
 
-The position printed as characters under "The board" in README.md, drawn again
-in colour for docs/MANUAL.md. It is a rendering and not a screenshot: the
+The position printed as characters under "The board" in docs/MANUAL.md, drawn
+again in colour. README.md's "The board" section shows this file on the front
+page; the manual shows it below the character block. It is a rendering and not
+a screenshot: the
 glyphs are taken from that code block and the colours are applied to them here.
 Nothing was captured from a terminal, and the file does not claim otherwise.
 

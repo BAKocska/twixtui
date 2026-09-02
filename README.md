@@ -38,36 +38,13 @@ good at drawing, and nothing here wants a mouse.
 
 ## The board
 
-```
-    A B C D E F G H I J K L M N O P Q R S T U V W X
- 1    · · · · · · · · · · ● · · · · · · · · · · ·
- 2  · · · · · · · · · · ·╱· · · · · · · · · · · · ·
- 3  · · · · · · · · · · ●──╮· · · · · · · · · · · ·
- 4  · · · · · · · · · · · ·╰● · · · · · · · · · · ·
- 5  · · · · · · · · · · · ·╱· · · · · · · · · · · ·
- 6  · · · · · · · · · · · ●──╮· · · · · · · · · · ·
- 7  · · · · · · · · · · · · ·╰● · · · · · · · · · ·
- 8  · · · · · · · · · · · · ·╱· · · · · · · · · · ·
- 9  · · · · · · · · · · · · ●──╮· · · · · · · · · ·
-10  · · · · · · · · · · · · · ·╰● · · · · · · · · ·
-11  · ·╭○──╮· ·╭○──╮· ·╭○──╮· ·╱○──╮· ·╭◎ · · · · ·
-12  ○──╯· ·╰○──╯· ·╰○──╯· ·╰○ ●──╮·╰○──╯· · · · · ·
-13  · · · · · · · · · · · · · · ·╰● · · · · · · · ·
-14  · · · · · · · · · · · · · · ·╱· · · · · · · · ·
-15  · · · · · · · · · · · · · · ● · · · · · · · · ·
-16  · · · · · · · · · · · · · · · · · · · · · · · ·
-17  · · · · · · · · · · · · ·[·]· · · · · · · · · ·
-18  · · · · · · · · · · · · · · · · · · · · · · · ·
-19  · · · · · · · · · · · · · · · · · · · · · · · ·
-20  · · · · · · · · · · · · · · · · · · · · · · · ·
-21  · · · · · · · · · · · · · · · · · · · · · · · ·
-22  · · · · · · · · · · · · · · · · · · · · · · · ·
-23  · · · · · · · · · · · · · · · · · · · · · · · ·
-24    · · · · · · · · · · · · · · · · · · · · · ·
-```
+<p align="center">
+  <img src="assets/board.svg" width="456" alt="A 24 by 24 TwixT position drawn in the classic theme's colours: the vertical player's red pegs chain from L1 at the top border down to O15, the horizontal player's blue chain reaches in from the left edge as far as M12 and is then blocked, and the yellow cursor brackets wait below the action.">
+</p>
 
-A 24×24 game in progress. `●` connects the top border row to the bottom one, `○`
-connects left to right, `·` is an empty hole, `[·]` is the cursor, and the strokes
+A 24×24 game in progress, in the colours the `classic` theme emits. `●` — red here —
+connects the top border row to the bottom one, `○` — blue — connects left to right,
+`·` is an empty hole, `[·]` is the cursor, its brackets yellow, and the strokes
 between pegs are links. Vertical has an unbroken chain from L1 down to O15; horizontal's
 runs from the left edge at A12 as far as M12 and then stops, because vertical's link
 from O10 to N12 crosses the one it wants to O11. Every link you build is also a wall.
