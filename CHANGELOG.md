@@ -25,6 +25,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   position ship under assets/ as SVG, with their provenance and the code they
   repeat recorded in assets/README.md.
 
+### Fixed
+
+- ci: a tag push matched no trigger of the test workflow, so releases were
+  built and published from refs the checks had never run on. The release
+  workflow now calls the CI workflow and publishes only after it passes; the
+  first tag after this change validates the wiring live.
+
 ## [0.2.1] - 2026-09-01
 
 ### Fixed
