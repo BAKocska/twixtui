@@ -588,9 +588,19 @@ func ebOpenings(size, start, count int) ([]ebOpeningRef, error) {
 	if start < 1 {
 		return nil, fmt.Errorf("opening seed %d: seeds start at 1", start)
 	}
+	// A range that names no opening, or one whose end does not fit in an int,
+	// is a request that would run to completion having measured nothing, and a
+	// run that measured nothing must not be able to report a result.
+	if count < 1 {
+		return nil, fmt.Errorf("opening seed count %d: a run needs at least one opening", count)
+	}
+	if start > math.MaxInt-count {
+		return nil, fmt.Errorf("opening seeds %d..+%d: the range does not fit in an int", start, count)
+	}
 	out := make([]ebOpeningRef, 0, count)
 	seen := make(map[game.Point]int, count)
-	for seed := start; seed < start+count; seed++ {
+	for i := range count {
+		seed := start + i
 		hole := pool[(seed-1)%len(pool)]
 		if prev, dup := seen[hole]; dup {
 			return nil, fmt.Errorf("%dx%d: opening seeds %d and %d both resolve to %v; %d holes are available, so a range of %d repeats games",
@@ -2363,6 +2373,12 @@ func TestEffortOpeningsAreSeedStableAndUnique(t *testing.T) {
 	}
 	if _, err := ebOpenings(6, 1, len(pool)+1); err == nil {
 		t.Errorf("a range of %d on a board with %d openings was accepted", len(pool)+1, len(pool))
+	}
+	if _, err := ebOpenings(6, math.MaxInt, 1); err == nil {
+		t.Error("a seed range whose end overflows was accepted; it would have played no games and reported no failure")
+	}
+	if _, err := ebOpenings(6, 1, 0); err == nil {
+		t.Error("a seed range of zero openings was accepted")
 	}
 }
 

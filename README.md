@@ -17,7 +17,7 @@ your shell.
 
 https://github.com/user-attachments/assets/79156074-db7b-4ff5-8eea-bd15964c176f
 
-An animated tour of the menu, three bot tiers, a 24×24 board, hints, remote play,
+An animated tour of the menu, the bot tiers, a 24×24 board, hints, remote play,
 standings and four colour schemes. About a minute, with illustrative screens.
 
 <p align="center">
@@ -72,7 +72,7 @@ twixtui help                                          # every command, with what
 
 | | |
 | --- | --- |
-| [Play a bot](docs/MANUAL.md#playing-a-bot) | Three measured tiers: `beginner`, `intermediate`, and a clock-bounded `pro`. Hints run the same search at full strength. |
+| [Play a bot](docs/MANUAL.md#playing-a-bot) | Four measured tiers: `beginner`, `intermediate`, a clock-bounded `pro`, and `max`, the largest effort on offer. Hints run `max`'s search under a two-second guard. |
 | [Hotseat](docs/MANUAL.md#hotseat) | Two players, one terminal, alternating turns. |
 | [Remote play](docs/MANUAL.md#remote-play) | Direct, through a relay you or your opponent runs, or by correspondence with no live connection at all. |
 | [Learn it](docs/MANUAL.md#the-tutorial) | Seven lessons taught by playing them, and a five-step introduction on [first run](docs/MANUAL.md#the-first-run). |
@@ -81,9 +81,10 @@ twixtui help                                          # every command, with what
 | [Themes & cover art](docs/MANUAL.md#themes) | Four colour schemes, and the [1962 box lid](docs/MANUAL.md#the-cover) drawn beside the menu in character cells. |
 | [Shell completion](docs/MANUAL.md#shell-completion) | `bash`, `zsh`, `fish` and `powershell`, each value carrying its own one-line explanation. |
 
-The tiers are measured rather than assumed: over 60 games on a 10×10 board,
-`intermediate` beat `beginner` 58–2. The protocol, and how much of an edge `pro` does
-and does not establish, are in [the manual](docs/MANUAL.md#playing-a-bot).
+The tiers are measured rather than assumed: on colour-balanced opening pairs,
+`intermediate` beat `beginner` 24–0 on each of three board sizes. The protocol,
+and how much of an edge `pro` and `max` do and do not establish, are in
+[the manual](docs/MANUAL.md#playing-a-bot).
 
 ## Licence
 

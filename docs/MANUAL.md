@@ -135,7 +135,7 @@ it never costs an entry, so at eighty columns there is simply no picture.
 | Command | What it is for |
 | --- | --- |
 | `twixtui` | Interactive mode: the menu, and a profile first if none has been chosen yet. No flags to remember. |
-| `twixtui play bot` | Play the built-in bot at one of three strengths. |
+| `twixtui play bot` | Play the built-in bot at one of four efforts, `beginner` to `max`. |
 | `twixtui play local` | Hotseat: two players taking turns at the same terminal. |
 | `twixtui play host` | Offer a live game to a remote opponent. |
 | `twixtui play join` | Accept a remote opponent's live game. |
