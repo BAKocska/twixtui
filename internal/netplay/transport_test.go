@@ -290,6 +290,65 @@ func TestRelayIsADumbBytePump(t *testing.T) {
 	}
 }
 
+// TestRelayGreetsTheWaitingClientBeforeItsOpponentSpeaks: a client sends its
+// first frame the instant it reads OK, and the relay pumps that frame into the
+// other socket. The other client must still find its own OK first. It did not
+// always: each handler wrote its own client's OK, so the waiting client's OK
+// raced the opponent's frame across the waiting client's socket and lost often
+// enough to fail a full game through the relay on a loaded runner. The waiter
+// here does not even start reading until the opponent's frame has been written,
+// which is the worst case for the old ordering and no case at all for the new.
+func TestRelayGreetsTheWaitingClientBeforeItsOpponentSpeaks(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listening: %v", err)
+	}
+	relay := NewRelay()
+	relay.Logf = t.Logf
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go relay.Serve(ctx, l)
+
+	frame := []byte(strings.Repeat("\x00frame", 60)) // longer than a prelude line, no newline
+	for round := range 25 {
+		code := PairingCode()
+		room, _, err := splitPairingCode(code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waiter, err := net.Dial("tcp", l.Addr().String())
+		if err != nil {
+			t.Fatalf("round %d: dialling the waiting end: %v", round, err)
+		}
+		if err := writeRelayLine(waiter, relayJoin+" "+room); err != nil {
+			t.Fatalf("round %d: asking for the room: %v", round, err)
+		}
+
+		joiner, err := dialRelay(t.Context(), l.Addr().String(), room)
+		if err != nil {
+			t.Fatalf("round %d: the joining end was not paired: %v", round, err)
+		}
+		if err := writeAll(joiner, frame); err != nil {
+			t.Fatalf("round %d: the joining end could not send its first frame: %v", round, err)
+		}
+
+		// Only now does the waiting end look at its socket. Whatever the relay
+		// wrote first is what it reads first.
+		_ = waiter.SetReadDeadline(time.Now().Add(5 * time.Second))
+		br := bufio.NewReader(waiter)
+		line, err := readRelayLine(br)
+		if err != nil || line != relayOK {
+			t.Fatalf("round %d: the waiting end's first line is %q, %v; want %s before any of the opponent's bytes", round, line, err, relayOK)
+		}
+		got := make([]byte, len(frame))
+		if _, err := io.ReadFull(br, got); err != nil || string(got) != string(frame) {
+			t.Fatalf("round %d: after OK the waiting end read %q, %v; want the opponent's frame intact", round, got, err)
+		}
+		_ = joiner.Close()
+		_ = waiter.Close()
+	}
+}
+
 // TestStaleRelayReleaseCannotDeleteAReplacementRoom reproduces the generation
 // race: the second endpoint of an old pair may finish after new clients have
 // already reused the same code.

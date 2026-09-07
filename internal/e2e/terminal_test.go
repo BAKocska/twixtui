@@ -3,6 +3,7 @@ package e2e
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -172,14 +173,23 @@ func TestSendTextAndKeys(t *testing.T) {
 // The gap between steps is derived from settleQuiet rather than written out. It
 // was 80ms against a 120ms threshold, a margin of one and a half, which is a race
 // and not a test: it held on one machine and failed on a macOS runner the first
-// time one ran this suite. Scheduling jitter and the sampling interval together
-// are the same order as the margin was. At a quarter of the threshold the
-// relationship is explicit and cannot drift when either constant is retuned.
+// time one ran this suite. At a quarter of the threshold the relationship is
+// explicit and cannot drift when either constant is retuned.
+//
+// The steps are produced by one process sleeping in-process. They were a shell
+// loop running `sleep` once per step, and on a loaded runner a single fork and
+// exec of `sleep` took longer than the whole quiet threshold, so the detector
+// saw a genuinely quiet screen mid-stream and was blamed for it. A test of "waits
+// for output to stop" cannot have its output stop for reasons of its own.
 func TestWaitSettledReturnsTheFinalFrame(t *testing.T) {
 	t.Parallel()
+	perl, err := exec.LookPath("perl")
+	if err != nil {
+		t.Skipf("perl is not installed, and it is the one portable way to sleep without forking: %v", err)
+	}
 	gap := settleQuiet / 4
-	prog := fmt.Sprintf(`sh -c 'for i in 1 2 3 4 5; do echo step-$i; sleep %.3f; done; echo FINAL; sleep 30'`,
-		gap.Seconds())
+	prog := fmt.Sprintf(`%s -e '$|=1; for (1..5) { print "step-$_\n"; select(undef, undef, undef, %.3f) } print "FINAL\n"; sleep 30'`,
+		perl, gap.Seconds())
 	tm := Start(t, prog, Options{Width: 40, Height: 15})
 	screen := tm.WaitSettled(10 * time.Second)
 	if !strings.Contains(screen, "FINAL") {

@@ -459,11 +459,8 @@ func (r *Relay) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 	defer r.release(code, rm)
-	if err := writeRelayLine(conn, relayOK); err != nil {
-		_ = conn.Close()
-		_ = partner.conn.Close()
-		return
-	}
+	// Both clients were told OK by whichever handler paired them, before either
+	// pump existed; see pair. Nothing is written here but the opponent's bytes.
 	stop := closeOnCancel(ctx, conn)
 	defer stop()
 
@@ -509,8 +506,17 @@ func (w *deadlineWriter) Write(p []byte) (int, error) {
 
 // pair registers a client in its room and returns its opponent and the exact
 // room generation they paired in. A nil partner with a nil error means the wait
-// ended without an opponent, because the context was cancelled or because the
-// waiting client itself went away.
+// ended without an opponent, because the context was cancelled, because the
+// waiting client itself went away, or because the opponent that arrived found
+// this client's socket already dead.
+//
+// The handler that completes a pair writes OK to both sockets before it hands
+// the partner over, and before either handler starts pumping. The order matters:
+// a client sends its first frame the moment it reads OK, and its handler pumps
+// that frame straight into the partner's socket. When each handler wrote its
+// own client's OK, the partner's OK raced the opponent's first frame across the
+// partner's socket and could lose, in which case the partner read a protocol
+// frame where a greeting line should have been and refused the connection.
 func (r *Relay) pair(ctx context.Context, code string, me *client) (*client, *room, error) {
 	r.mu.Lock()
 	rm := r.rooms[code]
@@ -528,6 +534,22 @@ func (r *Relay) pair(ctx context.Context, code string, me *client) (*client, *ro
 		rm.paired = true
 		r.stats.paired++
 		r.mu.Unlock()
+		if err := writeRelayLine(partner.conn, relayOK); err != nil {
+			// The waiting client is gone; its handler is still blocked on
+			// this pairing and is woken with nothing, so it closes up. The
+			// room is released here because that handler never owned it as
+			// a pair, and this one is about to refuse.
+			_ = partner.conn.Close()
+			partner.paired <- nil // buffered, so this never blocks
+			r.release(code, rm)
+			return nil, nil, fmt.Errorf("the player waiting with the code %s left as you arrived; try again", code)
+		}
+		if err := writeRelayLine(me.conn, relayOK); err != nil {
+			_ = partner.conn.Close()
+			partner.paired <- nil
+			r.release(code, rm)
+			return nil, nil, err
+		}
 		partner.paired <- me // buffered, so this never blocks
 		return partner, rm, nil
 	default:
