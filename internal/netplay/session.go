@@ -391,19 +391,40 @@ func handshake(ctx context.Context, rw io.ReadWriter, cfg config) (Session, erro
 
 // closeOnCancel closes c if ctx is cancelled before stop is called. It is how a
 // handshake blocked on a transport with no deadline of its own is abandoned.
+//
+// stop returns only once the watcher has finished deciding, and a watcher that
+// finds stop already called does not close. Both matter. A select with the
+// cancellation and the stop both ready picks either at random, and stop used to
+// return the moment it had signalled: a handshake that finished just as its
+// caller cancelled the context could have its connection closed underneath the
+// session it had already returned. That is how a host's winning session was
+// found closed before its first move, on the round where the loser's handshake
+// finished a moment later and the host stopped listening.
 func closeOnCancel(ctx context.Context, c io.Closer) (stop func()) {
 	if ctx == nil || ctx.Done() == nil {
 		return func() {}
 	}
 	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		select {
 		case <-ctx.Done():
+			select {
+			case <-done:
+				// Stopped and cancelled together: the handshake finished, so
+				// the connection is the session's now.
+				return
+			default:
+			}
 			_ = c.Close()
 		case <-done:
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		<-exited
+	}
 }
 
 // openAsHost sends the invitation and reads the guest's answer.

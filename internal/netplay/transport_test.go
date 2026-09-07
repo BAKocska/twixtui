@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -110,6 +112,44 @@ func TestListenerSurvivesAStrayConnection(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the host never accepted the invited guest")
 	}
+}
+
+// closedFlag records whether Close was called; the watcher under test is the
+// only thing that could call it.
+type closedFlag struct{ closed atomic.Bool }
+
+func (c *closedFlag) Close() error { c.closed.Store(true); return nil }
+
+// TestAStoppedWatcherNeverCloses: stop, then cancel. The handshake finished, so
+// the connection belongs to the session now, and a cancellation arriving after
+// that must not reach it. It could: stop returned as soon as it had signalled,
+// and a watcher that had not yet run found both its signals ready and chose at
+// random. Repeated because the old defect is a coin toss per round.
+func TestAStoppedWatcherNeverCloses(t *testing.T) {
+	for round := range 500 {
+		ctx, cancel := context.WithCancel(context.Background())
+		c := &closedFlag{}
+		stop := closeOnCancel(ctx, c)
+		stop()
+		cancel()
+		for range 3 {
+			runtime.Gosched()
+		}
+		if c.closed.Load() {
+			t.Fatalf("round %d: a watcher that had been stopped closed the connection when the context was cancelled afterwards", round)
+		}
+	}
+}
+
+// TestAnUnstoppedWatcherStillCloses is the other half: a handshake that has not
+// finished when its context is cancelled is abandoned, connection and all.
+func TestAnUnstoppedWatcherStillCloses(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &closedFlag{}
+	stop := closeOnCancel(ctx, c)
+	cancel()
+	waitUntil(t, func() bool { return c.closed.Load() }, "cancelling did not close the connection the handshake held")
+	stop()
 }
 
 // TestListenCancellation proves a host waiting for an opponent does not leak an
