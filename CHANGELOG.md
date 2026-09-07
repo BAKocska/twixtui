@@ -64,7 +64,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `game --help` claimed an edited saved file is refused. Only the record itself
   carries that check; the labels around it are this machine's own notes. The
   help now says which is which. The stored record's result also prevents
-  reopening a finished game even if its local finished label has been cleared.
+  reopening a finished game even if its local finished label has been cleared,
+  and a finished game now refuses a different finished record too. Both checks
+  are made under a per-game lock held across the read and the write, so two
+  windows that finish the same game keep the first result: the store used to
+  check and then write as two steps, and the second finish could pass the
+  check, overwrite the first result, and be rated a second time. A game is now
+  rated only after the store has taken its result.
 - `play host --help` said a relay never sees the game, while the relay's own
   documentation says the operator reads both names, the ruleset and every move
   in plain text. The help now says what the pairing code does and does not

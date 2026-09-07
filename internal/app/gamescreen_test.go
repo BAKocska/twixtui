@@ -663,6 +663,59 @@ func TestResumeDoesNotRecordAFinishedGameTwice(t *testing.T) {
 	}
 }
 
+// TestTheSecondWindowToFinishAGameDoesNotRateIt: the same game can be open in
+// two windows — a saved game resumed twice, or a network game each end of which
+// keeps its own copy — and either can finish it. The store keeps the first
+// result and refuses the second, and this end's rating has to follow the store:
+// a row written for a result that was then never stored would be the second
+// rating of one game, which is exactly what a rating log cannot take back.
+func TestTheSecondWindowToFinishAGameDoesNotRateIt(t *testing.T) {
+	d := gsTestDeps(t)
+	first := newGSHarness(t, d, gsHotseat(6), 80, 24)
+	first.playTurn(game.Point{Col: 1, Row: 0})
+	first.press("q")
+	saved := d.Games.List()
+	if len(saved) != 1 {
+		t.Fatalf("%d stored games, want the one that was left", len(saved))
+	}
+
+	// Both windows resume the one stored game.
+	cfg := gsHotseat(6)
+	cfg.Resume = &saved[0]
+	a := newGSHarness(t, d, cfg, 80, 24)
+	b := newGSHarness(t, d, cfg, 80, 24)
+
+	// A finishes it: horizontal resigns. Rated once, stored once.
+	a.ready()
+	a.press("r")
+	a.press("y")
+	if rows := d.Board.History("ada", 0); len(rows) != 1 {
+		t.Fatalf("%d rows after the first window finished, want 1", len(rows))
+	}
+	stored, err := d.Games.Get(saved[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// B, which never saw that, plays on and finishes it differently.
+	b.playTurn(game.Point{Col: 0, Row: 1})
+	b.ready()
+	b.press("r")
+	b.press("y")
+	if !b.s.g.Result().Over() {
+		t.Fatal("the second window's resignation did not end its game")
+	}
+	if !strings.Contains(b.s.notice, "not rated") || !strings.Contains(b.s.notice, "result of its own") {
+		t.Fatalf("the second window was not told its finish was refused: %q", b.s.notice)
+	}
+	if rows := d.Board.History("ada", 0); len(rows) != 1 {
+		t.Fatalf("%d rows after the second window finished, want the first result alone: %+v", len(rows), rows)
+	}
+	if again, err := d.Games.Get(saved[0].ID); err != nil || again.Record != stored.Record {
+		t.Fatalf("the stored result changed under the second window: %v", err)
+	}
+}
+
 // TestResumeContinuesAnUnfinishedGame covers picking a game back up: the stored
 // position comes back and play carries on under the same stored identifier.
 func TestResumeContinuesAnUnfinishedGame(t *testing.T) {

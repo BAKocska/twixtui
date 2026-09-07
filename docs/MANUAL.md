@@ -552,6 +552,13 @@ and its replay. They are not signatures or anti-cheat protection. Local labels
 such as player names and storage metadata live outside that record check and
 remain trusted local state.
 
+A finished game keeps its result. The store refuses to reopen it and refuses a
+different finished record for the same game, and both checks are made under a
+lock on that game, so when the same game is open in two windows the first
+result written is the one kept: the second window is told its game was neither
+saved nor rated. The labels beside an unchanged finished record can still be
+corrected.
+
 ## Rulesets
 
 TwixT's editions and online venues genuinely disagree about a handful of rules.

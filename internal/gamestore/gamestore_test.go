@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/BAKocska/twixtui/internal/game"
@@ -493,5 +494,112 @@ func TestARowThatNamesAnotherGameIsRefused(t *testing.T) {
 	}
 	if _, err := s.Resolve("aaaa"); err == nil {
 		t.Error("the abbreviation resolved to a row that cannot be written back")
+	}
+}
+
+// resignedRecord returns a finished game whose result is a resignation by the
+// named side after one peg, so several distinct finished records of the same
+// game are easy to build.
+func resignedRecord(t *testing.T, opening string, quitter game.Player) string {
+	t.Helper()
+	rs := game.Std
+	rs.Size = 8
+	g := game.MustNew(rs)
+	if err := g.PlayNotation(opening); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Resign(quitter); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec.Encode()
+}
+
+// TestOnlyOneFinishOfAGameIsStored: two windows can both have the same game
+// open, and either can finish it. Whichever does is the result that was rated,
+// so the store has to keep exactly that one: a second, different result
+// arriving afterwards is a contradiction, and taking it would leave the file
+// disagreeing with the rating log. Deciding that by reading the stored game
+// and then writing is only sound while the two are one step, which is what
+// this asserts by running the writers at once.
+func TestOnlyOneFinishOfAGameIsStored(t *testing.T) {
+	s := newStore(t)
+	id := NewID()
+	openings := []string{"D1", "D2", "D3", "D4", "E1", "E2", "E3", "E4"}
+
+	type outcome struct {
+		record string
+		err    error
+	}
+	outcomes := make([]outcome, len(openings))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, opening := range openings {
+		record := resignedRecord(t, opening, game.Horizontal)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			outcomes[i] = outcome{record: record, err: s.Put(Saved{
+				ID: id, Kind: VersusBot, Player: "Balint", Side: "vertical",
+				Opponent: "bot:pro", Record: record, Finished: true,
+			})}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	var stored []string
+	for _, got := range outcomes {
+		if got.err == nil {
+			stored = append(stored, got.record)
+		} else if !strings.Contains(got.err.Error(), "finished") {
+			t.Errorf("a losing writer was refused for the wrong reason: %v", got.err)
+		}
+	}
+	if len(stored) != 1 {
+		t.Fatalf("%d of %d concurrent finishes were accepted, want exactly one", len(stored), len(openings))
+	}
+	got, err := s.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Record != stored[0] {
+		t.Error("the stored game is not the finish that was accepted")
+	}
+}
+
+// TestAStoredResultIsNotReplacedByAnotherOne is the same rule stated on its
+// own, without the race: a finished game keeps the result it was rated on, and
+// only its own labels can still be corrected.
+func TestAStoredResultIsNotReplacedByAnotherOne(t *testing.T) {
+	s := newStore(t)
+	first := Saved{
+		ID: NewID(), Kind: Remote, Player: "Balint", Side: "vertical",
+		Opponent: "remote:Zsofia", Record: resignedRecord(t, "D1", game.Horizontal), Finished: true,
+	}
+	if err := s.Put(first); err != nil {
+		t.Fatal(err)
+	}
+
+	second := first
+	second.Record = resignedRecord(t, "D2", game.Vertical)
+	if err := s.Put(second); err == nil {
+		t.Error("a second, different result replaced the result the game was rated on")
+	}
+	if got, err := s.Get(first.ID); err != nil || got.Record != first.Record {
+		t.Fatalf("the stored result changed: %v", err)
+	}
+
+	relabelled := first
+	relabelled.Opponent = "remote:Zsófia"
+	if err := s.Put(relabelled); err != nil {
+		t.Errorf("the same finished game could not be stored again with a corrected label: %v", err)
+	}
+	if got, err := s.Get(first.ID); err != nil || got.Opponent != relabelled.Opponent {
+		t.Fatalf("the corrected label was not stored: %v", err)
 	}
 }

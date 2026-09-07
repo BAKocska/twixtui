@@ -1278,12 +1278,17 @@ func (s *gameScreen) finish() tea.Cmd {
 	s.winning = s.winningChain()
 	s.message = ""
 
+	// Save first, and rate only what the store took. The store is what decides
+	// whether this end may finish the game at all: another window that resumed
+	// the same game and finished it first owns the result, and this one's write
+	// is refused. Rating first would have written a second row for that same
+	// game — the one thing a rating log cannot be asked to undo — for a result
+	// that was then never stored.
 	var problems []string
-	if err := s.record(res); err != nil {
-		problems = append(problems, "the leaderboard was not updated: "+err.Error())
-	}
 	if err := s.save(true); err != nil {
-		problems = append(problems, "the game was not saved: "+err.Error())
+		problems = append(problems, "the game was not saved, so it was not rated either: "+err.Error())
+	} else if err := s.record(res); err != nil {
+		problems = append(problems, "the leaderboard was not updated: "+err.Error())
 	}
 	if len(problems) > 0 {
 		s.notice += " (" + strings.Join(problems, "; ") + ")"

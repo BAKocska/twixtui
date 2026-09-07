@@ -165,6 +165,13 @@ func (s *Store) path(id string) (string, error) {
 	return filepath.Join(s.dir, id+".json"), nil
 }
 
+// lockPath is the lock file for one game. An identifier holds only lower-case
+// letters, digits and hyphens, so this can never name a game's own file, and
+// List skips it because it is not a ".json".
+func (s *Store) lockPath(id string) string {
+	return filepath.Join(s.dir, id+".lock")
+}
+
 // ValidateID rejects an identifier that could escape the store's directory or
 // collide with a shell pattern.
 func ValidateID(id string) error {
@@ -200,8 +207,16 @@ func ValidateID(id string) error {
 // A finished game is final. Once a result has been recorded the game is over,
 // it has been rated, and there is nothing left to play; reopening it and
 // storing the position it had before the result would contradict the rating log
-// and lose the result. Such a write is refused here rather than in the caller,
-// because the store is the one place every writer passes through. Whether the
+// and lose the result. A second, different result is refused for the same
+// reason: two windows that each resumed the game before either finished it
+// would otherwise both rate it and the later write would decide which result
+// the store kept. Storing the same finished game again is allowed, so a caller
+// may correct its own labels beside an unchanged record.
+//
+// This is refused here rather than in the caller, because the store is the one
+// place every writer passes through, and the check is held together with the
+// write under a lock on the game: a rule about what is already stored is only
+// worth anything while what is stored cannot change underneath it. Whether the
 // stored game is already finished is read from its record rather than from the
 // label beside it, because the label is local state that can be edited and the
 // record's result is not.
@@ -224,9 +239,20 @@ func (s *Store) Put(sv Saved) error {
 	if err != nil {
 		return fmt.Errorf("refusing to store a game whose record would not load back: %w", err)
 	}
-	if !sv.Finished || !g.Result().Over() {
-		if old, err := s.Get(sv.ID); err == nil && old.finished() {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", s.dir, err)
+	}
+	release, err := lockGame(s.lockPath(sv.ID))
+	if err != nil {
+		return err
+	}
+	defer release()
+	if old, err := s.Get(sv.ID); err == nil && old.finished() {
+		switch {
+		case !sv.Finished || !g.Result().Over():
 			return fmt.Errorf("game %s is finished and cannot be reopened", sv.ID)
+		case old.Record != record:
+			return fmt.Errorf("game %s is finished with a result of its own, so it cannot be replaced by a different finished game", sv.ID)
 		}
 	}
 	sv.Record = record
