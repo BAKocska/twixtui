@@ -7,13 +7,32 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A `max` bot tier, selectable from the command line, menu, completion and
+  saved-game resume: a ten-second guard, depth-24 ceiling, wider shortlists
+  and eight forced-line extension plies. Its nominal rating anchor matches
+  pro until separately calibrated. Effort is explicit; stronger play on
+  every board is not promised.
+- `bot.NewWithLimits` and `bot.StatsOf` expose node/depth/time ceilings and
+  actual nodes, all position analyses, completed depth and stop reason.
+- An opt-in paired bot benchmark with plain/PVS/MCTS alternatives, explicit
+  terminal setup slots, per-move receipts and conservative uncertainty.
+  Errors abort; truncated games are not draws, and incomplete pairs cannot
+  establish a strength direction. The manual records the protocol and results.
+
 ### Changed
 
 - docs: replace the repository banner with a box-lid illustration beside a shell
   prompt, and introduce the game with an animated feature tour. The tour keeps
   its editable source and a frame-by-frame export command; the full board
   explanation remains in the manual.
-
+- Cached immutable knight geometry and border lists reduced warm evaluator
+  cost while preserving all scores on 30 frozen positions. Five-sample medians
+  on an M5 Pro dropped 25.2% at 10×10 and 34.2% at 24×24, with zero warm-load allocations.
+- Pro and max use principal-variation search with extension-aware
+  transposition entries. Hints use max's search policy under a two-second
+  guard, not its ten-second game budget.
 - docs: the README is a front page rather than the whole manual. It had grown to
   something over six hundred lines and covered everything at full depth, which
   meant the answer to "what is this and how do I start" sat in the same
@@ -114,6 +133,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only profile and standings snapshots take their revision stamp from the
   same opened file as their contents. A concurrent atomic replacement can no
   longer pair old contents with the new stamp and leave a reader stale.
+- Root score bounds no longer masquerade as exact ties and displace a better
+  move. Sampled choices receive fully searched candidate values.
+- Interrupted iterations preserve the last completed results; exact node
+  ceilings admit their final leaf, and recursion caps evaluate the position
+  rather than inventing a window score.
+- Interrupted tactical enumeration no longer produces false “only defence”
+  hints. Searches reject uncommitted turn edits rather than undoing them.
 
 - ci: a tag push matched no trigger of the test workflow, so releases were
   built and published from refs the checks had never run on. The release

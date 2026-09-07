@@ -279,51 +279,102 @@ so a link you regret is one keystroke away from being undone.
 twixtui play bot --tier beginner --side vertical
 twixtui play bot --tier intermediate --side horizontal
 twixtui play bot --tier pro --side random
+twixtui play bot --tier max --side vertical
 ```
 
-| Tier | What it does |
-| --- | --- |
-| `beginner` | One move ahead, counting only how many pegs each side still needs, answered at once: takes a win and blocks one, but has no plan. |
-| `intermediate` | Three moves ahead with the full evaluation, still near-instant: punishes a loose chain. |
-| `pro` | Thinks for up to three seconds, extending forced lines, with a transposition table: the strongest play on offer. Its nominal depth limit is sixteen, but sixteen is theoretical — with the per-move budget lifted, a thirty-second search of a 16×16 position reached depth seven. |
+A tier controls work, not a guaranteed strength or attained depth. All four use
+the same connection-graph evaluation and alpha-beta search; `pro` and `max`
+also use principal-variation search and a transposition table.
 
-One alpha-beta search backs all three. They differ in how deep they may go, how many
-candidate moves they will look at, and how much of the evaluation they are allowed to
-see: the beginner sees only how many pegs each side still needs — blind to bottlenecks
-and territory — and spreads its choice over its six candidates, so it plays the second-
-or third-best move often; the pro adds a transposition table and extends forced lines.
-The beginner and intermediate tiers are capped by depth rather than by clock and answer
-instantly — only the pro tier actually takes time to think.
+| Tier | Depth ceiling | Root / interior shortlist | Time guard |
+| --- | ---: | ---: | ---: |
+| `beginner` | 1 | 6 / 6 | 100 ms |
+| `intermediate` | 3 | 18 / 14 | 1 s |
+| `pro` | 16 | 24 / 18 | 3 s |
+| `max` | 24 | 48 / 32 | 10 s |
 
-The gaps are measured rather than assumed, by a tournament the test suite runs:
-every opening played twice, once from each side, with the swap option off. Over 60
-games on a 10×10 board, `intermediate` beat `beginner` 58–2.
+The beginner scores distance alone and samples among candidates; intermediate
+uses distance, bottlenecks and territory. Pro and max extend forced lines by
+up to six and eight extra plies respectively. Exact tactical defence lists are
+not width-capped. Depths are ceilings, not promises: the clock can stop any tier
+early, while an immediate win needs no deep search. The maximum tier deliberately
+spends more work on a broader shortlist; it is not guaranteed to beat pro in
+every position or on every board size.
 
-How much stronger `pro` is depends on the board, and on a small one it may not be
-stronger at all. The measurement that runs on every build asks only that `pro` not
-do materially worse than `intermediate` on 10×10 — a floor of 0.45 of the points
-available — because that is all that holds there.
+What every tier plays is a peg, with the links that peg is offered taken as they come.
+The bot never turns a link off, never takes one of its own links back on a later turn
+and never uses the swap option, so under `--ruleset std` it is playing a subset of the
+moves the printed rules allow while you have all of them. Its search is selective too:
+it looks at a shortlist of holes per position rather than at every legal one. Nothing
+here solves TwixT, and no tier's move is a proven best move.
 
-The size dependence is measured separately, on the same protocol: twelve unique
-openings, each played from both sides, twenty-four games a size. At the shipped
-budgets `pro` scored 0.542 on 12×12 and 0.958 on 16×16 — level on the smaller
-board, far ahead on the larger. Given both tiers an equal thirty-second guard so
-the deeper search has room, it scored 0.458 on 10×10, 0.417 on 12×12, 0.583 on
-14×14 and 0.583 on 16×16, and every one of those has a 95% confidence floor below
-0.5. So across that range the extra depth does not establish a reliable advantage.
+Effort and strength are checked separately. Regression tests compare search
+values and chosen moves against full-width minimax, check exact node boundaries,
+and verify cancellation, position restoration and immediate tactics. The
+opt-in tournament measures outcomes on colour-balanced opening pairs. A draw
+scores a half; an error aborts, and an unfinished game is never scored as a draw.
+Incomplete pairs prohibit a directional strength verdict.
 
-Read plainly: the gap widens with the board. It is not established anywhere from
-10×10 to 16×16 under an equal guard, and at the shipped budgets it is even on 12×12
-and large on 16×16, so on a small board `pro` is a different opponent rather than a
-better one and `intermediate` answers instantly. The 24×24 board the game ships
-with is larger still, and the trend points the same way, but it has not been
-measured on this protocol and no figure here stands for it. The figures, the
-protocol and the number of games
-behind each are recorded with the measurement in `internal/bot/strength_test.go`.
+A fresh confirmation sample on 7 September 2026 used opening seeds 101–112,
+disjoint from development seeds 1–12. Each board/pairing played 24 games,
+both colour assignments per opening, under `std` with swap disabled and the
+bot's automatic-link policy. Results below are **W–L–D for the left-hand bot**:
+
+| Comparison | 10×10 | 16×16 | 24×24 |
+| --- | ---: | ---: | ---: |
+| Intermediate vs beginner | 24–0–0 | 24–0–0 | 24–0–0 |
+| Pro, 8,000 nodes, vs intermediate | 19–5–0 | 15–6–3 | 20–4–0 |
+| Max, 32,000 nodes, vs pro, 8,000 nodes | 11–12–1 | 13–9–2 | 17–6–1 |
+| PVS, 2,000 nodes, vs untrained MCTS, 256 simulations | 19–5–0 | 20–3–1 | 22–2–0 |
+
+These 288 games all finished; none errored or was truncated. Alpha-beta's
+one-hour clock was a safety guard and never bound. **They do not measure the
+shipped three- and ten-second budgets.** The conservative two-sided 95% bound
+treats the twelve opening pairs, not the twenty-four games, as the sample:
+`mean ± sqrt(log(40)/(2 × pairs))`, clipped to [0,1]. It supports intermediate's
+advantage over beginner on all three sizes, and PVS's advantage over this MCTS
+configuration on 24×24. The other comparisons remain inconclusive under that
+rule, including every max-versus-pro result. The result describes this opening
+sample, not every possible position.
+
+MCTS is retained as an opt-in research contender, not selected as a shipped
+tier. Its cap is in simulations, not alpha-beta nodes. Actual total analyses
+in the 24×24 confirmation were 704,433 for PVS and 792,452 for MCTS, including
+tactical probes. Max's 24×24 match used 21,251,889 analyses against pro's
+5,465,733; both had median completed depth four. Broader search consumes work
+that a depth number alone does not reveal.
+
+Principal-variation search was also compared with plain alpha-beta on 36
+development positions at depth five. Median analysis savings were 0.8–1.6%
+depending on board size, much smaller than the geometry optimization. Two
+scores and one chosen move differed: history-dependent shortlist selection
+means this is not a claim of identical selective trees. Full-width minimax
+regressions establish pruning correctness separately.
+
+The evaluator caches immutable board geometry instead of recomputing knight
+neighbours and border scans at every node. Against revision `312d9ce`, five
+single-CPU warm-load benchmark samples had these medians:
+
+| Board | Before | Cached geometry | Reduction |
+| --- | ---: | ---: | ---: |
+| 10×10 | 4,524 ns/evaluation | 3,385 ns/evaluation | 25.2% |
+| 24×24 | 28,115 ns/evaluation | 18,498 ns/evaluation | 34.2% |
+
+Both paths allocated zero bytes per warm evaluation. On 30 frozen positions
+covering 6×6 through 48×48, isolating this optimization preserved every recorded
+distance/score, chosen move, completed depth and node count. These are warm
+evaluator measurements on an Apple M5 Pro with Go 1.26.5, not cold-start timings
+or a claim that every search speeds up by the same percentage.
+
+The search also fixes a distinct correctness problem: an upper-bound score
+could tie the principal variation and win the root's positional tie-break,
+causing the bot to choose a losing move while reporting a favourable score.
+The regression checks the chosen move's actual minimax value, not just the
+number reported by the search.
 
 | Flag | Effect |
 | --- | --- |
-| `--tier beginner\|intermediate\|pro` | How hard the bot tries. |
+| `--tier beginner\|intermediate\|pro\|max` | How much effort the bot may spend. |
 | `--side vertical\|horizontal\|random` | Which connection you take. Required: there is no default. |
 | `--ruleset std\|pp\|classic` | Which ruleset to play under. |
 | `--size N` | Board side length, 6 to 48. |
@@ -334,17 +385,71 @@ You pick your side before the first move, and on the command line `play bot` wil
 not start without it: leave `--side` out and it says so. The menu asks instead.
 `--side random` is there for players who would rather not choose.
 
-`--seed N` fixes the bot's randomness, which is what the beginner tier samples with.
-Given the same seed, ruleset and moves, the two depth-capped tiers reply the same way
-every time; the pro tier is bounded by a clock rather than by depth, so a machine
-under load can stop its search a little earlier and answer differently. That is the
-search doing what it was asked, not a fault, but it means a pro game is reproducible
-in practice rather than by guarantee. The bot's own tests pin determinism with the
-clock taken out of the question, for the same reason.
+`--seed N` fixes random choices, not the amount of search completed. Repeating a
+seed is reproducible when the same deterministic work finishes; a deadline or a
+loaded machine can stop even a normally depth-capped tier earlier. For repeatable
+experiments, `bot.NewWithLimits(tier, seed, bot.Limits{Nodes, Depth, Time})`
+overrides the chosen guards (zero inherits the preset). `bot.StatsOf` reports
+recursive nodes, all position analyses including tactical probes, completed
+depth, elapsed search time and the actual stop reason. Nodes and analyses are
+different quantities; neither is an MCTS simulation count.
 
-Asking for a hint runs that same search at full strength and gives you the move it
-would play, a line on why, and the holes that reason is about, marked on the board.
-It is available by default; `--hints=false` takes it away.
+Asking for a hint runs the same search with the highest-effort settings the package
+has, whichever tier you are playing, and gives you the move it would play, a line on
+why, and the holes that reason is about, marked on the board. It keeps a two-second
+guard rather than the ten seconds `max` may take in a game, so it can finish at a
+shallower depth. A hint is refused while a turn has uncommitted edits: commit or
+abort it first. Interrupted analysis never presents a partial list of replies
+as an exact count. Hints are available by default; `--hints=false` disables them.
+
+### Reproducing bot experiments
+
+The ordinary suite runs tactical and effort regressions. The larger experiment
+is opt-in and writes its resolved configuration, every move, work counters,
+game result and paired uncertainty to JSON:
+
+```sh
+TWIXT_BOT_EFFORT=1 \
+TWIXT_BOT_EFFORT_MODE=match \
+TWIXT_BOT_EFFORT_CANDIDATES=pro,intermediate \
+TWIXT_BOT_EFFORT_SIZES=10,16,24 \
+TWIXT_BOT_EFFORT_SEED_START=101 TWIXT_BOT_EFFORT_SEED_COUNT=12 \
+TWIXT_BOT_EFFORT_NODES=pro=8000 TWIXT_BOT_EFFORT_TIME=1h \
+TWIXT_BOT_EFFORT_OUT=/tmp/twixt-effort.json \
+go test ./internal/bot -run '^TestBotEffortExperiment$' -count=1 -timeout=30m
+```
+
+This example measures pro's search policy under an 8,000-node limit, not the
+shipped three-second pro budget. `MODE=positions` probes fixed positions;
+setup games that already ended are recorded as terminal slots, never silently
+replaced by earlier positions. `plain` and `pvs` isolate the search algorithm;
+`mcts` runs the untrained Monte Carlo alternative, with its simulation count
+set by `TWIXT_BOT_EFFORT_ITERATIONS`. Per-candidate overrides use `name=value`.
+The full interface and protocol live in `internal/bot/effort_benchmark_test.go`.
+
+### Perfect play
+
+None of these bots is a perfect TwixT player. On an empty 24×24 board a side has
+528 legal peg placements; the search keeps only a shortlist. Standard rules
+also permit deliberate link additions/removals, which this move API does not
+search, and optional peg removal can introduce cycles.
+
+An exhaustive experiment solved 32 selected late 6×6 paper-and-pencil positions
+after 26 placements, with six empty playable holes, swap disabled and permanent
+automatic links. A separate clone-based minimax agreed on each result and
+verified that each selected move was optimal; injected scoring, illegal-move
+and failed-undo defects were detected. This is a small
+endgame experiment using the game's rules engine, not a solution of the initial
+6×6 board, a strategy certificate, or evidence of perfect 24×24 play.
+
+[Generalized TwixT is PSPACE-complete](https://arxiv.org/html/1403.6518#S3);
+that is not an impossibility proof for a fixed 24×24 board. Stronger practical
+play could use a trained policy/value network with MCTS, but it needs a
+rule-matched model: the public
+[twixtbot-ui model](https://github.com/stevens68/twixtbot-ui#evaluation)
+was trained with own-link crossings allowed and documents evaluation errors
+when that rule is switched off. Results for this project's untrained MCTS
+experiment do not measure trained neural MCTS.
 
 ## Hotseat
 

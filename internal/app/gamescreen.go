@@ -1083,7 +1083,11 @@ func (s *gameScreen) askHint() tea.Cmd {
 		s.hint.clear()
 		return nil
 	}
-	if s.g.Staged().PegPlaced {
+	// The engine refuses a position with a turn in progress, peg or links,
+	// because taking back its first trial move would take the staged edits with
+	// it. Saying so here names the key that clears the turn, which the error
+	// coming back from the engine cannot.
+	if st := s.g.Staged(); st.PegPlaced || len(st.Added) > 0 || len(st.Removed) > 0 || len(st.RemovedPegs) > 0 {
 		s.message = fmt.Sprintf("advice is for the move you have not made yet — %s aborts the turn",
 			s.keyLabel(ui.ActAbortTurn))
 		return nil
@@ -2383,4 +2387,16 @@ func (s *serialBot) Hint(ctx context.Context, g *game.Game) (bot.Hint, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	return s.engine.Hint(ctx, g)
+}
+
+// Stats passes the engine's own count of its last search through the same lock
+// the searches take, so a caller reading it never reads counters a search is
+// still writing. It waits for a search in flight and then reports that search,
+// which is the only answer that means anything; it starts no search of its own.
+// A wrapped engine that keeps no count reports the zero value, as bot.StatsOf
+// does for any other bot.
+func (s *serialBot) Stats() bot.SearchStats {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	return bot.StatsOf(s.engine)
 }

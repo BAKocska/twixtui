@@ -396,3 +396,67 @@ func TestHintOnASealedPositionSaysSo(t *testing.T) {
 	t.Logf("headline: %s", h.Headline)
 	t.Logf("detail:   %s", h.Detail)
 }
+
+type hintCancelOnPoll struct {
+	context.Context
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (c *hintCancelOnPoll) Err() error {
+	c.calls++
+	if c.calls == 2 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestHintDoesNotCountAnInterruptedDefencePrefix(t *testing.T) {
+	g := game.MustNew(smallRules(8))
+	playMoves(t, g, "B1", "A3", "B5", "G3", "C7", "G4", "E8", "G5", "F1")
+	defended := 0
+	for _, p := range g.LegalPlacements(g.Turn()) {
+		next := g.Clone()
+		if _, err := next.PlayPeg(p); err != nil {
+			t.Fatal(err)
+		}
+		wins := false
+		if !next.Result().Over() {
+			for _, reply := range next.LegalPlacements(next.Turn()) {
+				leaf := next.Clone()
+				r, err := leaf.PlayPeg(reply)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if r.Winner() == next.Turn() {
+					wins = true
+					break
+				}
+			}
+		}
+		if !wins {
+			defended++
+		}
+	}
+	if defended < 2 {
+		t.Fatalf("fixture only has %d defences", defended)
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &hintCancelOnPoll{Context: parent, cancel: cancel}
+	e := New(Pro, 1).(*engine)
+	before := game.PositionDigest(g)
+	h, r, d, err := e.explain(ctx, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if game.PositionDigest(g) != before {
+		t.Fatal("hint changed position")
+	}
+	if r == reasonOnlyDefence || d.Defences == 1 {
+		t.Fatalf("counted incomplete prefix as exact: actual=%d reported=%d reason=%v hint=%+v", defended, d.Defences, r, h)
+	}
+	if strings.Contains(h.Detail, "One of") || strings.Contains(h.Detail, "only") {
+		t.Fatalf("interrupted enumeration claimed an exact count: %s", h.Detail)
+	}
+}

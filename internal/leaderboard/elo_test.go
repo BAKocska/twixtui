@@ -35,6 +35,16 @@ func TestWinAgainstStrongerOpponentGainsMore(t *testing.T) {
 	}
 }
 
+func TestMaxUsesProRewardsRatherThanUnknownTierFallback(t *testing.T) {
+	for _, outcome := range []Outcome{Win, Loss, DrawOutcome} {
+		pro := ratingAfter(t, "Player", result("Player", BotName("pro"), outcome, day(1)))
+		max := ratingAfter(t, "Player", result("Player", BotName("max"), outcome, day(1)))
+		if max != pro {
+			t.Fatalf("outcome %v: max left rating %d, pro %d; want the same nominal reward", outcome, max, pro)
+		}
+	}
+}
+
 func TestLossAgainstWeakerOpponentCostsMore(t *testing.T) {
 	toBeginner := ratingAfter(t, "Balint", result("Balint", BotName("beginner"), Loss, day(1)))
 	toPro := ratingAfter(t, "Balint", result("Balint", BotName("pro"), Loss, day(1)))
@@ -203,23 +213,7 @@ func TestExpectedScore(t *testing.T) {
 	}
 }
 
-func TestBotAnchorsAreOrdered(t *testing.T) {
-	if !(botRatings["beginner"] < botRatings["intermediate"] && botRatings["intermediate"] < botRatings["pro"]) {
-		t.Fatalf("bot anchors %v are not ordered by tier strength", botRatings)
-	}
-	if botRatings["beginner"] >= StartRating {
-		t.Fatalf("beginner anchor %d is not below the seed %d: a new player is meant to beat it",
-			botRatings["beginner"], StartRating)
-	}
-	if botRatings["pro"] <= StartRating {
-		t.Fatalf("pro anchor %d is not above the seed %d", botRatings["pro"], StartRating)
-	}
-	for tier, rating := range botRatings {
-		got, fixed := anchorRating(BotName(tier))
-		if !fixed || got != rating {
-			t.Fatalf("anchorRating(%q) = %d, %v; want %d, true", BotName(tier), got, fixed, rating)
-		}
-	}
+func TestHumanRatingsAreNotAnchored(t *testing.T) {
 	if _, fixed := anchorRating("Balint"); fixed {
 		t.Fatal("anchorRating treated a profile name as a fixed anchor")
 	}

@@ -375,7 +375,7 @@ func stepWho(m *Menu) tea.Cmd {
 		opts: []menuOption{
 			{
 				label: "the computer",
-				help:  "Three engine tiers, beginner to pro. The default game is enter all the way.",
+				help:  "Four engine tiers, beginner to max. The default game is enter all the way.",
 				value: gamestore.VersusBot,
 			},
 			{
@@ -1216,7 +1216,7 @@ func stepTier(m *Menu) tea.Cmd {
 		opts = append(opts, menuOption{label: n, help: bot.TierSummary(n), value: t})
 	}
 	m.form = &chooser{
-		title:  "How strong an opponent?",
+		title:  "How hard should the opponent think?",
 		opts:   opts,
 		sel:    sel,
 		cancel: backOneStep,
