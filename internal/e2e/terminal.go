@@ -256,22 +256,36 @@ func (tm *Terminal) Alive() bool {
 // window tmux prints the pane as dead with an empty status, and reading the
 // empty string as zero made an immediate `exit 3` report as a clean exit on a
 // loaded runner. A dead pane with no status yet is therefore not "exited" here:
-// the caller keeps polling, and the answer it gets is the program's own.
+// the caller keeps polling, and the answer it gets is the program's own. A
+// program ended by a signal has no exit status; tmux reports the signal
+// instead, and that is returned the way a shell would, as 128 plus the number.
 func (tm *Terminal) ExitStatus() (int, bool) {
 	tm.t.Helper()
-	out, err := tm.tmux("display-message", "-p", "-t", "main", "#{pane_dead}:#{pane_dead_status}")
+	dead, status, signal, ok := tm.deathReport()
+	if !ok || !dead {
+		return 0, false
+	}
+	if code, err := strconv.Atoi(status); err == nil {
+		return code, true
+	}
+	if sig, err := strconv.Atoi(signal); err == nil {
+		return 128 + sig, true
+	}
+	return 0, false
+}
+
+// deathReport reads what tmux knows about the pane's process: whether the pane
+// is dead, and the exit status or signal once the child has been reaped.
+func (tm *Terminal) deathReport() (dead bool, status, signal string, ok bool) {
+	out, err := tm.tmux("display-message", "-p", "-t", "main", "#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}")
 	if err != nil {
-		return 0, false
+		return false, "", "", false
 	}
-	parts := strings.SplitN(strings.TrimSpace(out), ":", 2)
-	if len(parts) != 2 || parts[0] != "1" {
-		return 0, false
+	parts := strings.SplitN(strings.TrimSpace(out), ":", 3)
+	if len(parts) != 3 {
+		return false, "", "", false
 	}
-	code, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return 0, false
-	}
-	return code, true
+	return parts[0] == "1", parts[1], parts[2], true
 }
 
 // WaitExit blocks until the program has exited and tmux has published its
@@ -279,6 +293,11 @@ func (tm *Terminal) ExitStatus() (int, bool) {
 // exit code: Alive going false says the terminal closed, which is earlier than
 // the status being known, so a caller that polls Alive and then reads
 // ExitStatus once can read it in the gap.
+//
+// A pane that is dead for the whole wait without tmux ever publishing a status
+// is reported through t.Fatalf with tmux's own view of the pane and the process
+// table, rather than as a timeout: that state means the child was not reaped,
+// and the reason is in that report, not in the program under test.
 func (tm *Terminal) WaitExit(timeout time.Duration) (int, bool) {
 	tm.t.Helper()
 	if timeout <= 0 {
@@ -290,6 +309,12 @@ func (tm *Terminal) WaitExit(timeout time.Duration) (int, bool) {
 			return code, true
 		}
 		if !time.Now().Before(deadline) {
+			if dead, status, signal, ok := tm.deathReport(); ok && dead {
+				pid, _ := tm.tmux("display-message", "-p", "-t", "main", "#{pane_pid}")
+				ps, _ := exec.Command("ps", "-o", "pid,ppid,stat,comm", "-p", strings.TrimSpace(pid)).CombinedOutput()
+				tm.t.Fatalf("the pane died but tmux published no exit status within %s (status=%q signal=%q pane_pid=%s)\n%s",
+					timeout, status, signal, strings.TrimSpace(pid), ps)
+			}
 			return 0, false
 		}
 		time.Sleep(pollInterval)
