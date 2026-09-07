@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,10 +34,16 @@ type gameFlags struct {
 	seed    int64
 	hints   bool
 	port    int
+	// bind is which of this machine's addresses a direct host accepts the
+	// connection on, separate from the port it accepts it at.
+	bind    string
 	relay   string
 	addr    string
 	newGame bool
 	join    string
+	// resume names the saved network game to continue instead of starting a
+	// new one.
+	resume string
 }
 
 func (f *gameFlags) addRuleFlags(cmd *cobra.Command) {
@@ -70,7 +78,8 @@ func (f *gameFlags) rules() (game.Ruleset, error) {
 // resolveSide turns the flag into a concrete side, asking nobody: an empty value
 // means the interface will ask, which the caller handles.
 func (f *gameFlags) resolveSide(seed int64) (game.Player, bool, error) {
-	switch strings.ToLower(strings.TrimSpace(f.side)) {
+	want := strings.ToLower(strings.TrimSpace(f.side))
+	switch want {
 	case "":
 		return game.NoPlayer, false, nil
 	case "random", "r":
@@ -80,9 +89,13 @@ func (f *gameFlags) resolveSide(seed int64) (game.Player, bool, error) {
 		}
 		return game.Horizontal, true, nil
 	}
-	pl, err := game.ParsePlayer(strings.ToLower(strings.TrimSpace(f.side)))
+	pl, err := game.ParsePlayer(want)
 	if err != nil {
-		return game.NoPlayer, false, err
+		// The engine's own refusal names the two sides it parses, which is one
+		// short of what this flag takes: random is resolved above and never
+		// reaches it, so a player told the accepted values by the parser would
+		// be told the flag refuses a value it documents and accepts.
+		return game.NoPlayer, false, fmt.Errorf("%q is not a side: choose vertical, horizontal or random", want)
 	}
 	return pl, true, nil
 }
@@ -142,7 +155,7 @@ func newPlayBotCommand(opts *options) *cobra.Command {
 The three tiers are genuinely different opponents, not the same one slowed down.
 Ask for advice at any time on your turn with ? and the reason will be explained
 in the terms the search actually measured.`,
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rs, err := f.rules()
 			if err != nil {
@@ -215,7 +228,7 @@ func newPlayLocalCommand(opts *options) *cobra.Command {
 
 Both players use the same terminal and take turns. The interface always says
 whose turn it is, and each player's own border rows are marked.`,
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rs, err := f.rules()
 			if err != nil {
@@ -273,19 +286,31 @@ func newPlayHostCommand(opts *options) *cobra.Command {
 		Short: "Wait for an opponent to connect",
 		Long: `Wait for an opponent to connect.
 
-By default twixtui listens for a direct connection, which works on a local
-network, over a VPN or tailnet, or with a forwarded port. If neither of you can
-accept an incoming connection, both use --relay with the address of a relay one
-of you runs with "twixtui serve"; the relay only passes bytes along and never
-sees the game.
+By default twixtui listens for a direct connection on every interface, which
+works on a local network, over a VPN or tailnet, or with a forwarded port. Use
+--bind to accept the connection on one interface only — --bind 127.0.0.1
+accepts it from this machine alone — and --port to choose where on it.
+
+If neither of you can accept an incoming connection, both use --relay with the
+address of a relay one of you runs with "twixtui serve".
+
+Neither route hides the game. A relay's operator reads what it carries in
+plain text: both names, the ruleset and every move. What a relayed game's
+pairing code buys is integrity and not secrecy — its second part is a key the
+relay is never told, and it stops the relay altering the game rather than
+seeing it. A direct connection has no relay in the middle and no secret
+either: the invitation, carrying this player's name and the ruleset, goes out
+as soon as something connects, before either end has proved anything about the
+other.
+
+--resume continues a saved network game whose connection was lost, on the
+terms it was played on, instead of starting a new one. Your opponent resumes
+the same game from their end, either way round: whoever waits is your choice
+each time, not something the saved game decides.
 
 The address to share is printed before the wait begins.`,
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			rs, err := f.rules()
-			if err != nil {
-				return err
-			}
 			deps, player, err := opts.deps()
 			if err != nil {
 				return err
@@ -293,18 +318,33 @@ The address to share is printed before the wait begins.`,
 			if player == "" {
 				return errFirstRunNeedsProfile
 			}
-			side, chosen, err := f.resolveSide(time.Now().UnixNano())
+			resume, err := f.resumed(cmd, deps, player)
 			if err != nil {
 				return err
 			}
-			if !chosen {
-				side = game.Vertical
+
+			out := cmd.OutOrStdout()
+			var hostOpts netplay.HostOptions
+			if resume != nil {
+				hostOpts = resume.Host()
+				fmt.Fprintln(out, resume.Describe())
+			} else {
+				rs, rulesErr := f.rules()
+				if rulesErr != nil {
+					return rulesErr
+				}
+				side, chosen, sideErr := f.resolveSide(time.Now().UnixNano())
+				if sideErr != nil {
+					return sideErr
+				}
+				if !chosen {
+					side = game.Vertical
+				}
+				hostOpts = netplay.HostOptions{Name: player, Rules: rs, Side: side}
 			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			out := cmd.OutOrStdout()
-			hostOpts := netplay.HostOptions{Name: player, Rules: rs, Side: side}
 
 			var session netplay.Session
 			if f.relay != "" {
@@ -314,12 +354,20 @@ The address to share is printed before the wait begins.`,
 				fmt.Fprintln(out, "Waiting for them to join. Press ctrl+c to give up.")
 				session, err = netplay.HostViaRelay(ctx, f.relay, code, hostOpts)
 			} else {
-				listener, bindErr := netplay.Bind(fmt.Sprintf(":%d", f.port))
+				target, addrErr := f.listenAddr()
+				if addrErr != nil {
+					return addrErr
+				}
+				listener, bindErr := netplay.Bind(target)
 				if bindErr != nil {
 					return bindErr
 				}
+				// The bound address is what the opponent is told, rather than
+				// the port alone pasted after a placeholder: a host that bound
+				// one interface knows the whole address to give out, and one
+				// that bound every interface knows only the port and says so.
 				fmt.Fprintf(out, "Listening on %s\n", listener.Addr())
-				fmt.Fprintf(out, "Your opponent runs: twixtui play join <your address>:%s\n\n", portOf(listener.Addr()))
+				fmt.Fprintf(out, "Your opponent runs: twixtui play join %s\n\n", netplay.JoinTarget(listener.Addr()))
 				fmt.Fprintln(out, "Waiting for them to connect. Press ctrl+c to give up.")
 				session, err = listener.Wait(ctx, hostOpts)
 			}
@@ -328,14 +376,20 @@ The address to share is printed before the wait begins.`,
 			}
 			defer session.Close()
 
-			return runRemoteGame(cmd, deps, player, session)
+			if resume != nil {
+				return runRemoteGame(cmd, deps, resume.Continue(session))
+			}
+			return runRemoteGame(cmd, deps, app.RemoteConfig(player, session))
 		},
 	}
 	f.addRuleFlags(cmd)
 	f.addSideFlag(cmd)
+	cmd.Flags().StringVar(&f.bind, "bind", "",
+		"interface address to accept the connection on, such as 127.0.0.1 for this machine alone; left out, every interface accepts it")
 	cmd.Flags().IntVar(&f.port, "port", 4270, "port to listen on; 0 picks a free one and prints it")
 	cmd.Flags().StringVar(&f.relay, "relay", "",
 		"pair through a relay at this address instead of listening directly")
+	f.addResumeFlag(cmd, opts)
 	return cmd
 }
 
@@ -349,9 +403,20 @@ func newPlayJoinCommand(opts *options) *cobra.Command {
 Give the address they printed, or, with --relay, the pairing code they printed.
 The side you play is whichever one they did not take, and twixtui tells you which
 it is before the first move. A ruleset mismatch is refused before the game
-starts rather than going wrong later.`,
-		Args: cobra.ExactArgs(1),
+starts rather than going wrong later.
+
+Neither a direct connection nor a relay hides the game; "twixtui play host
+--help" says what each of them exposes.
+
+--resume continues a saved network game whose connection was lost instead of
+starting a new one. The saved ruleset and side are what this end insists on, so
+a host offering anything else is refused rather than played on other terms.`,
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			target := strings.TrimSpace(args[0])
+			if target == "" {
+				return errors.New("give the address they printed, or their pairing code together with --relay")
+			}
 			deps, player, err := opts.deps()
 			if err != nil {
 				return err
@@ -359,32 +424,52 @@ starts rather than going wrong later.`,
 			if player == "" {
 				return errFirstRunNeedsProfile
 			}
+			resume, err := f.resumed(cmd, deps, player)
+			if err != nil {
+				return err
+			}
+			guestOpts := netplay.GuestOptions{Name: player}
+			if resume != nil {
+				guestOpts = resume.Guest()
+			}
+
+			// A pairing code is checked before anything is printed. The banner
+			// below echoes the code back, which is the one thing a player can
+			// check without the host on the phone — and echoing a code that
+			// was never going to pair, over a promise to wait for an opponent
+			// who cannot arrive, is exactly the reading that hides a typo.
+			if f.relay != "" {
+				if err := netplay.CheckPairingCode(target); err != nil {
+					return err
+				}
+			}
+
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
 			// Say what is being waited for before waiting for it. A relay that
 			// is reachable but has nobody in the room accepts the connection
 			// and then says nothing at all, so a joiner that prints nothing is
-			// indistinguishable from a hung one. This is the ordinary path for
-			// a mistyped code, which is why the code is echoed back: it is the
-			// one thing the player can check without the host on the phone.
-			// The banner goes out before the call rather than after it because
-			// the wait happens inside the call; a relay that cannot be reached
-			// prints its own error a moment later and supersedes it.
+			// indistinguishable from a hung one. The banner goes out before
+			// the call rather than after it because the wait happens inside
+			// the call; a relay that cannot be reached prints its own error a
+			// moment later and supersedes it.
 			out := cmd.OutOrStdout()
-			guestOpts := netplay.GuestOptions{Name: player}
+			if resume != nil {
+				fmt.Fprintln(out, resume.Describe())
+			}
 			var session netplay.Session
 			if f.relay != "" {
-				fmt.Fprintf(out, "Pairing code: %s\n", args[0])
+				fmt.Fprintf(out, "Pairing code: %s\n", target)
 				fmt.Fprintf(out, "Joining through the relay at %s.\n\n", f.relay)
 				fmt.Fprintln(out, "Waiting for the host. Press ctrl+c to give up.")
-				session, err = netplay.JoinViaRelay(ctx, f.relay, args[0], guestOpts)
+				session, err = netplay.JoinViaRelay(ctx, f.relay, target, guestOpts)
 			} else {
 				// A direct join usually connects or fails within a round trip,
 				// so it gets one line rather than the relay's three; a filtered
 				// port is the case where it too sits there, and then this is
 				// what says so.
-				addr := netplay.NormalizeAddr(args[0])
+				addr := netplay.NormalizeAddr(target)
 				fmt.Fprintf(out, "Connecting to %s. Press ctrl+c to give up.\n", addr)
 				session, err = netplay.Dial(ctx, addr, guestOpts)
 			}
@@ -395,12 +480,73 @@ starts rather than going wrong later.`,
 
 			fmt.Fprintf(out, "Connected to %s. You play %s.\n",
 				session.OpponentName(), session.Side())
-			return runRemoteGame(cmd, deps, player, session)
+			if resume != nil {
+				return runRemoteGame(cmd, deps, resume.Continue(session))
+			}
+			return runRemoteGame(cmd, deps, app.RemoteConfig(player, session))
 		},
 	}
 	cmd.Flags().StringVar(&f.relay, "relay", "",
 		"join through a relay at this address, using a pairing code instead of an address")
+	f.addResumeFlag(cmd, opts)
 	return cmd
+}
+
+// addResumeFlag offers --resume on the two ends of a live game. It is one
+// helper because the flag means the same thing at both: the game is the saved
+// one, and only the way the connection is made again is being chosen here.
+func (f *gameFlags) addResumeFlag(cmd *cobra.Command, opts *options) {
+	cmd.Flags().StringVar(&f.resume, "resume", "",
+		"continue this saved network game instead of starting a new one")
+	registerFlagCompletion(cmd, "resume", opts.gameIDCompletions)
+}
+
+// resumed resolves --resume into the stored game it names, and reports nil when
+// the flag was not given.
+//
+// The terms of a continued game come from its record, so a flag that would set
+// them differently is refused rather than quietly ignored: a player who passed
+// both meant one of the two, and playing the saved game on the saved terms
+// while appearing to accept the others is the reading that goes wrong later.
+func (f *gameFlags) resumed(cmd *cobra.Command, deps app.Deps, player string) (*app.RemoteResume, error) {
+	id := strings.TrimSpace(f.resume)
+	if id == "" {
+		if cmd.Flags().Changed("resume") {
+			return nil, errors.New("--resume needs the identifier of the saved game to continue")
+		}
+		return nil, nil
+	}
+	for _, name := range []string{"ruleset", "size", "side"} {
+		if cmd.Flags().Changed(name) {
+			return nil, fmt.Errorf("--%s cannot be given with --resume: a continued game keeps the terms it was played on", name)
+		}
+	}
+	if deps.Games == nil {
+		return nil, errors.New("there is nowhere to read saved games from")
+	}
+	sv, err := deps.Games.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	res, err := app.PrepareRemoteResume(sv, player)
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// listenAddr is the address a direct host binds, assembled from the interface
+// and the port, which are asked for separately because they are separate
+// choices: which of this machine's addresses answers, and where on it.
+func (f *gameFlags) listenAddr() (string, error) {
+	host := strings.TrimSpace(f.bind)
+	if trimmed, ok := strings.CutPrefix(host, "["); ok {
+		host = strings.TrimSuffix(trimmed, "]")
+	}
+	if host == "" {
+		return netplay.BindAddr(":" + strconv.Itoa(f.port))
+	}
+	return netplay.BindAddr(net.JoinHostPort(host, strconv.Itoa(f.port)))
 }
 
 // gaveUp turns a cancelled wait into a sentence a player can act on.
@@ -418,28 +564,14 @@ func gaveUp(ctx context.Context, waitingFor string, err error) error {
 	return err
 }
 
-// runRemoteGame builds the game screen for an established session.
-func runRemoteGame(cmd *cobra.Command, deps app.Deps, player string, session netplay.Session) error {
-	side := session.Side()
-	cfg := app.GameConfig{
-		Kind:  gamestore.Remote,
-		Rules: session.Rules(),
-		Seats: map[game.Player]app.Seat{
-			side:            {Profile: player, Label: player},
-			side.Opponent(): {Remote: true, Label: session.OpponentName()},
-		},
-		Session: session,
-	}
+// runRemoteGame runs the game screen for an established session. The
+// configuration is built by the caller because a fresh connection and a
+// continued one are two different games: one has no stored row behind it, and
+// the other must go back into the row it came out of.
+func runRemoteGame(cmd *cobra.Command, deps app.Deps, cfg app.GameConfig) error {
 	return runScreens(cmd, deps, func(deps app.Deps) (app.Screen, error) {
 		return app.NewGameScreen(deps, cfg)
 	})
-}
-
-func portOf(addr string) string {
-	if i := strings.LastIndex(addr, ":"); i >= 0 {
-		return addr[i+1:]
-	}
-	return addr
 }
 
 func newPlayCorrespondenceCommand(opts *options) *cobra.Command {
@@ -461,7 +593,7 @@ rather than corrupting the game.
   twixtui play correspondence --join CODE      accept an invitation
   twixtui play correspondence                  open a game that is waiting for you
   twixtui play correspondence --game ID        open that game, when several are open`,
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deps, player, err := opts.deps()
 			if err != nil {

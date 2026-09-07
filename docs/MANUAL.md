@@ -159,6 +159,12 @@ Every command accepts these:
 | `--theme NAME` | Theme for this run only; does not change the saved choice. |
 | `--no-color` | No colour. `NO_COLOR` in the environment does the same. |
 
+Explicitly empty values are errors: `--config ""`, `--profile ""`, and
+`--theme ""` do not silently fall back to another directory, player or scheme.
+The same applies to a present-but-empty `TWIXTUI_CONFIG_DIR`; unset it to use
+the default location. This matters in scripts whose configuration variable may
+not have been set.
+
 ## The board
 
 A 24×24 game in progress, drawn at the compact scale, which puts neighbouring holes
@@ -200,6 +206,11 @@ starts from:
 The same position again, in the colours the `classic` theme actually emits.
 Colour only ever reinforces the glyphs; no distinction on this board depends
 on it, which is what lets `mono` and `NO_COLOR` drop it entirely.
+
+Boards wider than 26 columns use two header rows: read a column's letters
+vertically, so `AA`, `AB` and later labels stay separate at the compact scale.
+The letters remain directly above their holes; the board and link geometry do
+not change. A narrow terminal scrolls the viewport rather than wrapping it.
 
 `●` is the vertical player, who connects the top border row to the bottom one;
 `○` is the horizontal player, connecting left to right. `·` is an empty hole,
@@ -352,6 +363,13 @@ descending order of directness, and all three carry the same game protocol.
 The listening side has to be reachable: the same LAN, a tailnet or WireGuard address, or
 a forwarded port.
 
+Direct hosting listens on all interfaces by default. Use `--bind` to choose a
+specific interface address and `--port` to choose its port, for example
+`twixtui play host --bind 127.0.0.1 --port 4270` for local-only play or testing.
+Direct play has no transport authentication or encryption: a reachable client
+receives the host's player name and rules during the initial handshake. Use a
+trusted network or a VPN when those details should not be public.
+
 ```
 # on the host's machine, listening on the default port 4270
 twixtui play host --side vertical
@@ -388,9 +406,26 @@ chooses the ruleset, the board size and its own side — `--ruleset`, `--size`,
 `--side`, with `--port` for a direct game on a port other than 4270 — and the
 joining copy takes them from the handshake. Protocol version and ruleset are
 compared as part of that handshake, so mismatched builds or mismatched rules are
-refused before the first move rather than desyncing halfway through a game. If a
-live connection drops, reconnecting replays the missing moves — and refuses to
-continue if the two transcripts disagree.
+refused before the first move rather than desyncing halfway through a game.
+
+**Resuming a live game.** An interrupted game stays in each player's saved-game
+list. Both players reconnect with their own saved ID, rather than starting a
+fresh host/join pair:
+
+```
+# the player listening for the reconnection
+twixtui play host --resume <host-saved-id>
+
+# the other player's copy of the same game
+twixtui play join host.example:4270 --resume <guest-saved-id>
+```
+
+For a relay reconnection, add `--relay relay.example:4271` on both sides and
+give the joining player the new complete pairing code. The saved game restores
+the rules, board size, players and sides; the two copies reconcile any missing
+moves and refuse divergent transcripts. A successful resume updates the
+existing saved-game IDs instead of creating a new game. The menu's
+**Continue a saved game** route also offers reconnection setup for remote games.
 
 **Correspondence.** No live connection at all, and no network requirement whatsoever.
 Each move produces a short checksummed code beginning `TWX-`, which you send to your
@@ -476,8 +511,13 @@ replayed, and it does not reach the standings.
 
 ```
 twixtui leaderboard show --limit 20      # standings, best first
-twixtui leaderboard reset --yes          # wipe the record
+twixtui leaderboard reset --yes          # clear ratings/results, not saved games
 ```
+
+`--limit 0` shows all entries; negative limits are refused. A profile may be
+deleted without deleting its historical results: `leaderboard show --player
+NAME` and its completion still find participants retained in the result log.
+Remote players remain distinct from local profiles with the same visible name.
 
 Saved games are kept too, and can be moved between machines:
 
@@ -492,6 +532,19 @@ twixtui game delete <id>
 
 The identifier is the short string `game list` prints in its first column, such
 as `zrh7y174`.
+
+Import accepts exactly one complete record and stores its checked canonical
+form. Duplicate fields and concatenated records are refused. Export validates
+the stored record before writing anything, including before replacing an
+`--out` file.
+File and standard-input imports stop at a 1 MiB record limit; invalid-input
+diagnostics include only a bounded excerpt. The limit is a resource-safety
+policy, not a claim that custom histories can never grow larger.
+
+The record's digests detect corruption or a mismatch between the declared game
+and its replay. They are not signatures or anti-cheat protection. Local labels
+such as player names and storage metadata live outside that record check and
+remain trusted local state.
 
 ## Rulesets
 
@@ -536,6 +589,9 @@ twixtui theme set slate
 
 `--theme NAME` overrides the saved choice for one run; `--no-color` and `NO_COLOR`
 override both.
+
+`theme show` includes colour samples when writing to a colour-enabled terminal.
+Redirected output and explicit no-colour output remain plain text.
 
 ## The cover
 

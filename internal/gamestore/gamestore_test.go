@@ -356,3 +356,142 @@ func TestAFinishedGameCannotBeReopened(t *testing.T) {
 		t.Errorf("rewriting the finished game was refused: %v", err)
 	}
 }
+
+// ongoingRecord is the encoded record of a game that has not finished, for the
+// tests that need a write carrying an earlier position.
+func ongoingRecord(t *testing.T) string {
+	t.Helper()
+	rs := game.Std
+	rs.Size = 8
+	g, err := game.ReplayTranscript(rs, "D1; A2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Result().Over() {
+		t.Fatal("the fixture game is not still being played")
+	}
+	rec, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec.Encode()
+}
+
+// TestPutStoresTheCheckedRecordAndNothingElse covers what the store keeps when
+// a caller hands it bytes a decoder was lenient about. The reader tolerates
+// carriage returns, comments, blank lines and fields in any order, so those
+// bytes reach Put; storing them would hand them back out on the next export,
+// and anything a record's digests do not cover has no business surviving a
+// round trip through the store.
+func TestPutStoresTheCheckedRecordAndNothingElse(t *testing.T) {
+	s := newStore(t)
+	canonical, _ := sampleRecord(t)
+
+	// The same record, written the long way round: fields reversed, carriage
+	// returns, a comment and a trailing blank line.
+	lines := strings.Split(strings.TrimRight(canonical, "\n"), "\n")
+	lenient := "# exported by hand\r\n"
+	for i := len(lines) - 1; i >= 0; i-- {
+		lenient += lines[i] + "\r\n"
+	}
+	lenient += "\r\n"
+	if lenient == canonical {
+		t.Fatal("the lenient fixture is the canonical encoding, so it proves nothing")
+	}
+
+	id := "canon001"
+	if err := s.Put(Saved{ID: id, Kind: Imported, Record: lenient, Finished: true}); err != nil {
+		t.Fatalf("a record written the long way round was refused: %v", err)
+	}
+	back, err := s.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Record != canonical {
+		t.Errorf("the store kept the bytes it was handed:\n%q\nwant the canonical encoding:\n%q", back.Record, canonical)
+	}
+
+	// Two records in one string are not one game, and the store is the last
+	// place that could keep them.
+	if err := s.Put(Saved{ID: "canon002", Record: canonical + canonical}); err == nil {
+		t.Error("the store accepted two records as one game")
+	}
+}
+
+// TestEditingTheFinishedLabelDoesNotReopenAGame covers the one contradiction in
+// a stored game's local labelling that loses data rather than mislabelling a
+// listing. The label saying a game is over is ordinary local state anyone may
+// edit; the result inside the record is covered by a digest. So the store asks
+// the record, and a write carrying the position from before the result is
+// refused however the label reads.
+func TestEditingTheFinishedLabelDoesNotReopenAGame(t *testing.T) {
+	s := newStore(t)
+	finished, _ := sampleRecord(t)
+	id := "relabel1"
+	if err := s.Put(Saved{ID: id, Kind: Hotseat, Player: "Ann", Opponent: "Ben", Record: finished, Finished: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(s.Dir(), id+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(string(raw), `"finished": true`, `"finished": false`, 1)
+	if edited == string(raw) {
+		t.Fatal("the stored game does not carry the label being edited")
+	}
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Put(Saved{ID: id, Kind: Hotseat, Player: "Ann", Opponent: "Ben", Record: ongoingRecord(t)}); err == nil {
+		t.Error("an earlier position was written over a game whose record holds a result")
+	}
+	back, err := s.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := back.Game()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.Result().Over() {
+		t.Error("the recorded result was lost")
+	}
+}
+
+// TestARowThatNamesAnotherGameIsRefused covers the identifier, which is the one
+// local label the program uses to name a file. A row claiming an identifier
+// that is not its own file's cannot be resolved or replaced, and a write from it
+// would land on whichever game it names.
+func TestARowThatNamesAnotherGameIsRefused(t *testing.T) {
+	s := newStore(t)
+	record, _ := sampleRecord(t)
+	id := "aaaa1111"
+	if err := s.Put(Saved{ID: id, Kind: Hotseat, Record: record, Finished: true}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir(), id+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(string(raw), `"id": "`+id+`"`, `"id": "bbbb2222"`, 1)
+	if edited == string(raw) {
+		t.Fatal("the stored game does not carry the identifier being edited")
+	}
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Get(id); err == nil {
+		t.Error("a row calling itself another game was handed back")
+	}
+	if got := s.List(); len(got) != 0 {
+		t.Errorf("the listing offers a game nothing could replace: %+v", got)
+	}
+	if _, err := s.Resolve("aaaa"); err == nil {
+		t.Error("the abbreviation resolved to a row that cannot be written back")
+	}
+}

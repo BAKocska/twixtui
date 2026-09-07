@@ -666,26 +666,38 @@ func TestMenuResumesASavedGame(t *testing.T) {
 	}
 }
 
-// TestMenuRefusesToResumeANetworkGameWithoutItsConnection: the game screen
-// rejects a remote seat with no session, so the menu must not offer one.
-func TestMenuRefusesToResumeANetworkGameWithoutItsConnection(t *testing.T) {
+// TestMenuOffersANetworkGameItsConnectionBack replaces an assertion that has
+// been invalidated: the continue list used to grey a network game out and the
+// refusal promised a way to host or join it again that did not exist. It is
+// now offered, and choosing it asks how the connection is to be made.
+//
+// What that connection then does with the stored game is
+// TestMenuContinuesANetworkGameThroughTheContinueList in remote_test.go.
+func TestMenuOffersANetworkGameItsConnectionBack(t *testing.T) {
 	d := shellTestDeps(t)
-	mnSaveGame(t, d, gamestore.Remote, "Balint", leaderboard.RemoteName("Zsofia"))
+	sv := mnSaveGame(t, d, gamestore.Remote, "Balint", leaderboard.RemoteName("Zsofia"))
 	m := mnMenu(t, d, 100, 30)
 	mnPick(t, m, "Continue a saved game")
 
 	c := mnChooser(t, m)
-	if len(c.opts) != 1 || !c.opts[0].disabled {
-		t.Fatalf("the network game is offered as playable: %+v", c.opts)
+	if len(c.opts) != 1 || c.opts[0].disabled {
+		t.Fatalf("the network game is not offered: %+v", c.opts)
 	}
-	if cmd := shellSend(t, m, "enter"); cmd != nil {
-		t.Fatalf("choosing it produced %T", cmd())
+	if !strings.Contains(c.opts[0].help, "connection back") {
+		t.Errorf("the row does not say what choosing it does: %q", c.opts[0].help)
 	}
-	if !strings.Contains(m.message, "connection") {
-		t.Errorf("the refusal does not explain itself: %q", m.message)
+	shellSend(t, m, "enter")
+	if got := mnChooser(t, m).title; got != "How do you want to reconnect?" {
+		t.Fatalf("choosing it opened %q", got)
 	}
-	if !strings.Contains(m.View().Content, "connection") {
-		t.Errorf("the refusal is not on screen:\n%s", m.View().Content)
+	if !strings.Contains(m.message, sv.ID) {
+		t.Errorf("the form does not name the game being continued: %q", m.message)
+	}
+	// Escape walks back to the list the game was chosen from, as it does
+	// everywhere else in these forms.
+	shellSend(t, m, "esc")
+	if got := mnChooser(t, m).title; got != "Continue a saved game" {
+		t.Errorf("escape from the reconnection question landed on %q", got)
 	}
 }
 
@@ -1006,10 +1018,25 @@ func TestMenuNetworkFormAsksForWhatItNeeds(t *testing.T) {
 	if !ok || code.title != "Their pairing code" {
 		t.Fatalf("after the relay the form is %T", m.form)
 	}
+	// A code too short to carry a key is refused beside the field rather than
+	// echoed over a promise to wait for an opponent who cannot arrive.
 	mnTypeInto(t, m, "ABCD")
 	shellSend(t, m, "enter")
-	if m.pending.target != "ABCD" {
-		t.Fatalf("the pairing code is %q", m.pending.target)
+	if _, still := m.form.(*textForm); !still {
+		t.Fatalf("a code that cannot pair was accepted, leaving %T", m.form)
+	}
+	if m.message == "" {
+		t.Error("a code that cannot pair was refused without saying why")
+	}
+	for range len("ABCD") {
+		shellSend(t, m, "backspace")
+	}
+
+	pairing := netplay.PairingCode()
+	mnTypeInto(t, m, pairing)
+	shellSend(t, m, "enter")
+	if m.pending.target != pairing {
+		t.Fatalf("the pairing code is %q, want %q", m.pending.target, pairing)
 	}
 
 	if _, ok := m.form.(*waitForm); !ok {
@@ -1189,13 +1216,32 @@ func TestMenuFitsEverySize(t *testing.T) {
 		shellSend(t, f, "enter")
 		shellAssertFits(t, "menu text field with a complaint", f.View().Content, w, h)
 
-		// And the wait, whose lines are the longest text on the screen.
+		// And the wait, whose lines are the longest text on the screen. The
+		// code has to be one that pairs, or the form refuses it and the wait
+		// this measures is never drawn.
 		mnTypeInto(t, f, "relay.example:4271")
 		shellSend(t, f, "enter")
-		mnTypeInto(t, f, "ABCD")
+		mnTypeInto(t, f, netplay.PairingCode())
 		shellSend(t, f, "enter")
+		if _, waiting := f.form.(*waitForm); !waiting {
+			t.Fatalf("at %dx%d the wait was never reached: %T, %q", w, h, f.form, f.message)
+		}
 		shellAssertFits(t, "menu waiting", f.View().Content, w, h)
 		shellSend(t, f, "esc")
+
+		// The host's own address field, which the direct route reaches after
+		// the terms of the game and whose note is the longest a field carries.
+		b := mnMenu(t, d, w, h)
+		mnPick(t, b, "Play")
+		mnPick(t, b, "someone over the network")
+		mnPick(t, b, "wait for them to connect to me")
+		mnPick(t, b, "vertical")
+		mnPick(t, b, "std")
+		mnPick(t, b, "12x12")
+		if _, asking := b.form.(*textForm); !asking {
+			t.Fatalf("at %dx%d the host was not asked where to listen: %T", w, h, b.form)
+		}
+		shellAssertFits(t, "menu host address field", b.View().Content, w, h)
 	}
 }
 

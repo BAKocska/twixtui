@@ -1,6 +1,7 @@
 package game
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"strings"
 	"testing"
@@ -272,4 +273,253 @@ func TestPositionDigestIsStableAcrossReplay(t *testing.T) {
 	if after := PositionDigest(g); after != before {
 		t.Errorf("digest after undo and redo = %s, want %s", after, before)
 	}
+}
+
+// TestDecodeRejectsMoreThanOneRecord covers the file holding two records. It
+// used to read as whichever record came last, with the bytes of the others kept
+// beside it as though they had been checked — and handed back out again by
+// whatever exported the game afterwards.
+func TestDecodeRejectsMoreThanOneRecord(t *testing.T) {
+	sound := encodeSample(t, playSample(t))
+	rs := Std
+	rs.Size = 24
+	fresh := encodeSample(t, MustNew(rs))
+
+	// The positive control: one record on its own is still read, so a decoder
+	// that refused everything could not pass this test.
+	if _, err := DecodeRecord(sound); err != nil {
+		t.Fatalf("a single sound record was refused: %v", err)
+	}
+
+	for name, body := range map[string]string{
+		"the same record twice":     sound + sound,
+		"a second, different game":  sound + fresh,
+		"three records then a wrap": sound + sound + sound + fresh,
+		"one field written twice":   sound + "moves D1\n",
+	} {
+		if _, err := DecodeRecord(body); err == nil {
+			t.Errorf("%s was read as one record", name)
+		} else if !strings.Contains(err.Error(), "twice") {
+			t.Errorf("%s was refused for something else: %v", name, err)
+		}
+		if _, _, err := LoadRecord(body); err == nil {
+			t.Errorf("%s loaded as a game", name)
+		}
+	}
+
+	// The same must hold inside the ruleset, which is its own field list.
+	doubled := strings.Replace(sound, "ruleset size=8;", "ruleset size=8;size=8;", 1)
+	if doubled == sound {
+		t.Fatal("the fixture does not contain the ruleset field being doubled")
+	}
+	if _, err := DecodeRecord(doubled); err == nil {
+		t.Error("a ruleset naming the board size twice was accepted")
+	}
+}
+
+// TestDecodeRequiresTheMovesField pins the field that used to be optional. A
+// record without it was refused for its digest, which reads as tampering rather
+// than as the missing field it is; an empty move list, which is what a game
+// nobody has played yet has, must still be read.
+func TestDecodeRequiresTheMovesField(t *testing.T) {
+	sound := encodeSample(t, playSample(t))
+	var kept []string
+	for _, line := range strings.Split(sound, "\n") {
+		if !strings.HasPrefix(line, "moves ") {
+			kept = append(kept, line)
+		}
+	}
+	stripped := strings.Join(kept, "\n")
+	if stripped == sound {
+		t.Fatal("the fixture has no moves line to strip")
+	}
+	_, err := DecodeRecord(stripped)
+	if err == nil {
+		t.Fatal("a record with no moves field was accepted")
+	}
+	if !strings.Contains(err.Error(), "moves") {
+		t.Errorf("the refusal reads %q, which does not name the missing field", err)
+	}
+
+	rs := Std
+	rs.Size = 12
+	unplayed := encodeSample(t, MustNew(rs))
+	if _, _, err := LoadRecord(unplayed); err != nil {
+		t.Errorf("a record of a game with no moves yet was refused: %v", err)
+	}
+}
+
+// TestOversizedInputIsRefusedBeforeItIsHeld covers what a record loader does
+// with something that is not a record: a device that never ends, or a file
+// large enough that reading it whole is the problem. The bound has to apply
+// while reading, so the assertion is on how much was read as well as on the
+// refusal.
+func TestOversizedInputIsRefusedBeforeItIsHeld(t *testing.T) {
+	// A run of junk is refused by the parser whatever the limit is, so the
+	// oversized case has to be a record the parser would otherwise accept: a
+	// sound one padded past the limit with comment lines, which decoding
+	// skips. Only the size check can refuse this.
+	sound := encodeSample(t, playSample(t))
+	padding := strings.Repeat("# padding\n", 1+(MaxRecordBytes-len(sound))/len("# padding\n"))
+	oversized := sound + padding
+	if len(oversized) <= MaxRecordBytes {
+		t.Fatalf("the padded record is %d bytes, which does not exceed the %d-byte limit", len(oversized), MaxRecordBytes)
+	}
+	if _, err := DecodeRecord(oversized); err == nil {
+		t.Error("a record larger than the limit was decoded")
+	} else if !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("the refusal reads %q, which does not name the size", err)
+	}
+	if _, _, err := ReadRecord(strings.NewReader(oversized)); err == nil {
+		t.Error("a stream larger than the limit was read as a record")
+	}
+	// The same record inside the limit still loads, so the refusal above is
+	// the size and not the padding.
+	if _, _, err := LoadRecord(sound + "# padding\n"); err != nil {
+		t.Errorf("a commented record inside the limit was refused: %v", err)
+	}
+
+	endless := &countingReader{}
+	if _, _, err := ReadRecord(endless); err == nil {
+		t.Error("an input that never ends was read as a record")
+	}
+	if endless.read > MaxRecordBytes+1 {
+		t.Errorf("ReadRecord took %d bytes from an endless input, which is past the %d-byte limit",
+			endless.read, MaxRecordBytes+1)
+	}
+
+	if _, _, err := ReadRecord(strings.NewReader(sound)); err != nil {
+		t.Errorf("a sound record read from a stream was refused: %v", err)
+	}
+}
+
+// countingReader is an input that never ends, like a character device, and
+// remembers how much of it was taken.
+type countingReader struct{ read int }
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'Z'
+	}
+	r.read += len(p)
+	return len(p), nil
+}
+
+// TestDiagnosticsDoNotRepeatTheInput covers every quoted diagnostic a record
+// can reach. A record comes from a file or a pipe somebody else wrote, so an
+// error that echoes the offending text back in full is a copy of the input —
+// and escaping expands unprintable bytes several times over on the way to the
+// terminal.
+func TestDiagnosticsDoNotRepeatTheInput(t *testing.T) {
+	const bulk = 16 << 10
+	junk := strings.Repeat("Z", bulk)
+	rs := Std
+	rs.Size = 8
+	played, err := playSample(t).Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sound := played.Encode()
+
+	// A record whose digest matches its contents, so that replay does the
+	// refusing and its own diagnostics are reached at all.
+	consistent := func(r Record) string {
+		r.Version = RecordVersion
+		r.Digest = r.digest()
+		return r.Encode()
+	}
+	// swap replaces one piece of the sound record, failing the test rather than
+	// quietly producing a valid record if the fixture ever stops containing it.
+	swap := func(old, new string) string {
+		body := strings.Replace(sound, old, new, 1)
+		if body == sound {
+			t.Fatalf("the fixture does not contain %q", old)
+		}
+		return body
+	}
+
+	cases := []struct{ name, body string }{
+		{"an unknown field", junk + "\n"},
+		{"unprintable bytes", strings.Repeat("\x00", bulk)},
+		{"a bad version", "twixtui-record " + junk + "\n"},
+		{"a bad entry count", swap(fmt.Sprintf("entries %d", played.Entries), "entries "+junk)},
+		{"a stale digest", swap("digest ", "digest "+junk)},
+		{"a bad ruleset value", swap("size=8;", "size="+junk+";")},
+		{"an unknown outcome", swap("result "+outcomeNames[played.Outcome], "result "+junk)},
+		{"an unknown end reason", swap(reasonNames[played.Reason], junk)},
+		{"a move that is junk", consistent(Record{Ruleset: rs, Moves: junk, Outcome: Ongoing, Reason: NotOver, Position: "0", Entries: 0})},
+		{"a claimed position", consistent(Record{Ruleset: rs, Moves: "", Outcome: Ongoing, Reason: NotOver, Position: junk, Entries: 0})},
+	}
+	for _, c := range cases {
+		_, _, err := LoadRecord(c.body)
+		if err == nil {
+			t.Errorf("%s was accepted", c.name)
+			continue
+		}
+		if len(err.Error()) > 512 {
+			t.Errorf("%s produced a %d-byte diagnostic:\n%.200s…", c.name, len(err.Error()), err)
+		}
+		if strings.Contains(err.Error(), strings.Repeat("Z", 200)) {
+			t.Errorf("%s repeated its input back: %.200s…", c.name, err)
+		}
+	}
+}
+
+// TestAnOrdinaryFullBoardRecordFitsTheLimit is the control on MaxRecordBytes:
+// the limit exists to stop a loader materialising something that is not a
+// record, and it is worth nothing if it also refuses a real game on the widest
+// board this build offers. The projection from a sampled game's own density is
+// what makes this a check on the limit rather than on the sample: the sample is
+// a few hundred entries, a filled board is 2304.
+func TestAnOrdinaryFullBoardRecordFitsTheLimit(t *testing.T) {
+	rs := Std
+	rs.Size = MaxSize
+	g := MustNew(rs)
+	rng := rand.New(rand.NewPCG(11, 13))
+	for range 200 {
+		if g.Result().Over() {
+			break
+		}
+		ps := g.LegalPlacements(g.Turn())
+		if len(ps) == 0 {
+			break
+		}
+		if _, err := g.PlayPeg(ps[rng.IntN(len(ps))]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := rec.Encode()
+	if len(encoded) >= MaxRecordBytes {
+		t.Fatalf("a %d-entry game on a %dx%d board encodes to %d bytes, past the %d-byte limit",
+			rec.Entries, rs.Size, rs.Size, len(encoded), MaxRecordBytes)
+	}
+	if _, _, err := LoadRecord(encoded); err != nil {
+		t.Fatalf("the sampled record does not load: %v", err)
+	}
+
+	if rec.Entries == 0 {
+		t.Fatal("the sample played no entries, so there is nothing to project from")
+	}
+	perEntry := (len(rec.Moves) + rec.Entries - 1) / rec.Entries
+	overhead := len(encoded) - len(rec.Moves)
+	filled := overhead + perEntry*rs.Size*rs.Size
+	if filled >= MaxRecordBytes {
+		t.Errorf("at %d bytes an entry, a filled %dx%d board projects to %d bytes, which the %d-byte limit would refuse",
+			perEntry, rs.Size, rs.Size, filled, MaxRecordBytes)
+	}
+}
+
+// encodeSample is the encoded record of a game, for the tests that then damage
+// it in one specific way.
+func encodeSample(t *testing.T, g *Game) string {
+	t.Helper()
+	rec, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec.Encode()
 }

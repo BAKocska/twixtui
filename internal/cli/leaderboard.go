@@ -3,11 +3,14 @@ package cli
 import (
 	"fmt"
 	"strconv"
-	"text/tabwriter"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/BAKocska/twixtui/internal/leaderboard"
+	"github.com/BAKocska/twixtui/internal/profile"
+	"github.com/BAKocska/twixtui/internal/ui"
 )
 
 // openBoard opens the result log for the resolved configuration directory.
@@ -39,7 +42,12 @@ for more than beating the beginner.`,
 	show := &cobra.Command{
 		Use:   "show",
 		Short: "Show the standings, or one player's recent games",
-		Args:  cobra.NoArgs,
+		Long: `Show the standings, or one player's recent games.
+
+--player takes anybody the log holds games for, which is not the same set as
+the profiles on this machine: a deleted profile's games are still there, and so
+are the games of everyone met over the network.`,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			board, err := opts.openBoard()
 			if err != nil {
@@ -52,17 +60,17 @@ for more than beating the beginner.`,
 				if err != nil {
 					return err
 				}
-				name, err := resolveProfileName(store, player)
+				who, err := resolveHistoryName(historyParticipants(store, board), player)
 				if err != nil {
 					return err
 				}
-				history := board.History(name, limit)
+				history := board.History(who.stored, limit)
 				if len(history) == 0 {
-					_, err := fmt.Fprintf(out, "%s has no recorded games yet\n", name)
+					_, err := fmt.Fprintf(out, "%s has no recorded games yet\n", who.display)
 					return err
 				}
-				w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "WHEN\tOPPONENT\tSIDE\tRESULT\tMOVES")
+				rows := make([][]string, 0, len(history)+1)
+				rows = append(rows, []string{"WHEN", "OPPONENT", "SIDE", "RESULT", "MOVES"})
 				for _, r := range history {
 					// Stored in UTC, which is what keeps two machines' logs
 					// comparable, but read here by one person on one machine:
@@ -70,12 +78,15 @@ for more than beating the beginner.`,
 					// and "game list". Rendering the stored value as it stands
 					// dates every game an offset away from when the player
 					// remembers playing it, with nothing on the row to say so.
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n",
+					rows = append(rows, []string{
 						r.Played.Local().Format("2006-01-02 15:04"),
 						leaderboard.DisplayName(r.Opponent),
-						r.Side, r.Outcome, r.Moves)
+						r.Side,
+						string(r.Outcome),
+						strconv.Itoa(r.Moves),
+					})
 				}
-				return w.Flush()
+				return ui.WriteTable(out, rows, 2)
 			}
 			standings := board.Standings()
 			players, bots := standings.Players, standings.Bots
@@ -95,56 +106,58 @@ for more than beating the beginner.`,
 				players = players[:limit]
 			}
 
-			const columns = "RATING\tPLAYED\tWON\tLOST\tDREW\tSCORE"
-			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			head := "PLAYER\t" + columns
-			if ranked {
-				head = "#\t" + head
-			}
-			fmt.Fprintln(w, head)
+			rows := make([][]string, 0, len(players)+1)
+			rows = append(rows, standingHead("PLAYER", ranked))
 			for i, s := range players {
-				pos := ""
+				row := standingRow(s)
 				if ranked {
-					pos = strconv.Itoa(i+1) + "\t"
+					row = append([]string{strconv.Itoa(i + 1)}, row...)
 				}
-				fmt.Fprintf(w, "%s%s\t%d\t%d\t%d\t%d\t%d\t%.0f%%\n",
-					pos, leaderboard.DisplayName(s.Name), s.Rating,
-					s.Played, s.Won, s.Lost, s.Drawn, s.WinRate*100)
+				rows = append(rows, row)
 			}
-			if len(bots) > 0 {
-				// A line with no tab ends the run of columns, so the two tables
-				// are measured apart by the one writer.
-				fmt.Fprint(w, "\nBots are not ranked: a tier's rating is fixed, not earned.\n\n")
-				fmt.Fprintln(w, "BOT\t"+columns)
-				for _, s := range bots {
-					fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t%.0f%%\n",
-						leaderboard.DisplayName(s.Name), s.Rating,
-						s.Played, s.Won, s.Lost, s.Drawn, s.WinRate*100)
-				}
+			if err := ui.WriteTable(out, rows, 2); err != nil {
+				return err
 			}
-			return w.Flush()
+			if len(bots) == 0 {
+				return nil
+			}
+			// The bots are a second table rather than more rows of the first:
+			// their column is a list of tiers, and it is measured on its own so
+			// that a fixed anchor never lines up under an earned rating as
+			// though the two were the same kind of number.
+			if _, err := fmt.Fprint(out, "\nBots are not ranked: a tier's rating is fixed, not earned.\n\n"); err != nil {
+				return err
+			}
+			rows = make([][]string, 0, len(bots)+1)
+			rows = append(rows, standingHead("BOT", false))
+			for _, s := range bots {
+				rows = append(rows, standingRow(s))
+			}
+			return ui.WriteTable(out, rows, 2)
 		},
 	}
 	show.Flags().IntVar(&limit, "limit", 0, "show at most this many players (0 means all)")
 	show.Flags().StringVar(&player, "player", "", "show this player's recent games instead of the standings")
-	registerFlagCompletion(show, "player", opts.profileCompletions)
+	registerFlagCompletion(show, "player", opts.historyCompletions)
 
 	var confirm bool
 	reset := &cobra.Command{
 		Use:   "reset",
-		Short: "Delete every recorded game",
-		Long: `Delete every recorded game.
+		Short: "Delete the result log the ratings come from",
+		Long: `Delete the result log the ratings come from.
 
-This throws away the whole result log, which is where ratings come from, so it
-cannot be undone. It needs --yes so that a mistyped command cannot do it.`,
-		Args: cobra.NoArgs,
+This throws away every recorded result, which is where ratings come from, so it
+cannot be undone. Saved games are kept: they are files of their own, and this
+deletes the record of games that finished rather than the games themselves. It
+needs --yes so that a mistyped command cannot do it.`,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			board, err := opts.openBoard()
 			if err != nil {
 				return err
 			}
 			if !confirm {
-				return fmt.Errorf("this deletes every recorded game and cannot be undone; pass --yes to do it")
+				return fmt.Errorf("this deletes every recorded result, and the ratings with them, and cannot be undone; pass --yes to do it")
 			}
 			if err := board.Reset(); err != nil {
 				return err
@@ -157,4 +170,219 @@ cannot be undone. It needs --yes so that a mistyped command cannot do it.`,
 
 	cmd.AddCommand(show, reset)
 	return cmd
+}
+
+// standingHead is the heading row of a standings table, under the name the
+// first column holds.
+func standingHead(first string, ranked bool) []string {
+	head := []string{first, "RATING", "PLAYED", "WON", "LOST", "DREW", "SCORE"}
+	if ranked {
+		return append([]string{"#"}, head...)
+	}
+	return head
+}
+
+// standingRow is one participant's line: the name a reader knows them by, and
+// the numbers behind it.
+func standingRow(s leaderboard.Standing) []string {
+	return []string{
+		leaderboard.DisplayName(s.Name),
+		strconv.Itoa(s.Rating),
+		strconv.Itoa(s.Played),
+		strconv.Itoa(s.Won),
+		strconv.Itoa(s.Lost),
+		strconv.Itoa(s.Drawn),
+		fmt.Sprintf("%.0f%%", s.WinRate*100),
+	}
+}
+
+// historyParticipant is somebody the result log can be asked about.
+type historyParticipant struct {
+	// stored is the name the log records, encoding prefix and all, which is
+	// what the log has to be asked by.
+	stored string
+	// display is what that participant is called on screen.
+	display string
+	// live says a profile of this name still exists on this machine.
+	live bool
+	// lastUsed is when the profile last played, for a live one.
+	lastUsed time.Time
+	// games is how many results the log holds, for a participant with no
+	// profile to date them by.
+	games int
+}
+
+// historyParticipants lists everyone whose games can be asked for: the profiles
+// on this machine first, then the names only the log still holds.
+//
+// The log is the history and a profile is only a name to play under today.
+// Deleting a profile deliberately does not delete its games, and an opponent
+// met over the network never had a profile here at all, so resolving --player
+// against live profiles alone made exactly those histories unreachable — the
+// ones somebody is most likely to be looking a name up for.
+//
+// Bots are left out. Standings keeps them apart from the people for the same
+// reason: a tier's rating is a program constant rather than a record of play,
+// and every tier that has been played is already printed under the standings.
+func historyParticipants(store *profile.Store, board *leaderboard.Board) []historyParticipant {
+	profiles := store.List()
+	out := make([]historyParticipant, 0, len(profiles)+4)
+	for _, p := range profiles {
+		out = append(out, historyParticipant{
+			stored:   p.Name,
+			display:  p.Name,
+			live:     true,
+			lastUsed: p.LastUsed,
+		})
+	}
+	for _, s := range board.Standings().Players {
+		if _, ok := store.Get(s.Name); ok {
+			// Already listed, under the spelling the profile carries.
+			continue
+		}
+		out = append(out, historyParticipant{
+			stored:  s.Name,
+			display: leaderboard.DisplayName(s.Name),
+			games:   s.Played,
+		})
+	}
+	return out
+}
+
+// describe is what a shell shows beside a completed --player value, so that a
+// name nobody recognises can be told from one that is merely spelled
+// differently, and a networked opponent from the local player they share a
+// name with.
+func (h historyParticipant) describe() string {
+	switch {
+	case h.live:
+		return h.display + ", " + lastPlayed(h.lastUsed)
+	case strings.HasPrefix(h.stored, leaderboard.RemotePrefix):
+		return h.display + ", " + recordedGames(h.games)
+	default:
+		return h.display + ", no longer a profile, " + recordedGames(h.games)
+	}
+}
+
+func recordedGames(n int) string {
+	if n == 1 {
+		return "1 recorded game"
+	}
+	return strconv.Itoa(n) + " recorded games"
+}
+
+// resolveHistoryName turns what somebody typed into exactly one participant.
+//
+// An exact identity is taken first and in one order — the name as the log
+// stores it, then the name as it is shown, then a networked player's bare name
+// — so that a local profile and a networked opponent who go by the same name
+// never make each other unreachable, and neither is silently answered with the
+// other's games. Only then is the loose search asked, which is the same matcher
+// profile names are found by rather than a second one that would find a
+// different profile from the same typo.
+func resolveHistoryName(participants []historyParticipant, query string) (historyParticipant, error) {
+	if strings.TrimSpace(query) == "" {
+		return historyParticipant{}, fmt.Errorf("no player name given; run twixtui leaderboard show to see who has played")
+	}
+	if h, ok := exactParticipant(participants, query); ok {
+		return h, nil
+	}
+	matches := profile.SearchProfiles(participantProfiles(participants), query)
+	if len(matches) == 1 {
+		if h, ok := participantNamed(participants, matches[0].Profile.Name); ok {
+			return h, nil
+		}
+	}
+	if len(matches) == 0 {
+		return historyParticipant{}, fmt.Errorf("no recorded player matches %q; run twixtui leaderboard show to see who has played", query)
+	}
+	shown := make([]string, 0, len(matches))
+	for _, m := range matches {
+		shown = append(shown, m.Profile.Name)
+	}
+	return historyParticipant{}, fmt.Errorf("%q matches several recorded players: %s", query, strings.Join(shown, ", "))
+}
+
+// exactParticipant finds the one participant a name identifies outright, trying
+// the three names a participant answers to in order of how exactly they say
+// which participant is meant. A name that identifies two of them at one level
+// identifies neither, and is left to the loose search to report.
+func exactParticipant(participants []historyParticipant, query string) (historyParticipant, bool) {
+	key := foldName(query)
+	for _, nameOf := range []func(historyParticipant) string{
+		func(h historyParticipant) string { return h.stored },
+		func(h historyParticipant) string { return h.display },
+		func(h historyParticipant) string { return leaderboard.BareName(h.stored) },
+	} {
+		var found historyParticipant
+		hits := 0
+		for _, h := range participants {
+			if foldName(nameOf(h)) == key {
+				found, hits = h, hits+1
+			}
+		}
+		if hits == 1 {
+			return found, true
+		}
+	}
+	return historyParticipant{}, false
+}
+
+// participantProfiles presents the participants to the profile matcher, under
+// the names they are shown by: a query is typed against what was on screen, and
+// the stored encoding is not something anybody reads.
+func participantProfiles(participants []historyParticipant) []profile.Profile {
+	out := make([]profile.Profile, 0, len(participants))
+	for _, h := range participants {
+		out = append(out, profile.Profile{Name: h.display, LastUsed: h.lastUsed})
+	}
+	return out
+}
+
+// participantNamed finds the participant shown under a display name, and
+// reports nothing if two are, so that a coincidence of names is answered as the
+// ambiguity it is rather than by picking one.
+func participantNamed(participants []historyParticipant, display string) (historyParticipant, bool) {
+	var found historyParticipant
+	hits := 0
+	for _, h := range participants {
+		if h.display == display {
+			found, hits = h, hits+1
+		}
+	}
+	return found, hits == 1
+}
+
+// foldName is the identity of a participant name: lower-cased with runs of
+// whitespace collapsed. It is the rule the profile store's duplicate detection
+// and the result log's participant keys both use, stated here because comparing
+// a name from one against a name from the other happens on this side and
+// neither package's own rule is reachable from outside it.
+func foldName(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(name), " "))
+}
+
+// historyCompletions completes a --player value with everybody the log can be
+// asked about, live profile or not, so that a history that outlived its profile
+// can still be found by pressing TAB.
+func (o *options) historyCompletions(_ *cobra.Command, _ []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	store, err := o.openProfiles()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+	board, err := o.openBoard()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+	participants := historyParticipants(store, board)
+	matches := profile.SearchProfiles(participantProfiles(participants), toComplete)
+	out := make([]cobra.Completion, 0, len(matches))
+	for _, m := range matches {
+		h, ok := participantNamed(participants, m.Profile.Name)
+		if !ok {
+			continue
+		}
+		out = append(out, cobra.CompletionWithDesc(m.Profile.Name, h.describe()))
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
 }

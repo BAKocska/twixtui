@@ -38,12 +38,12 @@ func ParseColumn(s string) (int, error) {
 	// aliases onto a valid column.
 	const maxLetters = 2
 	if len(s) > maxLetters {
-		return 0, fmt.Errorf("column name %q is too long: at most %d letters", s, maxLetters)
+		return 0, fmt.Errorf("column name %q is too long: at most %d letters", excerpt(s), maxLetters)
 	}
 	col := 0
 	for _, r := range s {
 		if r < 'A' || r > 'Z' {
-			return 0, fmt.Errorf("invalid column name %q", s)
+			return 0, fmt.Errorf("invalid column name %q", excerpt(s))
 		}
 		col = col*26 + int(r-'A') + 1
 	}
@@ -66,7 +66,7 @@ func ParsePoint(s string) (Point, error) {
 		split++
 	}
 	if split == 0 || split == len(s) {
-		return Point{}, fmt.Errorf("malformed hole name %q: expected a column letter followed by a row number", s)
+		return Point{}, fmt.Errorf("malformed hole name %q: expected a column letter followed by a row number", excerpt(s))
 	}
 	col, err := ParseColumn(s[:split])
 	if err != nil {
@@ -74,7 +74,7 @@ func ParsePoint(s string) (Point, error) {
 	}
 	row, err := strconv.Atoi(s[split:])
 	if err != nil {
-		return Point{}, fmt.Errorf("malformed row number in %q", s)
+		return Point{}, fmt.Errorf("malformed row number in %q", excerpt(s))
 	}
 	if row < 1 {
 		return Point{}, fmt.Errorf("row numbers start at 1, got %d", row)
@@ -94,7 +94,7 @@ func (l Link) String() string {
 func ParseLink(s string) (Link, error) {
 	sep := strings.IndexAny(s, ":-")
 	if sep < 0 {
-		return Link{}, fmt.Errorf("malformed link %q: expected two holes joined by ':'", s)
+		return Link{}, fmt.Errorf("malformed link %q: expected two holes joined by ':'", excerpt(s))
 	}
 	a, err := ParsePoint(s[:sep])
 	if err != nil {
@@ -322,7 +322,7 @@ func (g *Game) PlayNotation(s string) error {
 	var pegRemovals []Point
 	for _, f := range fields[1:] {
 		if len(f) < 2 {
-			return fmt.Errorf("malformed move edit %q", f)
+			return fmt.Errorf("malformed move edit %q", excerpt(f))
 		}
 		body := f[1:]
 		switch f[0] {
@@ -346,7 +346,7 @@ func (g *Game) PlayNotation(s string) error {
 			}
 			pegRemovals = append(pegRemovals, p)
 		default:
-			return fmt.Errorf("unknown move edit %q", f)
+			return fmt.Errorf("unknown move edit %q", excerpt(f))
 		}
 	}
 	for _, l := range removes {
@@ -406,7 +406,7 @@ func ReplayTranscript(rs Ruleset, transcript string) (*Game, error) {
 			continue
 		}
 		if err := g.PlayNotation(part); err != nil {
-			return nil, fmt.Errorf("move %d (%q): %w", i+1, part, err)
+			return nil, fmt.Errorf("move %d (%q): %w", i+1, excerpt(part), err)
 		}
 	}
 	return g, nil

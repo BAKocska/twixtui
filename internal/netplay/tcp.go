@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,14 +23,58 @@ type Listener struct {
 }
 
 // Bind opens a listening socket for one game. The address may be a bare port
-// (":4270"), a host and port, or empty for the default port on every interface.
+// (":4270"), an interface address with or without a port, or empty for the
+// default port on every interface. See BindAddr for what an address may say.
 func Bind(addr string) (*Listener, error) {
-	target := NormalizeAddr(addr)
+	target, err := BindAddr(addr)
+	if err != nil {
+		return nil, err
+	}
 	l, err := net.Listen("tcp", target)
 	if err != nil {
 		return nil, fmt.Errorf("listening on %s: %w", target, err)
 	}
 	return &Listener{l: l}, nil
+}
+
+// BindAddr checks the address a direct host listens on and fills in
+// DefaultPort when it names none.
+//
+// The host part names one of this machine's own interfaces rather than a peer
+// to be reached, so it must be an address literal and not a name to resolve: a
+// host who meant to accept connections from this machine alone, and typed
+// something that resolved elsewhere, would find out from the connection that
+// arrived rather than from the bind. An empty host is every interface, which is
+// what a bare port has always meant here.
+func BindAddr(addr string) (string, error) {
+	target := NormalizeAddr(addr)
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return "", fmt.Errorf("%q is not an address to listen on: %w", addr, err)
+	}
+	if host != "" && net.ParseIP(host) == nil {
+		return "", fmt.Errorf("%q is not an interface address: give one this machine holds — 127.0.0.1 for this machine alone, ::1 for its IPv6 loopback — or leave it out to listen on every interface", host)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+		return "", fmt.Errorf("%q is not a port: give a number from 0 to 65535, where 0 asks for a free one", port)
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
+// JoinTarget turns the address a host bound into the one to give the opponent.
+//
+// A wildcard bind knows the port and not the address, so it says which of the
+// two it knows instead of offering "[::]:4270" for somebody to copy; a bind to
+// one interface knows both, and the whole address is the answer.
+func JoinTarget(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		return "<your address>:" + port
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // Addr is the address actually bound, which is what to show the opponent.

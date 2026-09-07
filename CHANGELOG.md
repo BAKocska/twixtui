@@ -30,7 +30,76 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   board-position SVG illustrates the manual. Both live under assets/, with their
   provenance and the code they repeat recorded in assets/README.md.
 
+### Added
+
+- `play host --bind` chooses which of this machine's addresses a direct game
+  listens on, so a game can be kept to the loopback address or to one
+  interface. `--port` is unchanged, and the default still listens everywhere.
+
 ### Fixed
+
+- An interrupted network game was saved, and the notice said it could be
+  resumed, but nothing resumed it: the Continue list called it unavailable and
+  told the player to host or join again, which started a new game and left the
+  saved one where it was. The transport had carried resumption all along and no
+  caller ever asked for it. `play host --resume <id>`, `play join --resume <id>`
+  and the Continue list's own reconnection route now continue the stored game:
+  the two copies reconcile the moves one side missed, refuse transcripts that
+  disagree, and keep the saved game's identifier rather than adding a second row.
+- A record file holding more than one record imported the last of them and
+  stored the file's bytes as they arrived, so content no digest covered survived
+  a round trip. A record with a repeated field is now refused by name, imports
+  are bounded at a megabyte rather than read whole, every diagnostic quotes at
+  most a fragment of its input, and what is stored is the checked canonical
+  record.
+- `game export` wrote the stored record without the check `game show` and
+  `game replay` make, so a corrupt saved game was handed out as a record this
+  same build refuses on import. It is validated and replayed first, and a
+  failure leaves an existing `--out` file untouched.
+- `game --help` claimed an edited saved file is refused. Only the record itself
+  carries that check; the labels around it are this machine's own notes. The
+  help now says which is which, and a saved game's own recorded result, rather
+  than an editable label, decides whether a finished game may be reopened.
+- `play host --help` said a relay never sees the game, while the relay's own
+  documentation says the operator reads both names, the ruleset and every move
+  in plain text. The help now says what the pairing code does and does not
+  buy — integrity, not secrecy — and that a direct game sends its invitation
+  before either end has proved anything. `serve --help` no longer claims a
+  relay cannot drop a move: it cannot alter, inject or replay one.
+- An explicitly empty flag value silently meant the flag was absent, so
+  `--config ""` wrote to the default configuration directory and `--profile ""`
+  played as somebody else. Empty values are now refused, including a
+  present-but-blank `TWIXTUI_CONFIG_DIR`, while omitted flags keep their
+  defaults. `--limit` refuses a negative count; zero still means all.
+- A profile's recorded games survive the profile, but `leaderboard show
+  --player` resolved names against the profile store alone, so a deleted
+  player's history was unreachable while the standings still ranked them. It
+  now resolves against the result log as well, keeping a local and a remote
+  player of the same name apart.
+- Boards wider than 26 columns ran their two-letter coordinate labels together
+  into one unreadable line. The header now takes a row per letter, so every
+  column is named above its own holes at both drawing scales.
+- Column alignment counted characters rather than the cells a terminal draws
+  them in, so a name with a fullwidth or combining character pushed a table out
+  of line. The listings, the standings and the profile picker measure display
+  width instead.
+- The query field's own editing was rune-based and its scrolling kept the wrong
+  end of the line: with the cursor left of the overflow the caret was the first
+  thing dropped, a fullwidth character straddling the cut could make the field
+  one cell too wide, and backspace could strip an accent off its letter. The
+  field now windows around the caret and steps whole characters.
+- Smaller corrections: `--side` refuses a value while naming all three it
+  takes; an invite code's refusal no longer calls itself a move code; a pairing
+  code is checked before the waiting banner is printed; the panel no longer
+  says it is connected after the opponent has left; `rules show --provenance`
+  suggests and completes only topics that document has; `theme show` paints its
+  colours on a terminal and stays plain when redirected, and names the theme
+  actually asked for; `learn Blocking` finds the lesson; every command's help
+  says what it is for and a missing argument names the usage; the completion
+  command lists the shells it knows; profile completion tells profiles created
+  in the same second apart; `leaderboard reset` says it deletes the result log
+  and not the saved games; and browsing profiles, standings or saved games no
+  longer needs a writable configuration directory.
 
 - ci: a tag push matched no trigger of the test workflow, so releases were
   built and published from refs the checks had never run on. The release

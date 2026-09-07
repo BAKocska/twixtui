@@ -82,9 +82,16 @@ func Lessons() []Lesson { return lessons }
 
 // Find returns the lesson with the given id. It is not called Lesson because
 // the type of that name already holds the identifier.
+//
+// The identifier is matched without regard to case, because it reaches this
+// package from a command line and a shell: every other value twixtui accepts
+// there — a theme, a side, a ruleset, a profile name — is matched the same way,
+// and "twixtui learn Blocking" failing where "blocking" works is a difference
+// nobody can see a reason for. The identifiers themselves stay lower case, so
+// completion and every message still offer one spelling.
 func Find(id string) (Lesson, bool) {
 	for _, l := range lessons {
-		if l.ID == id {
+		if strings.EqualFold(l.ID, id) {
 			return l, true
 		}
 	}

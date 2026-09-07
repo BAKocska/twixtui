@@ -82,6 +82,22 @@ func splitPairingCode(code string) (room string, key []byte, err error) {
 	return room, deriveFrameKey(room, normalised[pairingRoomLen:]), nil
 }
 
+// CheckPairingCode reports whether a pairing code is one this program could
+// have produced, without connecting to anything.
+//
+// It is the same check HostViaRelay and JoinViaRelay make on the way in,
+// exported so that a caller can make it before it echoes the code back at the
+// player and settles down to wait. A code that was never going to pair has to
+// be refused where it was typed: told to wait for an opponent instead, a player
+// with a mistyped code waits for one who cannot arrive, and the one thing that
+// would have explained it — the code itself, printed back — was printed as
+// though it were fine. The forgiveness is unchanged: case, dashes, spaces and
+// the characters that are misread by eye are all normalised away first.
+func CheckPairingCode(code string) error {
+	_, _, err := splitPairingCode(code)
+	return err
+}
+
 // The tags keep these two derivations distinct from each other and from every
 // other digest in this package, so that no value produced for one purpose can
 // be replayed as a value for another.

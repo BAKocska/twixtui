@@ -19,6 +19,13 @@ import (
 // The cost is that a second player on the machine has to run "profile create"
 // before their first game; the benefit is that a typo the loose search cannot
 // rescue can no longer split a player's history across two identities.
+//
+// An empty value is a third thing again, and not a way of saying nothing: the
+// command line refuses "--profile ''" before any command runs, and the
+// resolver refuses a blank name on its own account, so the flag either names
+// somebody or was not given. Reading a blank one as absent is what let a
+// script that meant to play as a particular profile play as whoever the
+// machine last chose.
 
 // currentProfile returns the profile to play as, and whether one is known.
 func (o *options) currentProfile(store *profile.Store) (string, bool) {

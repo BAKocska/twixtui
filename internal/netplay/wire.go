@@ -87,8 +87,13 @@ var (
 	ErrRefused = errors.New("the opponent refused the game")
 	// ErrClosed is returned by a session that has already finished.
 	ErrClosed = errors.New("the session is closed")
-	// ErrBadCode marks a correspondence code that cannot be trusted.
-	ErrBadCode = errors.New("bad move code")
+	// ErrBadCode marks a pasted code that cannot be trusted. It covers both
+	// kinds — a move and an invitation — because the checks that reject one
+	// are the checks that reject the other, and a caller that wants to tell a
+	// player which they pasted reads the message rather than the sentinel.
+	// Naming a move here made "that is a game invite code, not a move code"
+	// arrive as "bad move code: ...", contradicting itself in one line.
+	ErrBadCode = errors.New("bad code")
 	// ErrUnauthenticated marks a frame that did not come from the opponent, or
 	// that did not arrive in the order the opponent sent it.
 	ErrUnauthenticated = errors.New("the frame is not authenticated")

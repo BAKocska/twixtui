@@ -29,11 +29,18 @@ const (
 	rescueScoreStep  = 10
 )
 
-// Search ranks profiles against a query.
+// Search ranks this machine's profiles against a query, in List order: most
+// recently used first. See SearchProfiles for what the ranking is.
+func (s *Store) Search(query string) []Match {
+	return SearchProfiles(s.List(), query)
+}
+
+// SearchProfiles ranks the profiles it is given against a query.
 //
-// An empty query returns every profile in List order, most recently used first,
-// which is the browsable list a player scrolls when they cannot recall the name
-// at all. A non-empty query is matched two ways:
+// An empty query returns every profile in the order it was given, which for a
+// store's own profiles is most recently used first: the browsable list a player
+// scrolls when they cannot recall the name at all. A non-empty query is matched
+// two ways:
 //
 //   - as a subsequence, scored by github.com/sahilm/fuzzy, which handles
 //     partial names ("lin"), dropped letters ("balnt") and any capitalisation;
@@ -43,10 +50,17 @@ const (
 //     letter ("balont") all put a query rune where no later occurrence exists.
 //
 // Every subsequence match outranks every rescued one, and rescues are ordered
-// by how many corrections they needed. Ties break towards the most recently
-// used profile.
-func (s *Store) Search(query string) []Match {
-	profiles := s.List()
+// by how many corrections they needed. Equally scored matches keep the order
+// they were given in, so the caller decides ties: a Store passes its List
+// order, which puts the most recently used profile first.
+//
+// It takes profiles rather than reading a store because the same matching has
+// to answer for names that are not profiles on this machine: a player who
+// appears in the recorded results but has no profile any more is still the
+// player whose history somebody is asking for, and answering that with a second
+// notion of what "close enough" means would mean two commands disagreeing about
+// the same typed name.
+func SearchProfiles(profiles []Profile, query string) []Match {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		out := make([]Match, len(profiles))
@@ -93,12 +107,11 @@ func (s *Store) Search(query string) []Match {
 		})
 	}
 
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		return out[i].Profile.LastUsed.After(out[j].Profile.LastUsed)
-	})
+	// Equally scored matches keep the order they arrived in, both from fuzzy,
+	// which reports its own matches in candidate order, and from the rescue
+	// pass, which walks the candidates in order. So the caller's order decides
+	// ties: a store passes List order, which is most recently used first.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	return out
 }
 

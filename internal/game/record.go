@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // A transcript on its own is a list of moves and nothing more, so it cannot tell
@@ -27,6 +29,39 @@ import (
 const RecordVersion = 1
 
 const recordHeader = "twixtui-record"
+
+// MaxRecordBytes is the largest encoded record this build accepts. A record
+// arrives from somewhere else — a file, standard input, a correspondence code —
+// so its size is a property of the input rather than of this program, and the
+// bound is applied before the input is held rather than after.
+//
+// It is a practical safety cap, not a statement about every record that could
+// ever be written: a history may hold entries that place no peg, and link
+// edits can revisit holes already played, so there is no small bound on a
+// transcript in general. What it is chosen to clear with room to spare is an
+// ordinary game on the widest board this build allows, 48x48: filling every
+// one of its 2304 holes with its link annotations encodes to a few hundred
+// kilobytes, and a genuine short game is a couple of hundred bytes. A record
+// larger than this is refused by name rather than read into memory.
+const MaxRecordBytes = 1 << 20
+
+// excerptBytes bounds how much of the input a diagnostic repeats.
+const excerptBytes = 64
+
+// excerpt is what a diagnostic quotes. Every quoted fragment of a record goes
+// through it: the record was written by whoever sent it, so an error that
+// echoes the whole of it back is not a diagnostic but a copy of the input, and
+// escaping expands unprintable bytes several times over on the way out.
+func excerpt(s string) string {
+	if len(s) <= excerptBytes {
+		return s
+	}
+	cut := excerptBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
 
 // Record is a game together with everything needed to check it replays to the
 // game it claims to be.
@@ -143,7 +178,15 @@ func (r Record) Encode() string {
 
 // DecodeRecord parses a record and checks its digest. It does not replay the
 // game; call Replay for that.
+//
+// A record is one record: every field appears exactly once. Two records in one
+// file repeat the header, which is refused here, because reading such a file as
+// whichever record happened to come last keeps bytes nothing ever checked
+// beside a game that was checked.
 func DecodeRecord(s string) (Record, error) {
+	if len(s) > MaxRecordBytes {
+		return Record{}, fmt.Errorf("a game record is at most %d bytes; this one is %d", MaxRecordBytes, len(s))
+	}
 	var r Record
 	seen := map[string]bool{}
 	for i, raw := range strings.Split(s, "\n") {
@@ -153,11 +196,16 @@ func DecodeRecord(s string) (Record, error) {
 		}
 		key, rest, _ := strings.Cut(line, " ")
 		rest = strings.TrimSpace(rest)
+		if seen[key] {
+			return Record{}, fmt.Errorf("line %d: %q appears twice; a record holds one of each field, so this is either an edited record or several records in one file",
+				i+1, excerpt(key))
+		}
+		seen[key] = true
 		switch key {
 		case recordHeader:
 			v, err := strconv.Atoi(rest)
 			if err != nil {
-				return Record{}, fmt.Errorf("line %d: unreadable format version %q", i+1, rest)
+				return Record{}, fmt.Errorf("line %d: unreadable format version %q", i+1, excerpt(rest))
 			}
 			if v != RecordVersion {
 				return Record{}, fmt.Errorf("this record is version %d, this build reads version %d", v, RecordVersion)
@@ -176,11 +224,11 @@ func DecodeRecord(s string) (Record, error) {
 			}
 			out, ok := lookupName(outcomeNames, outName)
 			if !ok {
-				return Record{}, fmt.Errorf("line %d: unknown outcome %q", i+1, outName)
+				return Record{}, fmt.Errorf("line %d: unknown outcome %q", i+1, excerpt(outName))
 			}
 			reason, ok := lookupName(reasonNames, strings.TrimSpace(reasonName))
 			if !ok {
-				return Record{}, fmt.Errorf("line %d: unknown end reason %q", i+1, reasonName)
+				return Record{}, fmt.Errorf("line %d: unknown end reason %q", i+1, excerpt(reasonName))
 			}
 			r.Outcome, r.Reason = out, reason
 		case "position":
@@ -188,7 +236,7 @@ func DecodeRecord(s string) (Record, error) {
 		case "entries":
 			n, err := strconv.Atoi(rest)
 			if err != nil {
-				return Record{}, fmt.Errorf("line %d: unreadable entry count %q", i+1, rest)
+				return Record{}, fmt.Errorf("line %d: unreadable entry count %q", i+1, excerpt(rest))
 			}
 			r.Entries = n
 		case "moves":
@@ -196,17 +244,20 @@ func DecodeRecord(s string) (Record, error) {
 		case "digest":
 			r.Digest = rest
 		default:
-			return Record{}, fmt.Errorf("line %d: unknown field %q", i+1, key)
+			return Record{}, fmt.Errorf("line %d: unknown field %q", i+1, excerpt(key))
 		}
-		seen[key] = true
 	}
-	for _, need := range []string{recordHeader, "ruleset", "result", "position", "entries", "digest"} {
+	// The moves field is required even though an empty transcript is a valid
+	// game: a record that never says what was played is not one, and without
+	// this the omission is reported as a digest mismatch, which reads as
+	// tampering rather than as the missing field it is.
+	for _, need := range []string{recordHeader, "ruleset", "result", "position", "entries", "moves", "digest"} {
 		if !seen[need] {
 			return Record{}, fmt.Errorf("record is missing its %s", need)
 		}
 	}
 	if want := r.digest(); want != r.Digest {
-		return Record{}, fmt.Errorf("this record has been altered or truncated: digest is %s but its contents hash to %s", r.Digest, want)
+		return Record{}, fmt.Errorf("this record has been altered or truncated: digest is %s but its contents hash to %s", excerpt(r.Digest), want)
 	}
 	return r, nil
 }
@@ -224,7 +275,7 @@ func (r Record) Replay() (*Game, error) {
 			outcomeNames[got.Outcome], reasonNames[got.Reason])
 	}
 	if got := PositionDigest(g); got != r.Position {
-		return nil, fmt.Errorf("record claims final position %s but its moves reach %s", r.Position, got)
+		return nil, fmt.Errorf("record claims final position %s but its moves reach %s", excerpt(r.Position), got)
 	}
 	if got := g.Entries(); got != r.Entries {
 		return nil, fmt.Errorf("record claims %d entries but its moves make %d", r.Entries, got)
@@ -246,6 +297,22 @@ func LoadRecord(s string) (*Game, Record, error) {
 	return g, r, nil
 }
 
+// ReadRecord reads one record from r, then decodes and replays it. This is the
+// way in for a record that comes from a file or a pipe: the reader stops after
+// MaxRecordBytes, so an input that is not a record — or is far too large to be
+// one — is refused without the rest of it ever being held in memory.
+func ReadRecord(r io.Reader) (*Game, Record, error) {
+	var b strings.Builder
+	n, err := io.Copy(&b, io.LimitReader(r, MaxRecordBytes+1))
+	if err != nil {
+		return nil, Record{}, err
+	}
+	if n > MaxRecordBytes {
+		return nil, Record{}, fmt.Errorf("a game record is at most %d bytes; this input is longer", MaxRecordBytes)
+	}
+	return LoadRecord(b.String())
+}
+
 // ParseCanonicalRuleset reads the encoding produced by Ruleset.Canonical.
 func ParseCanonicalRuleset(s string) (Ruleset, error) {
 	var rs Ruleset
@@ -256,19 +323,23 @@ func ParseCanonicalRuleset(s string) (Ruleset, error) {
 		}
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {
-			return Ruleset{}, fmt.Errorf("malformed ruleset field %q", field)
+			return Ruleset{}, fmt.Errorf("malformed ruleset field %q", excerpt(field))
 		}
+		if seen[key] {
+			return Ruleset{}, fmt.Errorf("ruleset field %q appears twice", excerpt(key))
+		}
+		seen[key] = true
 		switch key {
 		case "size":
 			n, err := strconv.Atoi(value)
 			if err != nil {
-				return Ruleset{}, fmt.Errorf("unreadable board size %q", value)
+				return Ruleset{}, fmt.Errorf("unreadable board size %q", excerpt(value))
 			}
 			rs.Size = n
 		case "deliberate", "removal", "pegremoval", "owncross", "swap":
 			b, err := strconv.ParseBool(value)
 			if err != nil {
-				return Ruleset{}, fmt.Errorf("unreadable %s value %q", key, value)
+				return Ruleset{}, fmt.Errorf("unreadable %s value %q", key, excerpt(value))
 			}
 			switch key {
 			case "deliberate":
@@ -283,9 +354,8 @@ func ParseCanonicalRuleset(s string) (Ruleset, error) {
 				rs.Swap = b
 			}
 		default:
-			return Ruleset{}, fmt.Errorf("unknown ruleset field %q", key)
+			return Ruleset{}, fmt.Errorf("unknown ruleset field %q", excerpt(key))
 		}
-		seen[key] = true
 	}
 	for _, need := range []string{"size", "deliberate", "removal", "pegremoval", "owncross", "swap"} {
 		if !seen[need] {

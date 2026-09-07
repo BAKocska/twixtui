@@ -1042,7 +1042,7 @@ func TestLastPlayedIsSingularForOneMinute(t *testing.T) {
 	if got, want := lastPlayedColumn(p), "1 minute ago"; got != want {
 		t.Errorf("the last-played column says %q, want %q", got, want)
 	}
-	if got, want := lastPlayed(p), "last played 1 minute ago"; got != want {
+	if got, want := lastPlayed(p.LastUsed), "last played 1 minute ago"; got != want {
 		t.Errorf("the completion description says %q, want %q", got, want)
 	}
 }

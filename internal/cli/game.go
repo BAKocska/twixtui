@@ -2,10 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -71,15 +69,21 @@ func newGameCommand(opts *options) *cobra.Command {
 		Long: `Work with saved games.
 
 Games are saved as they are played, so an interrupted one can be resumed and a
-finished one can be replayed. A saved game carries its own integrity check: a
-file that has been edited is refused rather than loaded as a different game.`,
+finished one can be replayed. The game itself is stored as a record — the rules,
+the moves, the result and the final position, with digests over them — so a
+record that has been edited or truncated is refused rather than loaded as a
+different game.
+
+What each saved game is called is a separate matter: which profile played, which
+side, what the opponent was named and when it happened are notes this machine
+wrote about its own games, they are yours to edit, and no digest covers them.`,
 	}
 
 	var limit int
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List saved games, most recent first",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, err := opts.openGames()
 			if err != nil {
@@ -94,17 +98,22 @@ file that has been edited is refused rather than loaded as a different game.`,
 			if limit > 0 && len(saved) > limit {
 				saved = saved[:limit]
 			}
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tKIND\tPLAYERS\tSTATE\tUPDATED")
+			rows := make([][]string, 0, len(saved)+1)
+			rows = append(rows, []string{"ID", "KIND", "PLAYERS", "STATE", "UPDATED"})
 			for _, sv := range saved {
 				state := "in progress"
 				if sv.Finished {
 					state = "finished"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s vs %s\t%s\t%s\n",
-					sv.ID, sv.Kind, sv.Player, leaderboard.DisplayName(sv.Opponent), state, humantime.Since(sv.Updated))
+				rows = append(rows, []string{
+					sv.ID,
+					string(sv.Kind),
+					fmt.Sprintf("%s vs %s", sv.Player, leaderboard.DisplayName(sv.Opponent)),
+					state,
+					humantime.Since(sv.Updated),
+				})
 			}
-			return w.Flush()
+			return ui.WriteTable(cmd.OutOrStdout(), rows, 2)
 		},
 	}
 	list.Flags().IntVar(&limit, "limit", 0, "show at most this many games (0 means all)")
@@ -112,7 +121,7 @@ file that has been edited is refused rather than loaded as a different game.`,
 	show := &cobra.Command{
 		Use:               "show <id>",
 		Short:             "Show a saved game's board and move list",
-		Args:              cobra.ExactArgs(1),
+		Args:              exactArgs(1),
 		ValidArgsFunction: opts.gameIDCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := opts.openGames()
@@ -156,7 +165,7 @@ file that has been edited is refused rather than loaded as a different game.`,
 
 Opens the board and walks forwards and backwards through the game with the same
 keys used to play it.`,
-		Args:              cobra.ExactArgs(1),
+		Args:              exactArgs(1),
 		ValidArgsFunction: opts.gameIDCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := opts.openGames()
@@ -184,8 +193,12 @@ keys used to play it.`,
 		Long: `Write a saved game out as a record.
 
 The record holds the ruleset, the moves, the result and two digests, so whoever
-receives it can check it arrived intact and replays to the game it claims to be.`,
-		Args:              cobra.ExactArgs(1),
+receives it can check it arrived intact and replays to the game it claims to be.
+
+The saved game is loaded and replayed before anything is written, so a record
+this build would refuse to read is refused here too, and a file named by --out
+is left as it was.`,
+		Args:              exactArgs(1),
 		ValidArgsFunction: opts.gameIDCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := opts.openGames()
@@ -196,11 +209,21 @@ receives it can check it arrived intact and replays to the game it claims to be.
 			if err != nil {
 				return err
 			}
-			if outPath == "" || outPath == "-" {
-				_, err := fmt.Fprint(cmd.OutOrStdout(), sv.Record)
+			// Sending on a record nobody checked is how a corrupted game
+			// leaves this machine looking like a game: the receiver refuses it,
+			// and the refusal arrives with them rather than here, where the
+			// damage is. So it is loaded first, and what goes out is the
+			// checked record's own encoding.
+			_, rec, err := sv.Load()
+			if err != nil {
 				return err
 			}
-			if err := os.WriteFile(outPath, []byte(sv.Record), 0o644); err != nil {
+			record := rec.Encode()
+			if outPath == "" || outPath == "-" {
+				_, err := fmt.Fprint(cmd.OutOrStdout(), record)
+				return err
+			}
+			if err := os.WriteFile(outPath, []byte(record), 0o644); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s to %s\n", sv.ID, outPath)
@@ -215,24 +238,21 @@ receives it can check it arrived intact and replays to the game it claims to be.
 		Long: `Read a game record in, checking it as it goes.
 
 A record that has been altered or truncated is refused, naming what went wrong,
-rather than being loaded as a different game. Use - to read standard input.
+rather than being loaded as a different game. So is a file holding more than one
+record, or a field written twice: a record is one game, and reading such a file
+as whichever record came last would keep bytes nothing checked. Use - to read
+standard input.
 
 A record names no players and says nothing about how it was played, so an
 imported game is listed by its two sides rather than under your profile. A
 record already held here is recognised and named rather than saved twice.`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var body []byte
-			var err error
-			if args[0] == "-" {
-				body, err = io.ReadAll(cmd.InOrStdin())
-			} else {
-				body, err = os.ReadFile(args[0])
-			}
-			if err != nil {
-				return err
-			}
-			g, rec, err := game.LoadRecord(string(body))
+			// The input is bounded as it is read rather than after: this is a
+			// file or a pipe somebody else wrote, and a record has a size a
+			// record can be. game.ReadRecord stops past that size, so naming a
+			// device or a multi-gigabyte file costs a megabyte and a refusal.
+			g, rec, err := readRecordFrom(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -259,12 +279,16 @@ record already held here is recognised and named rather than saved twice.`,
 			// is what lets a list of games to carry on with tell an imported
 			// record from one of this machine's own. The importing profile is
 			// not consulted at all: it has nothing to do with this game.
+			//
+			// What is stored is the record as this build encodes it, not the
+			// bytes that arrived: those may carry anything the digests do not
+			// cover, and once stored they would be handed back out by export.
 			sv := gamestore.Saved{
 				ID:       gamestore.NewID(),
 				Kind:     gamestore.Imported,
 				Player:   game.Vertical.String(),
 				Opponent: game.Horizontal.String(),
-				Record:   string(body),
+				Record:   rec.Encode(),
 				Finished: g.Result().Over(),
 			}
 			if err := store.Put(sv); err != nil {
@@ -279,7 +303,7 @@ record already held here is recognised and named rather than saved twice.`,
 	del := &cobra.Command{
 		Use:               "delete <id>",
 		Short:             "Delete a saved game",
-		Args:              cobra.ExactArgs(1),
+		Args:              exactArgs(1),
 		ValidArgsFunction: opts.gameIDCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := opts.openGames()
@@ -324,6 +348,26 @@ func describeResult(r game.Result) string {
 	return "unknown"
 }
 
+// readRecordFrom reads one record from a named file, or from standard input
+// when the name is -.
+//
+// The file is handed to game.ReadRecord rather than read whole. How large the
+// thing on the other end is, is not this program's choice: a path can name a
+// device that never ends, and a pipe can carry as much as the writer likes. A
+// bounded read refuses those for what they are, having held a record's worth of
+// them, instead of growing until something else on the machine gives way.
+func readRecordFrom(cmd *cobra.Command, name string) (*game.Game, game.Record, error) {
+	if name == "-" {
+		return game.ReadRecord(cmd.InOrStdin())
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, game.Record{}, err
+	}
+	defer f.Close()
+	return game.ReadRecord(f)
+}
+
 // savedWithDigest finds the stored game holding a given record, if there is one.
 //
 // Records are compared by the digest they carry rather than by their bytes: the
@@ -359,9 +403,9 @@ Direct play needs one side to accept an incoming connection, which a home router
 or a company network often prevents. A relay is somewhere both sides can reach:
 each connects out to it and it passes bytes between them. It never parses the
 game, keeps nothing on disk, and is told only the first group of the pairing
-code, so it cannot alter, inject, replay or drop a move without being caught:
-both players authenticate every frame with a key derived from the rest of the
-code, which the relay never sees.
+code. Both players authenticate every frame with a key derived from the rest of
+the code, which the relay never sees, so it cannot alter, inject or replay a
+move without being caught. What it can still do is fail to deliver one.
 
 It does read what it carries, in plain text — both names, the ruleset and every
 move. Run one for people who are content for you to see their games.
@@ -369,7 +413,7 @@ move. Run one for people who are content for you to see their games.
   twixtui serve --addr :4271
   twixtui play host --relay relay.example:4271
   twixtui play join --relay relay.example:4271 <pairing code>`,
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Announce the relay once it is listening, not before. This line is
 			// what an operator, or a readiness probe watching the log for it,
@@ -403,7 +447,7 @@ lesson sets up real positions and asks you to find the move, using the same keys
 you play with.
 
 Given a lesson name, start there; otherwise choose from the list.`,
-		Args:              cobra.MaximumNArgs(1),
+		Args:              maxArgs(1),
 		ValidArgsFunction: lessonCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			deps, _, err := opts.deps()

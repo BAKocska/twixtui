@@ -53,11 +53,32 @@ func (sc Scale) holeY(row int) int { return sc.rowStep * row }
 // gutterWidth is the width of the row-number gutter for an n-hole board.
 func gutterWidth(n int) int { return len(strconv.Itoa(n)) + 1 }
 
+// headerRows is the height of the coordinate header for an n-hole board: one
+// row per letter of the widest column name.
+//
+// Columns past Z are named AA, AB and so on, and at the compact scale two
+// holes are two screen columns apart, so a two-letter name written along the
+// row runs straight into its neighbour's: a 48-column board's header read
+// "AAABACAD". One letter per row instead keeps every letter in the single cell
+// above the hole column it belongs to, at either scale, and a name is then
+// either shown whole or not at all.
+//
+// The height follows the board's size rather than the widest name currently in
+// view, so that scrolling a wide board sideways does not move the board up and
+// down the screen. Column names are ASCII letters, so their byte length is
+// their letter count.
+func headerRows(n int) int {
+	if n < 1 {
+		return 1
+	}
+	return len(game.ColumnName(n - 1))
+}
+
 // BlockSize returns the full size of the rendered board block — canvas plus
-// gutter and letters row — before any viewport clipping.
+// gutter and coordinate header — before any viewport clipping.
 func (sc Scale) BlockSize(n int) (w, h int) {
 	cw, ch := sc.CanvasSize(n)
-	return gutterWidth(n) + cw, ch + 1
+	return gutterWidth(n) + cw, ch + headerRows(n)
 }
 
 // canvas is a grid of glyphs with per-cell style tags.
@@ -684,8 +705,9 @@ func (bv *BoardView) Render(g *game.Game, st *Styles, availW, availH int) []stri
 	n := g.Size()
 	cw, ch := bv.Scale.CanvasSize(n)
 	gutter := gutterWidth(n)
+	header := headerRows(n)
 	vw := min(availW-gutter, cw)
-	vh := min(availH-1, ch)
+	vh := min(availH-header, ch)
 	if vw < 1 || vh < 1 {
 		return nil
 	}
@@ -693,8 +715,8 @@ func (bv *BoardView) Render(g *game.Game, st *Styles, availW, availH int) []stri
 
 	cv := bv.paint(g)
 
-	lines := make([]string, 0, vh+1)
-	lines = append(lines, bv.lettersRow(n, gutter, vw, cw, st))
+	lines := make([]string, 0, vh+header)
+	lines = append(lines, bv.lettersRows(n, gutter, vw, cw, st)...)
 	for y := bv.top; y < bv.top+vh; y++ {
 		lines = append(lines, bv.boardRow(cv, y, n, gutter, vw, vh, ch, st))
 	}
@@ -926,8 +948,18 @@ func clamp(v, lo, hi int) int {
 	return v
 }
 
-// lettersRow renders the column-letter header for the visible columns, with
+// lettersRows renders the column-letter header for the visible columns, with
 // horizontal overflow arrows when the board extends beyond the viewport.
+//
+// A column's name is written downwards, one letter per row, ending in the row
+// next to the board: a one-letter name is that row alone, and a two-letter
+// name has its first letter directly above the second. Every letter therefore
+// sits in the one cell above the hole column it names, whatever the scale,
+// which is what makes a wide board's header legible — written along the row,
+// two-letter names have no gap between them at the compact scale — and what
+// makes a clipped one honest: a name is shown whole or not at all, where a
+// name written along the row loses its second letter at the edge of the
+// viewport and reads as a different column altogether.
 //
 // The outer two columns are the horizontal player's own borders — the lines
 // that player has to reach — so their letters carry that player's colour.
@@ -935,38 +967,63 @@ func clamp(v, lo, hi int) int {
 // yours is something the board never says; a player reads it off the panel
 // instead. An overflow arrow is not a coordinate and keeps the neutral label
 // style even where it lands on a border column's cell.
-func (bv *BoardView) lettersRow(n, gutter, vw, cw int, st *Styles) string {
-	row := make([]rune, gutter+vw)
-	ids := make([]styleID, gutter+vw)
-	for i := range row {
-		row[i] = ' '
+func (bv *BoardView) lettersRows(n, gutter, vw, cw int, st *Styles) []string {
+	rows := headerRows(n)
+	stride := gutter + vw
+	runes := make([]rune, rows*stride)
+	ids := make([]styleID, rows*stride)
+	for i := range runes {
+		runes[i] = ' '
 		ids[i] = styLabel
 	}
 	for col := range n {
-		x := bv.Scale.holeX(col)
+		pos := bv.Scale.holeX(col) - bv.left
+		if pos < 0 || pos >= vw {
+			continue
+		}
 		id := styLabel
 		if col == 0 || col == n-1 {
 			id = styLabelHorizontal
 		}
-		for j, r := range game.ColumnName(col) {
-			pos := x - bv.left + j
-			if pos >= 0 && pos < vw {
-				row[gutter+pos] = r
-				ids[gutter+pos] = id
-			}
+		name := game.ColumnName(col)
+		// Bottom-aligned, so that the last letter of every name is in the row
+		// against the board and the rows above hold what a shorter name does
+		// not need. Names are ASCII, so the byte index is the letter index.
+		top := rows - len(name)
+		for k := range len(name) {
+			i := (top+k)*stride + gutter + pos
+			runes[i] = rune(name[k])
+			ids[i] = id
 		}
 	}
 	if bv.left > 0 {
-		row[gutter], ids[gutter] = glyphLeft, styLabel
+		headerArrow(runes, ids, stride, rows, gutter, glyphLeft)
 	}
 	if bv.left+vw < cw {
-		row[gutter+vw-1], ids[gutter+vw-1] = glyphRight, styLabel
+		headerArrow(runes, ids, stride, rows, gutter+vw-1, glyphRight)
 	}
-	end := len(row)
-	for end > 0 && row[end-1] == ' ' {
-		end--
+	out := make([]string, rows)
+	for r := range rows {
+		line, tags := runes[r*stride:(r+1)*stride], ids[r*stride:(r+1)*stride]
+		end := len(line)
+		for end > 0 && line[end-1] == ' ' {
+			end--
+		}
+		out[r] = emitRuns(st, line[:end], tags[:end])
 	}
-	return emitRuns(st, row[:end], ids[:end])
+	return out
+}
+
+// headerArrow puts an overflow arrow in one column of the header and clears
+// the rest of that column: a letter left above an arrow belongs to a name
+// whose other letter the arrow took, so it names nothing and reads as a
+// column that is not there.
+func headerArrow(runes []rune, ids []styleID, stride, rows, at int, arrow rune) {
+	for r := range rows {
+		i := r*stride + at
+		runes[i], ids[i] = ' ', styLabel
+	}
+	runes[(rows-1)*stride+at] = arrow
 }
 
 // boardRow renders one visible canvas row with its gutter label. The topmost
@@ -983,7 +1040,7 @@ func (bv *BoardView) boardRow(cv *canvas, y, n, gutter, vw, vh, ch int, st *Styl
 		row := y / bv.Scale.rowStep
 		label = pad(strconv.Itoa(row+1), gutter)
 		// The top and bottom rows are the vertical player's own borders; see
-		// lettersRow for the judgement, which is the same one.
+		// lettersRows for the judgement, which is the same one.
 		if row == 0 || row == n-1 {
 			labelID = styLabelVertical
 		}

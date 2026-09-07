@@ -9,8 +9,8 @@ import (
 
 // Minimum terminal size for showing a board. Below either bound the frame is
 // an explicit too-small notice instead: the smallest useful board view needs
-// the row-number gutter plus a handful of hole columns, and the letters row
-// plus a few board rows plus the status line.
+// the row-number gutter plus a handful of hole columns, and the coordinate
+// header plus a few board rows plus the status line.
 const (
 	MinWidth  = 20
 	MinHeight = 6

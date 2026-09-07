@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -336,60 +337,115 @@ func appendWrapped(lines []string, st *ui.Styles, style *lipgloss.Style, text st
 	return lines
 }
 
-// renderRow draws one line of the list. The selection is marked with a glyph
-// as well as a colour, so it survives a terminal with no colour at all.
+// renderRow draws one line of the list, inside the width it is given. The
+// selection is marked with a glyph as well as a colour, so it survives a
+// terminal with no colour at all.
+//
+// Everything here is budgeted in display cells, because a name is not its rune
+// count: any script is a legal profile name, so the thirty-two characters a
+// name may have can be sixty-four cells of CJK or, with combining accents,
+// half as many cells as runes. Budgeting in runes pushed such a row past the
+// frame, and the frame then cut off the very column the row was widened for.
 func (p *Picker) renderRow(st *ui.Styles, i, width int) string {
 	r := p.rows[i]
+	const markerWidth = 2
 	marker := "  "
 	if i == p.sel {
 		marker = paint(st, &st.Cursor, "> ")
 	}
+	avail := width - markerWidth
+	if avail < 1 {
+		// Narrower than the marker itself. There is nothing to say about the
+		// row, and at these widths the frame is the too-small notice anyway.
+		return ""
+	}
 	if r.create {
-		return marker + paint(st, &st.Highlight, "+ new profile ") + fmt.Sprintf("%q", r.name)
+		return marker + truncateText(paint(st, &st.Highlight, "+ new profile ")+fmt.Sprintf("%q", r.name), avail)
 	}
 
 	name := highlightRunes(st, r.name, r.positions)
+	nameW := ansi.StringWidth(name)
 	// The time column is the other half of R14: recognising your own name in a
-	// list is easier when you can see which one you played last. It is dropped
-	// on a narrow terminal, where the name matters more. Eighteen columns is
-	// the widest date humantime falls back to, "27 September 2026".
+	// list is easier when you can see which one you played last. Eighteen
+	// columns is the widest date humantime falls back to, "27 September 2026",
+	// and the age keeps that same column on every row so the column reads as a
+	// column.
 	const timeColumn = 18
-	nameW := width - 2 - timeColumn
-	if nameW < profile.MaxNameRunes {
-		return marker + name
+	// The name wins the argument. The age is worth its eighteen columns only
+	// once the name has the room it needs and a cell to spare beside it;
+	// otherwise it is dropped and the name gets the whole row, which is the
+	// rule this list has always stated and is what a narrow terminal has
+	// always done. It matters for more than narrow terminals now: any script
+	// whose characters take two cells makes an ordinary name twice as wide, and
+	// cutting such a name to keep a date says less about whose row it is than
+	// the name itself does.
+	nameCol := avail - timeColumn
+	if nameCol < nameW+1 {
+		return marker + truncateText(name, avail)
 	}
 	when := paint(st, &st.Label, playedAgo(p.deps.Clock(), r.lastUsed))
-	return marker + padTo(name, nameW) + when
+	// The age lives in its column, so the column is what bounds it: a wording
+	// wider than that would push the row past the frame.
+	return marker + ui.PadRight(name, nameCol) + truncateText(when, timeColumn)
 }
 
-// highlightRunes picks out the characters a query matched. Runs of adjacent
-// matches are styled together rather than one at a time, which keeps the
-// escape sequences down and the output readable.
+// highlightRunes picks out the characters a query matched, which profile.Search
+// reports as rune indexes. Runs of adjacent matches are styled together rather
+// than one at a time, which keeps the escape sequences down and the output
+// readable.
+//
+// The walk is over grapheme clusters rather than runes. An accent written as a
+// combining mark is a rune of its own, and styling the letter without it puts
+// a style boundary inside a single character on screen, which a terminal draws
+// as an unstyled accent over a highlighted letter. A cluster any of whose
+// runes matched is highlighted whole.
 func highlightRunes(st *ui.Styles, name string, positions []int) string {
 	if len(positions) == 0 {
 		return name
 	}
-	runes := []rune(name)
-	hit := make([]bool, len(runes))
+	hit := make([]bool, utf8.RuneCountInString(name))
+	matched := false
 	for _, pos := range positions {
 		if pos >= 0 && pos < len(hit) {
 			hit[pos] = true
+			matched = true
 		}
+	}
+	if !matched {
+		return name
 	}
 	var b strings.Builder
 	b.Grow(len(name))
-	for i := 0; i < len(runes); {
-		if !hit[i] {
-			b.WriteRune(runes[i])
-			i++
-			continue
+	// run is the byte offset a highlighted stretch started at, or -1 between
+	// stretches. A stretch is written when it ends, so adjacent highlighted
+	// clusters share one pair of escape sequences.
+	run := -1
+	off, ri := 0, 0
+	for off < len(name) {
+		cluster, _ := ansi.FirstGraphemeCluster(name[off:], ansi.GraphemeWidth)
+		if cluster == "" {
+			break
 		}
-		j := i
-		for j < len(runes) && hit[j] {
-			j++
+		runes := utf8.RuneCountInString(cluster)
+		on := false
+		for k := ri; k < ri+runes && k < len(hit); k++ {
+			on = on || hit[k]
 		}
-		b.WriteString(paint(st, &st.Highlight, string(runes[i:j])))
-		i = j
+		switch {
+		case on && run < 0:
+			run = off
+		case !on && run >= 0:
+			b.WriteString(paint(st, &st.Highlight, name[run:off]))
+			run = -1
+		}
+		if !on {
+			b.WriteString(cluster)
+		}
+		off += len(cluster)
+		ri += runes
+	}
+	if run >= 0 {
+		b.WriteString(paint(st, &st.Highlight, name[run:]))
 	}
 	return b.String()
 }
@@ -457,13 +513,24 @@ func (e *lineEdit) setValue(s string) {
 }
 
 // key applies a keypress and reports whether it changed the text.
+//
+// Moving and deleting step whole characters as a reader sees them, not runes:
+// an accent written as a combining mark and an emoji built from several runes
+// are each one cell on screen, and a cursor inside one of them has no cell to
+// be drawn in, while a backspace inside one strips the accent off its letter
+// and leaves a name nobody typed. Insertion stays as it is — text arrives from
+// the terminal already whole.
 func (e *lineEdit) key(m tea.KeyPressMsg) bool {
 	switch m.String() {
 	case "left":
-		e.pos = max(0, e.pos-1)
+		if e.pos > 0 {
+			e.pos, _ = e.clusterBounds(e.pos - 1)
+		}
 		return false
 	case "right":
-		e.pos = min(len(e.runes), e.pos+1)
+		if e.pos < len(e.runes) {
+			_, e.pos = e.clusterBounds(e.pos)
+		}
 		return false
 	case "home", "ctrl+a":
 		e.pos = 0
@@ -475,14 +542,16 @@ func (e *lineEdit) key(m tea.KeyPressMsg) bool {
 		if e.pos == 0 {
 			return false
 		}
-		e.runes = append(e.runes[:e.pos-1], e.runes[e.pos:]...)
-		e.pos--
+		start, _ := e.clusterBounds(e.pos - 1)
+		e.runes = append(e.runes[:start], e.runes[e.pos:]...)
+		e.pos = start
 		return true
 	case "delete", "ctrl+d":
 		if e.pos >= len(e.runes) {
 			return false
 		}
-		e.runes = append(e.runes[:e.pos], e.runes[e.pos+1:]...)
+		_, end := e.clusterBounds(e.pos)
+		e.runes = append(e.runes[:e.pos], e.runes[end:]...)
 		return true
 	case "ctrl+u":
 		if len(e.runes) == 0 {
@@ -534,25 +603,84 @@ func (e *lineEdit) deleteWord() bool {
 	return true
 }
 
+// clusterBounds returns the rune indexes at which the character containing
+// rune index i starts and ends, where a character is what a reader sees: a
+// letter with its combining marks, or an emoji written as several runes joined
+// together. An index at or past the end of the text bounds nothing.
+//
+// The field holds a name or an address, so walking it per keypress costs
+// nothing worth saving. Positions stay rune indexes, which is what the search
+// matcher reports and what the rest of this file counts in.
+func (e *lineEdit) clusterBounds(i int) (start, end int) {
+	s := string(e.runes)
+	off, ri := 0, 0
+	for off < len(s) {
+		cluster, _ := ansi.FirstGraphemeCluster(s[off:], ansi.GraphemeWidth)
+		if cluster == "" {
+			break
+		}
+		n := utf8.RuneCountInString(cluster)
+		if ri+n > i {
+			return ri, ri + n
+		}
+		off += len(cluster)
+		ri += n
+	}
+	return len(e.runes), len(e.runes)
+}
+
 // caret is drawn as a character rather than as a colour so that the cursor is
 // still visible with colour switched off, which is the same reasoning the board
 // renderer uses for its bracketed cursor.
 const caret = "|"
 
-// render draws the field with its prompt and caret, clipped to width so a long
-// name scrolls rather than wrapping the frame.
+// render draws the field with its prompt and caret in width cells, scrolling
+// the text so that the caret is always one of them.
+//
+// The caret is the field's whole answer to "where does what I type next go",
+// so it is what the window is built around: the text before it is shown from
+// the right, the text after it fills whatever is left. Truncating the finished
+// line from the left instead dropped the caret itself whenever the cursor was
+// left of the overflow — press home in a long name and the field showed the
+// end of the name with no cursor anywhere on it.
 func (e *lineEdit) render(st *ui.Styles, width int) string {
 	const prompt = "> "
 	const promptWidth = 2
-	line := string(e.runes[:e.pos]) + paint(st, &st.Cursor, caret) + string(e.runes[e.pos:])
 	if width <= promptWidth {
-		// No room for text. The frame clips anyway, and a negative budget
-		// below would ask TruncateLeft for more than there is.
+		// No room for text, and none for the caret either. The frame clips
+		// anyway, and a negative budget below would ask for more than there is.
 		return prompt
 	}
-	if w := ansi.StringWidth(line); w > width-promptWidth {
-		// Keep the caret in view by dropping characters from the left.
-		line = ansi.TruncateLeft(line, w-(width-promptWidth), "")
+	head, tail := string(e.runes[:e.pos]), string(e.runes[e.pos:])
+	headW, tailW := ansi.StringWidth(head), ansi.StringWidth(tail)
+	// Both edges of the window fall between characters, never inside one.
+	if room := width - promptWidth - ansi.StringWidth(caret); headW+tailW > room {
+		if headW > room {
+			head, tail = keepRight(head, room), ""
+		} else {
+			tail = ansi.Truncate(tail, room-headW, "")
+		}
 	}
-	return prompt + line
+	return prompt + head + paint(st, &st.Cursor, caret) + tail
+}
+
+// keepRight returns the last width cells of s, cut between characters.
+//
+// It exists because ansi.TruncateLeft, asked to drop n cells, keeps a
+// two-cell character that straddles the cut whole: the string it returns can
+// be a cell wider than the room left for it, and a field one cell over its
+// width corrupts the frame. Dropping that character instead leaves the cell
+// blank, which is what a window onto the middle of a wide script looks like.
+func keepRight(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	w := ansi.StringWidth(s)
+	for cut := w - width; cut <= w; cut++ {
+		out := ansi.TruncateLeft(s, cut, "")
+		if ansi.StringWidth(out) <= width {
+			return out
+		}
+	}
+	return ""
 }

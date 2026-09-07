@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	lipgloss "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/BAKocska/twixtui/internal/game"
 )
@@ -58,9 +59,10 @@ func renderPlain(t *testing.T, bv *BoardView, g *game.Game) []string {
 	t.Helper()
 	st := PlainStyles()
 	cw, ch := bv.Scale.CanvasSize(g.Size())
-	lines := bv.Render(g, &st, cw+gutterWidth(g.Size()), ch+1)
-	if len(lines) != ch+1 {
-		t.Fatalf("unclipped render returned %d lines, want %d", len(lines), ch+1)
+	header := headerRows(g.Size())
+	lines := bv.Render(g, &st, cw+gutterWidth(g.Size()), ch+header)
+	if len(lines) != ch+header {
+		t.Fatalf("unclipped render returned %d lines, want %d", len(lines), ch+header)
 	}
 	return lines
 }
@@ -68,7 +70,7 @@ func renderPlain(t *testing.T, bv *BoardView, g *game.Game) []string {
 // cellAt returns the rune at canvas coordinates (x, y) of an unclipped render.
 func cellAt(t *testing.T, lines []string, n, x, y int) rune {
 	t.Helper()
-	row := []rune(lines[y+1]) // line 0 is the letters row
+	row := []rune(lines[y+headerRows(n)]) // the coordinate header comes first
 	pos := gutterWidth(n) + x
 	if pos >= len(row) {
 		return ' ' // right-trimmed blank
@@ -1733,6 +1735,226 @@ func TestBorderOwnershipAddsNoGlyphs(t *testing.T) {
 		}
 		if got, want := label, pad(strconv.Itoa(y/Compact.rowStep+1), gutter); got != want {
 			t.Errorf("gutter of board row %d is %q, want just the number %q", y/Compact.rowStep+1, got, want)
+		}
+	}
+}
+
+// sizedGame returns an empty board of n columns. The header is about
+// coordinates rather than about play, so the position is left empty.
+func sizedGame(t *testing.T, n int) *game.Game {
+	t.Helper()
+	rs := game.Std
+	rs.Size = n
+	g, err := game.New(rs)
+	if err != nil {
+		t.Fatalf("board of %d columns: %v", n, err)
+	}
+	return g
+}
+
+// headerLabels reads a rendered coordinate header back the way a player does:
+// find a column, read the letters in it from the top down. It returns the name
+// each canvas column carries and which canvas columns hold an overflow arrow.
+//
+// It also asserts the two things that hold whatever the board size: no letter
+// strays into the row-number gutter, and no letter is left in an arrow's own
+// column, where it would be a piece of a name whose other letters the arrow
+// took.
+//
+// Only plain renders are read: every glyph a header can hold is one cell wide,
+// so a rune index into the line is the cell it occupies.
+func headerLabels(t *testing.T, header []string, gutter, left int) (map[int]string, map[int]bool) {
+	t.Helper()
+	labels := map[int]string{}
+	arrows := map[int]bool{}
+	for _, line := range header {
+		for i, r := range []rune(line) {
+			switch {
+			case r == ' ':
+			case i < gutter:
+				t.Errorf("the header carries %q in the row-number gutter: %q", r, line)
+			case r == glyphLeft || r == glyphRight:
+				arrows[left+i-gutter] = true
+			default:
+				labels[left+i-gutter] += string(r)
+			}
+		}
+	}
+	for x := range arrows {
+		if got, ok := labels[x]; ok {
+			t.Errorf("canvas column %d holds the letters %q beside an overflow arrow, which name no column", x, got)
+		}
+	}
+	return labels, arrows
+}
+
+// holeColumn maps a canvas column back to the board column whose holes stand
+// in it, and reports whether any do.
+func holeColumn(sc Scale, n, x int) (int, bool) {
+	if x < 1 || (x-1)%sc.colStep != 0 {
+		return 0, false
+	}
+	col := (x - 1) / sc.colStep
+	return col, col < n
+}
+
+// TestWideColumnHeadersNameEveryColumn is the header made legible past column
+// Z. Names there are two letters, and written along the row at the compact
+// scale — where holes are two cells apart — they touch: a 48-column board's
+// header read "AAABACAD", in which no column can be found. One letter per row
+// instead puts every letter in the cell above the hole column it names.
+//
+// What is asserted is what a player can read off the frame: for every column
+// of the board, the letters stacked above its holes spell that column's name,
+// and nothing is written above a canvas column that holds no holes. The board
+// geometry is not the subject and does not move; game.ColumnName is the
+// authority on the names.
+func TestWideColumnHeadersNameEveryColumn(t *testing.T) {
+	st := PlainStyles()
+	for _, n := range []int{26, 27, 30, 48} {
+		g := sizedGame(t, n)
+		gutter := gutterWidth(n)
+		for _, sc := range []Scale{Compact, Detail} {
+			_, ch := sc.CanvasSize(n)
+			w, h := sc.BlockSize(n)
+			bv := &BoardView{Scale: sc}
+			lines := bv.Render(g, &st, w, h)
+			if len(lines) != h {
+				t.Fatalf("n=%d %s: %d lines rendered into the %d-row block BlockSize promises", n, sc, len(lines), h)
+			}
+			for i, l := range lines {
+				if got := ansi.StringWidth(l); got > w {
+					t.Errorf("n=%d %s: line %d is %d cells wide in a %d-cell block: %q", n, sc, i, got, w, l)
+				}
+			}
+
+			// The header is whatever the block has above the canvas, and it
+			// must be one row per letter of the longest name.
+			header := len(lines) - ch
+			if want := len(game.ColumnName(n - 1)); header != want {
+				t.Fatalf("n=%d %s: the header is %d rows for names of %d letters", n, sc, header, want)
+			}
+
+			labels, arrows := headerLabels(t, lines[:header], gutter, 0)
+			if len(arrows) > 0 {
+				t.Errorf("n=%d %s: an overflow arrow although the block was given its full %dx%d", n, sc, w, h)
+			}
+			for col := range n {
+				x := sc.holeX(col)
+				if got, want := labels[x], game.ColumnName(col); got != want {
+					t.Errorf("n=%d %s: column %d is labelled %q, want %q\n%s",
+						n, sc, col, got, want, strings.Join(lines[:header], "\n"))
+				}
+				delete(labels, x)
+			}
+			for x, label := range labels {
+				col, ok := holeColumn(sc, n, x)
+				t.Errorf("n=%d %s: the letters %q sit over canvas column %d, which holds no hole (nearest column %d, in range %t)",
+					n, sc, label, x, col, ok)
+			}
+
+			// One row and one column narrower must clip, or the block size the
+			// layout engine reserves is bigger than the board needs.
+			short := strings.Join(bv.Render(g, &st, w, h-1), "\n")
+			if !strings.ContainsRune(short, glyphDown) && !strings.ContainsRune(short, glyphUp) {
+				t.Errorf("n=%d %s: no vertical overflow arrow one row short of the block", n, sc)
+			}
+			narrow := strings.Join(bv.Render(g, &st, w-1, h), "\n")
+			if !strings.ContainsRune(narrow, glyphRight) && !strings.ContainsRune(narrow, glyphLeft) {
+				t.Errorf("n=%d %s: no horizontal overflow arrow one column short of the block", n, sc)
+			}
+		}
+	}
+}
+
+// TestWideColumnHeadersStayTrueWhenClipped is the other half: a wide board is
+// nearly always looked at through a viewport, and a name written along the row
+// loses its second letter at the viewport's edge, so "AB" is shown as "A" and
+// the player reads the wrong column. Stacked, a name is shown whole or not at
+// all.
+//
+// Every label on the frame is therefore checked against the column it stands
+// over, at both scales, in viewports scrolled to each end of the board and
+// across the boundary where names grow a second letter. The cursor's own
+// column is scrolled into view with a cell to spare either side, so its name
+// must be there in full.
+func TestWideColumnHeadersStayTrueWhenClipped(t *testing.T) {
+	const n = 48
+	g := sizedGame(t, n)
+	st := PlainStyles()
+	gutter := gutterWidth(n)
+	header := len(game.ColumnName(n - 1))
+	cursors := []game.Point{
+		{Col: 0, Row: 0}, {Col: 25, Row: 5}, {Col: 26, Row: 6},
+		{Col: 27, Row: 10}, {Col: 46, Row: 20}, {Col: 47, Row: 47},
+	}
+	for _, sc := range []Scale{Compact, Detail} {
+		for _, size := range [][2]int{{24, 10}, {40, 14}, {80, 24}} {
+			w, h := size[0], size[1]
+			for _, cursor := range cursors {
+				bv := &BoardView{Scale: sc, ShowCursor: true, Cursor: cursor}
+				lines := bv.Render(g, &st, w, h)
+				if len(lines) < header+1 {
+					t.Fatalf("%s %dx%d cursor %s: %d lines rendered", sc, w, h, cursor, len(lines))
+				}
+				if len(lines) > h {
+					t.Errorf("%s %dx%d cursor %s: %d lines exceed the height", sc, w, h, cursor, len(lines))
+				}
+				for i, l := range lines {
+					if got := ansi.StringWidth(l); got > w {
+						t.Errorf("%s %dx%d cursor %s: line %d is %d cells wide: %q", sc, w, h, cursor, i, got, l)
+					}
+				}
+				_, left := bv.Viewport()
+				labels, _ := headerLabels(t, lines[:header], gutter, left)
+				if len(labels) == 0 {
+					t.Errorf("%s %dx%d cursor %s: no column labelled at all:\n%s",
+						sc, w, h, cursor, strings.Join(lines[:header], "\n"))
+				}
+				for x, label := range labels {
+					col, ok := holeColumn(sc, n, x)
+					if !ok {
+						t.Errorf("%s %dx%d cursor %s: the letters %q sit over canvas column %d, which holds no hole",
+							sc, w, h, cursor, label, x)
+						continue
+					}
+					if want := game.ColumnName(col); label != want {
+						t.Errorf("%s %dx%d cursor %s: column %d is labelled %q, want %q\n%s",
+							sc, w, h, cursor, col, label, want, strings.Join(lines[:header], "\n"))
+					}
+				}
+				if got, want := labels[sc.holeX(cursor.Col)], game.ColumnName(cursor.Col); got != want {
+					t.Errorf("%s %dx%d: the cursor rests on %s and its column is labelled %q, want %q\n%s",
+						sc, w, h, cursor, got, want, strings.Join(lines[:header], "\n"))
+				}
+			}
+		}
+	}
+}
+
+// TestTheHeaderCostsARowOnlyWhereNamesNeedOne pins the price of the fix. Boards
+// up to Z keep their single header row, so the standard 24-column board is
+// drawn exactly as before and the extra row is paid only by the boards whose
+// names are two letters.
+func TestTheHeaderCostsARowOnlyWhereNamesNeedOne(t *testing.T) {
+	st := PlainStyles()
+	for _, c := range []struct {
+		n, rows int
+	}{
+		{game.MinSize, 1}, {12, 1}, {24, 1}, {26, 1}, {27, 2}, {game.MaxSize, 2},
+	} {
+		g := sizedGame(t, c.n)
+		for _, sc := range []Scale{Compact, Detail} {
+			_, ch := sc.CanvasSize(c.n)
+			_, h := sc.BlockSize(c.n)
+			if h != ch+c.rows {
+				t.Errorf("n=%d %s: the block is %d rows for a %d-row canvas, want %d rows of header",
+					c.n, sc, h, ch, c.rows)
+			}
+			bv := &BoardView{Scale: sc}
+			if lines := bv.Render(g, &st, 400, 400); len(lines)-ch != c.rows {
+				t.Errorf("n=%d %s: %d header rows rendered, want %d", c.n, sc, len(lines)-ch, c.rows)
+			}
 		}
 	}
 }

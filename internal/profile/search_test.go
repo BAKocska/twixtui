@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 )
 
 // searchStore holds the profile set the search tests query. The names are
@@ -178,6 +179,54 @@ func TestInfixEditDistance(t *testing.T) {
 	for _, c := range cases {
 		if got := infixEditDistance([]rune(c.query), []rune(c.name)); got != c.want {
 			t.Errorf("infixEditDistance(%q, %q) = %d, want %d", c.query, c.name, got, c.want)
+		}
+	}
+}
+
+// TestSearchProfilesKeepsTheOrderItWasGiven covers the promise the shared
+// matcher makes to a caller that is not a store. The command line matches
+// names taken from the recorded results, where a name may belong to a player
+// with no profile any more and so no last-used time at all; the order those
+// arrive in is the caller's decision, and equally good matches have to come
+// back in it. A store passes List order, which is why its own results are
+// most recently used first.
+func TestSearchProfilesKeepsTheOrderItWasGiven(t *testing.T) {
+	older := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	// Deliberately not in recency order: the caller's order is the one that
+	// must survive.
+	given := []Profile{{Name: "Ida", LastUsed: older}, {Name: "Ada", LastUsed: newer}}
+
+	browse := SearchProfiles(given, "  ")
+	if len(browse) != 2 || browse[0].Profile.Name != "Ida" || browse[1].Profile.Name != "Ada" {
+		t.Errorf("browsing reordered the profiles: %+v", browse)
+	}
+
+	got := SearchProfiles(given, "da")
+	if len(got) != 2 {
+		t.Fatalf("SearchProfiles(%q) matched %d profiles, want both: %+v", "da", len(got), got)
+	}
+	if got[0].Score != got[1].Score {
+		t.Fatalf("the fixture no longer scores these two alike, so it cannot test a tie: %+v", got)
+	}
+	if got[0].Profile.Name != "Ida" || got[1].Profile.Name != "Ada" {
+		t.Errorf("equally good matches came back as %s then %s, want the order they were given",
+			got[0].Profile.Name, got[1].Profile.Name)
+	}
+}
+
+// TestStoreSearchAndSearchProfilesAgree covers the reason the matcher was
+// extracted: the interface and the command line both rank names, and a second
+// notion of what counts as close enough would have them disagree about the same
+// typed name.
+func TestStoreSearchAndSearchProfilesAgree(t *testing.T) {
+	s := searchStore(t)
+	profiles := s.List()
+	for _, query := range []string{"", "bal", "balitn", "an", "zsofia", "smith", "qqqq"} {
+		method := s.Search(query)
+		shared := SearchProfiles(profiles, query)
+		if !reflect.DeepEqual(method, shared) {
+			t.Errorf("Search(%q) = %+v, but the shared matcher says %+v", query, method, shared)
 		}
 	}
 }

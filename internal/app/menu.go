@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/BAKocska/twixtui/docs"
 
@@ -97,10 +98,18 @@ type gameSetup struct {
 
 	// role, relay and target describe a network game: which end this is, the
 	// relay to pair through when one is used, and the address or pairing code
-	// to reach the opponent with.
+	// to reach the opponent with. bind is which of this machine's addresses a
+	// direct host listens on, empty for every one of them.
 	role   netplay.Role
 	relay  string
 	target string
+	bind   string
+
+	// resume is the stored game a network connection is being made again for,
+	// nil for a new game. It carries the game's identity — the stored row, the
+	// seats, the transcript — so that everything the questions still ask about
+	// is the connection and never the game.
+	resume *RemoteResume
 }
 
 // NewMenu returns the main menu for a player.
@@ -855,12 +864,7 @@ func (m *Menu) openSaved() tea.Cmd {
 	opts := make([]menuOption, 0, len(saved))
 	for _, sv := range saved {
 		o := menuOption{label: savedRow(now, sv), value: sv, help: savedHelp(sv)}
-		switch sv.Kind {
-		case gamestore.Remote:
-			// A live network game cannot be picked up without reconnecting,
-			// and the game screen refuses a remote seat with no session.
-			o.disabled = true
-		case gamestore.Imported:
+		if sv.Kind == gamestore.Imported {
 			// Somebody else's game, read in to be looked at. Its players are
 			// not this machine's players, so playing on in it would mean taking
 			// a seat that belongs to one of them and then claiming the result.
@@ -876,6 +880,13 @@ func (m *Menu) openSaved() tea.Cmd {
 			sv, ok := m.form.(*chooser).opts[i].value.(gamestore.Saved)
 			if !ok {
 				return nil
+			}
+			if sv.Kind == gamestore.Remote {
+				// A network game needs its connection back before it can be
+				// played on, and which end of the new one this machine takes
+				// is the player's answer, so the row leads to that question
+				// rather than straight to a board.
+				return m.reconnectSaved(sv)
 			}
 			cfg, err := m.resumeConfig(sv)
 			if err != nil {
@@ -920,7 +931,7 @@ func savedRow(now time.Time, sv gamestore.Saved) string {
 func savedHelp(sv gamestore.Saved) string {
 	switch sv.Kind {
 	case gamestore.Remote:
-		return "A network game needs the connection back: host or join again from the network menu."
+		return "A network game: choosing it asks how to get the connection back — waiting for them, or connecting to them — and continues this game rather than starting another."
 	case gamestore.Correspondence:
 		return "A correspondence game: it opens on the board with the code exchange, whoever is to move."
 	case gamestore.Imported:
@@ -950,12 +961,16 @@ func standingsLines(d Deps) []string {
 		return []string{"No games recorded yet. Play one and it will appear here."}
 	}
 
-	nameW := len("player")
+	// Measured in terminal cells, which is what padTo pads to. Counting runes
+	// instead made the column too narrow for a fullwidth name and too wide for
+	// one carrying combining marks, and the rating column beside it moved by
+	// the difference — the one thing a column of numbers must not do.
+	nameW := ansi.StringWidth("player")
 	for _, s := range board.Players {
-		nameW = max(nameW, len([]rune(leaderboard.DisplayName(s.Name))))
+		nameW = max(nameW, ansi.StringWidth(leaderboard.DisplayName(s.Name)))
 	}
 	for _, s := range board.Bots {
-		nameW = max(nameW, len([]rune(leaderboard.DisplayName(s.Name))))
+		nameW = max(nameW, ansi.StringWidth(leaderboard.DisplayName(s.Name)))
 	}
 	// A position needs somebody to hold it against. With one player it would
 	// say only that they are the only one, over a score that is quite possibly
@@ -1420,6 +1435,12 @@ func stepNetMethod(m *Menu) tea.Cmd {
 			m.pending.role = mode.role
 			m.pending.relay = ""
 			m.pending.target = ""
+			m.pending.bind = ""
+			// This chooser is the door to a new game, so anything left over
+			// from a reconnection reached through the saved-game list goes
+			// here. The kind is Remote either way, so the setup is not rebuilt
+			// on the way in and would otherwise still be carrying it.
+			m.pending.resume = nil
 
 			// The method chooser stays as question one, after stepWho, so that
 			// escape from the next question comes back here rather than to the
@@ -1439,6 +1460,9 @@ func stepNetMethod(m *Menu) tea.Cmd {
 				}
 				if mode.role == netplay.Host {
 					steps = append(steps, stepSide, stepRules, stepSize)
+					if !mode.relay {
+						steps = append(steps, stepBindAddr)
+					}
 				} else if !mode.relay {
 					steps = append(steps, stepJoinAddr)
 				}
@@ -1500,11 +1524,48 @@ func stepPairingCode(m *Menu) tea.Cmd {
 		value:  m.pending.target,
 		cancel: backOneStep,
 		submit: func(m *Menu, v string) tea.Cmd {
-			if strings.TrimSpace(v) == "" {
+			v = strings.TrimSpace(v)
+			if v == "" {
 				m.message = "Type the code they gave you."
 				return nil
 			}
-			m.pending.target = strings.TrimSpace(v)
+			// Checked here, beside the field it was typed in, rather than
+			// after the wait has been promised: a code that cannot pair leaves
+			// the next screen waiting for an opponent who has no room to
+			// arrive in, and nothing on it would say why.
+			if err := netplay.CheckPairingCode(v); err != nil {
+				m.message = err.Error()
+				return nil
+			}
+			m.pending.target = v
+			return m.answered()
+		},
+	}
+	return nil
+}
+
+// stepBindAddr asks which of this machine's addresses accepts the connection.
+//
+// Blank is every one of them, which is what a host on a home network or a
+// tailnet wants. 127.0.0.1 accepts only connections from this machine, which
+// is what somebody trying the two ends against each other wants, and what a
+// host who does not want to be reachable from the rest of the network wants.
+func stepBindAddr(m *Menu) tea.Cmd {
+	m.form = &textForm{
+		title:  "Which address do you listen on?",
+		label:  "an interface address, or blank for every one of them",
+		note:   "127.0.0.1 accepts connections from this machine only. Port " + netplay.DefaultPort + " is used when you do not give one.",
+		value:  m.pending.bind,
+		cancel: backOneStep,
+		submit: func(m *Menu, v string) tea.Cmd {
+			v = strings.TrimSpace(v)
+			if v != "" {
+				if _, err := netplay.BindAddr(v); err != nil {
+					m.message = err.Error()
+					return nil
+				}
+			}
+			m.pending.bind = v
 			return m.answered()
 		},
 	}
@@ -1515,10 +1576,14 @@ func stepPairingCode(m *Menu) tea.Cmd {
 // told. The dial runs in a command: it blocks for as long as the other player
 // takes, which must not be inside Update.
 func stepConnect(m *Menu) tea.Cmd {
+	resume := m.pending.resume
 	if m.pending.role == netplay.Guest {
-		return m.connectAs("Connecting", []string{"Reaching " + m.describeTarget() + "."},
+		opts := netplay.GuestOptions{Name: m.player}
+		if resume != nil {
+			opts = resume.Guest()
+		}
+		return m.connectAs("Connecting", m.connectInfo("Reaching "+m.describeTarget()+"."),
 			func(ctx context.Context) (netplay.Session, error) {
-				opts := netplay.GuestOptions{Name: m.player}
 				if m.pending.relay != "" {
 					// The address goes to the relay code unfilled: it supplies
 					// DefaultRelayPort itself. Filling it in here with
@@ -1531,35 +1596,40 @@ func stepConnect(m *Menu) tea.Cmd {
 			})
 	}
 
-	rules := m.pending.rules
-	if err := rules.Validate(); err != nil {
-		m.message = err.Error()
-		return nil
+	var opts netplay.HostOptions
+	if resume != nil {
+		opts = resume.Host()
+	} else {
+		rules := m.pending.rules
+		if err := rules.Validate(); err != nil {
+			m.message = err.Error()
+			return nil
+		}
+		opts = netplay.HostOptions{Name: m.player, Rules: rules, Side: m.pending.side}
 	}
-	opts := netplay.HostOptions{Name: m.player, Rules: rules, Side: m.pending.side}
 
 	if m.pending.relay != "" {
 		code := netplay.PairingCode()
 		relay := m.pending.relay
-		info := []string{
-			"Pairing code: " + code,
-			"They run: twixtui play join --relay " + m.pending.relay + " " + code,
-		}
+		info := m.connectInfo(
+			"Pairing code: "+code,
+			"They run: twixtui play join --relay "+relay+" "+code,
+		)
 		return m.connectAs("Waiting for your opponent", info,
 			func(ctx context.Context) (netplay.Session, error) {
 				return netplay.HostViaRelay(ctx, relay, code, opts)
 			})
 	}
 
-	listener, err := netplay.Bind("")
+	listener, err := netplay.Bind(m.pending.bind)
 	if err != nil {
 		m.message = err.Error()
 		return nil
 	}
-	info := []string{
-		"Listening on " + listener.Addr(),
-		"They run: twixtui play join <your address>",
-	}
+	info := m.connectInfo(
+		"Listening on "+listener.Addr(),
+		"They run: twixtui play join "+netplay.JoinTarget(listener.Addr()),
+	)
 	return m.connectAs("Waiting for your opponent", info,
 		func(ctx context.Context) (netplay.Session, error) {
 			s, err := listener.Wait(ctx, opts)
@@ -1568,6 +1638,19 @@ func stepConnect(m *Menu) tea.Cmd {
 			}
 			return s, err
 		})
+}
+
+// connectInfo names the game a connection is being made for when it is one
+// being continued, so that a reconnection cannot be read as a new game with
+// the same opponent.
+func (m *Menu) connectInfo(lines ...string) []string {
+	r := m.pending.resume
+	if r == nil {
+		return lines
+	}
+	head := fmt.Sprintf("Continuing %s against %s, %s in the record.",
+		r.Saved.ID, r.Snapshot.Opponent, entriesPhrase(len(r.Snapshot.Moves)))
+	return append([]string{head}, lines...)
 }
 
 func (m *Menu) describeTarget() string {
@@ -1615,17 +1698,111 @@ func (m *Menu) connected(msg menuSessionMsg) tea.Cmd {
 		}
 		return nil
 	}
-	side := msg.session.Side()
-	cfg := GameConfig{
-		Kind:  gamestore.Remote,
-		Rules: msg.session.Rules(),
-		Seats: map[game.Player]Seat{
-			side:            {Profile: m.player, Label: m.player},
-			side.Opponent(): {Remote: true, Label: msg.session.OpponentName()},
-		},
-		Session: msg.session,
+	if r := m.pending.resume; r != nil {
+		return m.start(r.Continue(msg.session))
 	}
-	return m.start(cfg)
+	return m.start(RemoteConfig(m.player, msg.session))
+}
+
+// reconnectSaved begins the form that gets a stored network game's connection
+// back.
+//
+// The game is prepared here, on the list it was chosen from, so that a row
+// that cannot be continued at all — finished, another profile's, a record that
+// will not replay — says so where it was chosen rather than after a wait. What
+// the questions then settle is only the connection: which end this machine
+// takes and how it is reached. Nothing here starts a new game, and the row's
+// identifier, seats and record are the ones the continued game keeps.
+func (m *Menu) reconnectSaved(sv gamestore.Saved) tea.Cmd {
+	// The row was a snapshot taken when the list was built, and by now the
+	// game may have been played on or finished in another window; the same
+	// re-read resumeConfig makes, for the same reason.
+	if fresh, err := m.deps.Games.Get(sv.ID); err == nil {
+		sv = fresh
+	}
+	res, err := PrepareRemoteResume(sv, m.player)
+	if err != nil {
+		m.message = err.Error()
+		return nil
+	}
+	m.pending = gameSetup{
+		kind:   gamestore.Remote,
+		rules:  res.Snapshot.Rules,
+		side:   res.Snapshot.Side,
+		resume: &res,
+	}
+	m.message = res.Describe()
+	m.steps = []stepFn{reopenSaved, stepReconnect}
+	return m.runStep(1)
+}
+
+// reopenSaved is the way back from a reconnection question to the list the
+// game was chosen from, so escape walks backwards there as it does everywhere
+// else in these forms.
+func reopenSaved(m *Menu) tea.Cmd { return m.openSaved() }
+
+// stepReconnect asks how the connection is to be made again.
+//
+// It is asked every time and never remembered, because a role belongs to a
+// connection and not to a game: whichever of the two of you can accept a
+// connection today waits, and the other one connects. The rules, the side and
+// the seats are not asked about at all — they are the saved game's, and this
+// form cannot change them.
+func stepReconnect(m *Menu) tea.Cmd {
+	type method struct {
+		role  netplay.Role
+		relay bool
+	}
+	m.form = &chooser{
+		title: "How do you want to reconnect?",
+		opts: []menuOption{
+			{
+				label: "wait for them to connect to me",
+				help:  "You listen and they connect. The side and the rules stay as they were.",
+				value: method{role: netplay.Host},
+			},
+			{
+				label: "wait for them through a relay",
+				help:  "For when neither of you can accept a connection. One of you runs twixtui serve.",
+				value: method{role: netplay.Host, relay: true},
+			},
+			{
+				label: "connect to their address",
+				help:  "They are listening for this game; you connect to the address they printed.",
+				value: method{role: netplay.Guest},
+			},
+			{
+				label: "join their pairing code through a relay",
+				help:  "They are waiting for this game on a relay and printed a code.",
+				value: method{role: netplay.Guest, relay: true},
+			},
+		},
+		cancel: backOneStep,
+		pick: func(m *Menu, i int) tea.Cmd {
+			mode, _ := m.form.(*chooser).opts[i].value.(method)
+			m.pending.role = mode.role
+			m.pending.relay = ""
+			m.pending.target = ""
+			m.pending.bind = ""
+
+			steps := []stepFn{reopenSaved, stepReconnect}
+			if mode.relay {
+				steps = append(steps, stepRelayAddr)
+			}
+			switch {
+			case mode.role == netplay.Host && !mode.relay:
+				steps = append(steps, stepBindAddr)
+			case mode.role == netplay.Guest && mode.relay:
+				steps = append(steps, stepPairingCode)
+			case mode.role == netplay.Guest:
+				steps = append(steps, stepJoinAddr)
+			}
+			steps = append(steps, stepConnect)
+			m.steps = steps
+			return m.runStep(2)
+		},
+	}
+	return nil
 }
 
 // the correspondence form.
@@ -1913,7 +2090,11 @@ func (m *Menu) resumeConfig(sv gamestore.Saved) (GameConfig, error) {
 		cfg.Hints = m.defaults.hintsOffered()
 		cfg.HintFor = opponent
 	case strings.HasPrefix(sv.Opponent, leaderboard.RemotePrefix):
-		return GameConfig{}, errors.New("this game needs its connection back: host or join it again")
+		// A network game does not come through here: the list sends it to the
+		// reconnection form, which gets its connection back. What is left is a
+		// row of some other kind naming an opponent on another machine, and
+		// there is no seat on this one to give them.
+		return GameConfig{}, fmt.Errorf("saved game %s is a %s game against an opponent on another machine, which is not a game this machine can play on alone", sv.ID, sv.Kind)
 	default:
 		if sv.Opponent == "" {
 			return GameConfig{}, errors.New("the stored game does not say who the other player was")

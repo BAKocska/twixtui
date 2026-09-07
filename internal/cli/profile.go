@@ -3,12 +3,13 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/BAKocska/twixtui/internal/humantime"
 	"github.com/BAKocska/twixtui/internal/profile"
+	"github.com/BAKocska/twixtui/internal/ui"
 )
 
 // openProfiles opens the profile store for the resolved configuration directory.
@@ -27,19 +28,40 @@ func (o *options) profileCompletions(_ *cobra.Command, _ []string, toComplete st
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
+	current, _ := o.currentProfile(store)
 	matches := store.Search(toComplete)
 	out := make([]cobra.Completion, 0, len(matches))
 	for _, m := range matches {
-		out = append(out, cobra.CompletionWithDesc(m.Profile.Name, lastPlayed(m.Profile)))
+		out = append(out, cobra.CompletionWithDesc(m.Profile.Name, describeProfile(m.Profile, current)))
 	}
 	return out, cobra.ShellCompDirectiveNoFileComp
 }
 
-func lastPlayed(p profile.Profile) string {
-	if p.LastUsed.IsZero() {
+// describeProfile is what a shell shows beside a completed name.
+//
+// It names the profile as well as saying when it last played, because when it
+// last played is not always a distinguishing fact: two profiles that have
+// never played, or that were both used by the same script, carry the same
+// timestamp, and a shell that groups its candidates by their description then
+// offers one row where there are two players. The name is what tells them
+// apart in every case.
+func describeProfile(p profile.Profile, current string) string {
+	parts := make([]string, 0, 3)
+	parts = append(parts, p.Name)
+	if current != "" && p.Name == current {
+		parts = append(parts, "current")
+	}
+	return strings.Join(append(parts, lastPlayed(p.LastUsed)), ", ")
+}
+
+// lastPlayed says when somebody last played, in the words a completion
+// description has room for. It takes the timestamp rather than the profile
+// because the result log names players who have no profile to read it from.
+func lastPlayed(when time.Time) string {
+	if when.IsZero() {
 		return "never played"
 	}
-	return "last played " + humantime.Since(p.LastUsed)
+	return "last played " + humantime.Since(when)
 }
 
 func newProfileCommand(opts *options) *cobra.Command {
@@ -56,7 +78,7 @@ and TAB completion will still find you if you misremember the spelling.`,
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List the profiles, most recently played first",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, err := opts.openProfiles()
 			if err != nil {
@@ -69,24 +91,24 @@ and TAB completion will still find you if you misremember the spelling.`,
 				return err
 			}
 			current, _ := opts.currentProfile(store)
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "\tNAME\tCREATED\tLAST PLAYED")
+			rows := make([][]string, 0, len(profiles)+1)
+			rows = append(rows, []string{"", "NAME", "CREATED", "LAST PLAYED"})
 			for _, p := range profiles {
 				marker := ""
 				if p.Name == current {
 					marker = "*"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", marker, p.Name,
-					p.Created.Format("2006-01-02"), lastPlayedColumn(p))
+				rows = append(rows, []string{marker, p.Name,
+					p.Created.Format("2006-01-02"), lastPlayedColumn(p)})
 			}
-			return w.Flush()
+			return ui.WriteTable(cmd.OutOrStdout(), rows, 2)
 		},
 	}
 
 	create := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a profile",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := opts.openProfiles()
 			if err != nil {
@@ -111,7 +133,7 @@ and TAB completion will still find you if you misremember the spelling.`,
 
 The name is matched loosely, so a near miss still finds the right profile. If
 several profiles match, they are listed and nothing is changed.`,
-		Args:              cobra.ExactArgs(1),
+		Args:              exactArgs(1),
 		ValidArgsFunction: opts.profileCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := opts.openProfiles()
@@ -137,7 +159,7 @@ several profiles match, they are listed and nothing is changed.`,
 
 Games already recorded keep the old name, because the leaderboard is a log of
 what happened rather than a table that can be rewritten.`,
-		Args:              cobra.ExactArgs(2),
+		Args:              exactArgs(2),
 		ValidArgsFunction: opts.profileCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := opts.openProfiles()
@@ -155,7 +177,7 @@ what happened rather than a table that can be rewritten.`,
 	del := &cobra.Command{
 		Use:               "delete <name>",
 		Short:             "Delete a profile",
-		Args:              cobra.ExactArgs(1),
+		Args:              exactArgs(1),
 		ValidArgsFunction: opts.profileCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := opts.openProfiles()
@@ -174,7 +196,7 @@ what happened rather than a table that can be rewritten.`,
 	whoami := &cobra.Command{
 		Use:   "whoami",
 		Short: "Print the profile currently in use",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, err := opts.openProfiles()
 			if err != nil {
@@ -204,7 +226,18 @@ func lastPlayedColumn(p profile.Profile) string {
 
 // resolveProfileName turns what the player typed into exactly one profile name,
 // accepting an exact name, or a unique loose match.
+//
+// A blank selector is refused rather than searched. The loose search answers a
+// blank query with every profile, which is what makes it the browsable list
+// behind TAB completion, and that same answer read as a selection means "the
+// only profile" on a machine with one and "ambiguous" on a machine with two:
+// the same command would play as somebody on one machine and refuse on the
+// next. Nothing is lost, because a caller wanting the current profile leaves
+// the selector out instead of passing an empty one.
 func resolveProfileName(store *profile.Store, query string) (string, error) {
+	if strings.TrimSpace(query) == "" {
+		return "", fmt.Errorf("no profile name given; run twixtui profile list to see them")
+	}
 	if p, ok := store.Get(query); ok {
 		return p.Name, nil
 	}

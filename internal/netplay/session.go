@@ -401,6 +401,19 @@ func closeOnCancel(ctx context.Context, c io.Closer) (stop func()) {
 }
 
 // openAsHost sends the invitation and reads the guest's answer.
+//
+// The invitation goes out as soon as something connects, which is before this
+// end knows anything about what connected — so whatever opened the socket
+// reads the host's name and the ruleset. That is true of both transports: the
+// frames a relayed game authenticates are tagged, not hidden, so a relay, or
+// anyone who reached the room without the key part of the pairing code, reads
+// the hello as plainly as the invited opponent does. What the key buys is that
+// such an arrival cannot answer: it is turned away at the acceptance, and the
+// host goes back to waiting for the one that can. A direct connection has no
+// key at all, so the same disclosure is made to whatever can reach the
+// address, and nothing after it is authenticated either. That is why the help
+// says what each route exposes rather than promising either of them is
+// private.
 func (s *session) openAsHost(cfg config) ([]Event, error) {
 	hello := message{
 		Type:        msgHello,

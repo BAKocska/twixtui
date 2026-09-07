@@ -1210,10 +1210,17 @@ func (s *gameScreen) opponentName() string {
 
 // stop ends play with a reason the player can read. The position is kept on
 // screen: what has happened is exactly what the player needs to see.
+//
+// The connection label goes. Every reason play stops for is a reason the
+// connection is finished with, and "connected: Bea" left on the panel under a
+// notice saying the connection dropped is the one line on screen that
+// contradicts the rest of it — a player reading the panel for the state of the
+// connection would be told it is up.
 func (s *gameScreen) stop(reason string) {
 	s.stopped = true
 	s.notice = reason
 	s.message = ""
+	s.netNote = ""
 	s.linkMode = false
 	s.hint.clear()
 	s.cancelBot()

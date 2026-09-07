@@ -532,3 +532,323 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// pkWideNames are legal profile names on which runes and cells disagree, which
+// is most of the world's names: any script is allowed (profile.ValidateName),
+// so a name of the maximum thirty-two characters can be sixty-four cells wide,
+// or sixteen.
+var pkWideNames = map[string]string{
+	"fullwidth": strings.Repeat("日", profile.MaxNameRunes),
+	"combining": strings.Repeat("e\u0301", profile.MaxNameRunes/2),
+	"emoji":     strings.Repeat("🙂", profile.MaxNameRunes/2),
+	"ascii":     strings.Repeat("W", profile.MaxNameRunes),
+	"mixed":     "Zso\u0301fia 日本語 🙂",
+}
+
+// TestPickerRowsFitTheWidthTheyAreGiven is the display-width half of R14. A row
+// budgeted in runes overflows for any name whose characters are not one cell
+// wide, and the frame then cuts the line — taking the age column the row was
+// widened for, and with it the one thing that tells two similar names apart.
+//
+// Every row therefore has to fit the width it was handed, whatever the script,
+// at the selected width and unselected, and for the offer to create a name as
+// well as for a profile that exists.
+func TestPickerRowsFitTheWidthTheyAreGiven(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	d := shellTestDeps(t)
+	d.Now = func() time.Time { return now }
+	p := pkPicker(t, d, nil)
+	st := shellStyles(p.deps)
+	then := now.Add(-3 * time.Hour)
+
+	for what, name := range pkWideNames {
+		if err := profile.ValidateName(name); err != nil {
+			t.Fatalf("%s: the test name is not a legal profile name: %v", what, err)
+		}
+		for _, width := range []int{2, 3, 10, 20, 40, 51, 52, 80, 200} {
+			for _, create := range []bool{false, true} {
+				kind := "profile"
+				if create {
+					kind = "create"
+				}
+				for _, sel := range []int{0, 1} {
+					p.rows = []pickerRow{{name: name, lastUsed: then, create: create}}
+					p.sel = sel
+					row := p.renderRow(st, 0, width)
+					if got := ansi.StringWidth(row); got > width {
+						t.Errorf("%s: a %s row (selected %t) is %d cells wide in a %d column terminal: %q",
+							what, kind, sel == 0, got, width, row)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestPickerGivesTheNameTheRoomBeforeTheAge is the priority the list has always
+// stated: the age helps you recognise your row, the name is the row, so where
+// both will not fit it is the age that goes. A thirty-two character CJK name is
+// sixty-four cells and does not fit the name column of an eighty column
+// terminal; cutting it to keep a date would say less about whose row it is than
+// the whole name does. Given the room, the age comes back.
+func TestPickerGivesTheNameTheRoomBeforeTheAge(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	d := shellTestDeps(t)
+	d.Now = func() time.Time { return now }
+	p := pkPicker(t, d, nil)
+	st := shellStyles(p.deps)
+	then := now.Add(-3 * time.Hour)
+	age := playedAgo(now, then)
+	wide := strings.Repeat("日", profile.MaxNameRunes)
+
+	p.rows = []pickerRow{{name: wide, lastUsed: then}}
+	row := p.renderRow(st, 0, 80)
+	if !strings.Contains(row, wide) {
+		t.Errorf("a 64-cell name is not shown whole in 80 columns: %q", row)
+	}
+	if strings.Contains(row, ellipsis) {
+		t.Errorf("the name was cut although dropping the age left room for it: %q", row)
+	}
+	if strings.Contains(row, age) {
+		t.Errorf("the age %q is drawn beside a name that needs the whole row: %q", age, row)
+	}
+	if got := ansi.StringWidth(row); got > 80 {
+		t.Errorf("the row is %d cells wide in 80 columns: %q", got, row)
+	}
+
+	// Given a terminal wide enough for both, the age is back.
+	if row := p.renderRow(st, 0, 200); !strings.Contains(row, wide) || !strings.Contains(row, age) {
+		t.Errorf("in 200 columns the row shows one of the name and the age but not both: %q", row)
+	}
+
+	// A name that fits its column keeps every character and its age.
+	p.rows = []pickerRow{{name: "Zso\u0301fia", lastUsed: then}}
+	row = p.renderRow(st, 0, 80)
+	if !strings.Contains(row, "Zso\u0301fia") || strings.Contains(row, ellipsis) {
+		t.Errorf("a six-cell name was not shown whole: %q", row)
+	}
+	if !strings.Contains(row, age) {
+		t.Errorf("a six-cell name lost the age column: %q", row)
+	}
+
+	// The age is a column: it starts in the same cell whatever the name in
+	// front of it, or the list reads as scattered dates.
+	p.rows = []pickerRow{{name: "Bo", lastUsed: then}, {name: "Bernadett", lastUsed: then}}
+	p.sel = 0
+	first, second := p.renderRow(st, 0, 80), p.renderRow(st, 1, 80)
+	if a, b := pkColumnOf(t, first, age), pkColumnOf(t, second, age); a != b {
+		t.Errorf("the age starts at cell %d on one row and %d on the next:\n%q\n%q", a, b, first, second)
+	}
+}
+
+// pkColumnOf returns the display column at which text starts in a rendered
+// row, which is what a reader sees line up.
+func pkColumnOf(t *testing.T, row, text string) int {
+	t.Helper()
+	i := strings.Index(row, text)
+	if i < 0 {
+		t.Fatalf("%q is not in the row %q", text, row)
+	}
+	return ansi.StringWidth(row[:i])
+}
+
+// TestPickerCutsNamesBetweenCharacters holds the cut to character boundaries.
+// A row shortened between a letter and its combining accent, or inside an
+// emoji, puts a fragment of a character on the screen, which a terminal draws
+// as a stray accent or as nothing at all.
+func TestPickerCutsNamesBetweenCharacters(t *testing.T) {
+	d := shellTestDeps(t)
+	p := pkPicker(t, d, nil)
+	st := shellStyles(p.deps)
+
+	for _, name := range []string{
+		strings.Repeat("e\u0301", profile.MaxNameRunes/2),
+		strings.Repeat("🙂", profile.MaxNameRunes/2),
+		strings.Repeat("日", profile.MaxNameRunes),
+	} {
+		boundaries := pkClusterBoundaries(name)
+		for width := 4; width <= 24; width++ {
+			p.rows = []pickerRow{{name: name}}
+			p.sel = 0
+			row := p.renderRow(st, 0, width)
+			// The selection marker is two cells; what follows it is the name
+			// as much of it as was shown, and the mark if it was cut.
+			shown := strings.TrimSuffix(strings.TrimPrefix(ansi.Strip(row), "> "), ellipsis)
+			if !strings.HasPrefix(name, shown) {
+				t.Errorf("at %d columns the row shows %q, which is not the start of %q", width, shown, name)
+				continue
+			}
+			if !boundaries[len(shown)] {
+				t.Errorf("at %d columns the row shows %q, cut inside a character of %q", width, shown, name)
+			}
+		}
+	}
+}
+
+// pkClusterBoundaries reports the byte offsets of name that fall between
+// characters as a reader sees them, the whole string included.
+func pkClusterBoundaries(name string) map[int]bool {
+	out := map[int]bool{0: true}
+	for off := 0; off < len(name); {
+		cluster, _ := ansi.FirstGraphemeCluster(name[off:], ansi.GraphemeWidth)
+		if cluster == "" {
+			break
+		}
+		off += len(cluster)
+		out[off] = true
+	}
+	return out
+}
+
+// TestPickerHighlightKeepsACharacterWhole is the match highlight's own version
+// of the same rule. An accent written as a combining mark is a rune of its own,
+// and a highlight that takes the letter without it puts a style boundary inside
+// one character on screen: the terminal then draws an unstyled accent over a
+// highlighted letter.
+func TestPickerHighlightKeepsACharacterWhole(t *testing.T) {
+	st := ui.DefaultStyles()
+	const name = "e\u0301clair"
+	want := paint(&st, &st.Highlight, "e\u0301")
+	if !strings.Contains(want, "\x1b") {
+		t.Fatalf("the highlight style emits no escape sequence, so this test cannot tell the cases apart: %q", want)
+	}
+
+	got := highlightRunes(&st, name, []int{0})
+	if !strings.Contains(got, want) {
+		t.Errorf("the accent is styled apart from its letter:\ngot  %q\nwant %q inside it", got, want)
+	}
+	if plain := ansi.Strip(got); plain != name {
+		t.Errorf("the highlighted name reads %q, want %q", plain, name)
+	}
+
+	// Adjacent matches are one styled run, and a position past the end of the
+	// name changes nothing rather than dropping characters.
+	if run, want := highlightRunes(&st, "Balint", []int{1, 2, 3}), paint(&st, &st.Highlight, "ali"); !strings.Contains(run, want) {
+		t.Errorf("adjacent matches are styled separately:\ngot  %q\nwant %q inside it", run, want)
+	}
+	if got := highlightRunes(&st, name, []int{99}); got != name {
+		t.Errorf("a position outside the name changed it to %q", got)
+	}
+}
+
+// pkKey encodes the editing keys shellKeyPress does not know, checking the
+// encoding so that a test cannot dispatch a name the terminal never produces.
+func pkKey(t *testing.T, name string) tea.KeyPressMsg {
+	t.Helper()
+	var k tea.Key
+	switch name {
+	case "left":
+		k = tea.Key{Code: tea.KeyLeft}
+	case "right":
+		k = tea.Key{Code: tea.KeyRight}
+	case "delete":
+		k = tea.Key{Code: tea.KeyDelete}
+	default:
+		return shellKeyPress(name)
+	}
+	press := tea.KeyPressMsg(k)
+	if got := press.String(); got != name {
+		t.Fatalf("key %q encodes as %q", name, got)
+	}
+	return press
+}
+
+// TestPickerQueryKeepsTheCaretInView is the query field's clipping boundary.
+// The caret says where the next character will go, so a field too narrow for
+// the text has to scroll around the caret: cutting the finished line from the
+// left dropped the caret whenever the cursor was left of the overflow, leaving
+// the end of a name on screen and no cursor anywhere on it.
+//
+// The text is fullwidth, so every character is two cells and the window edges
+// fall between characters rather than on them, which is also where a field one
+// cell too wide for its frame came from.
+func TestPickerQueryKeepsTheCaretInView(t *testing.T) {
+	d := shellTestDeps(t)
+	p := pkPicker(t, d, nil)
+	st := shellStyles(p.deps)
+	const query = "日本語日本語日本語日本語日本語日本語日"
+	runes := []rune(query)
+
+	for _, width := range []int{3, 4, 9, 20, 21, 40} {
+		for _, at := range []int{0, 1, len(runes) / 2, len(runes) - 1, len(runes)} {
+			p.edit.setValue(query)
+			p.edit.pos = at
+			line := p.edit.render(st, width)
+			if got := ansi.StringWidth(line); got > width {
+				t.Errorf("cursor at %d: the field is %d cells wide in %d columns: %q", at, got, width, line)
+			}
+			body, ok := strings.CutPrefix(ansi.Strip(line), "> ")
+			if !ok {
+				t.Fatalf("cursor at %d: the field lost its prompt: %q", at, line)
+			}
+			i := strings.Index(body, caret)
+			if i < 0 {
+				t.Errorf("cursor at %d in %d columns: the caret is not on screen: %q", at, width, line)
+				continue
+			}
+			// What is shown must be a window onto the text around the cursor:
+			// the part before the caret ends where the cursor is, the part
+			// after it starts there.
+			if head, want := body[:i], string(runes[:at]); !strings.HasSuffix(want, head) {
+				t.Errorf("cursor at %d in %d columns: %q is drawn before the caret, which is not the end of %q",
+					at, width, head, want)
+			}
+			if tail, want := body[i+len(caret):], string(runes[at:]); !strings.HasPrefix(want, tail) {
+				t.Errorf("cursor at %d in %d columns: %q is drawn after the caret, which is not the start of %q",
+					at, width, tail, want)
+			}
+		}
+	}
+}
+
+// TestPickerQueryEditsWholeCharacters is the editing half of the same rule. An
+// accent written as a combining mark and an emoji written as several runes
+// joined together are each one character on screen: a cursor inside one has no
+// cell to be drawn in, and a backspace inside one strips the accent off its
+// letter, leaving a name nobody typed.
+func TestPickerQueryEditsWholeCharacters(t *testing.T) {
+	d := shellTestDeps(t)
+	p := pkPicker(t, d, nil)
+
+	// "é" as a letter and a combining accent, then a plain letter.
+	const accented = "e\u0301x"
+	p.edit.setValue(accented)
+	p.edit.key(pkKey(t, "left"))
+	if got := p.edit.pos; got != 2 {
+		t.Errorf("one left from the end of %q puts the cursor at rune %d, want 2", accented, got)
+	}
+	p.edit.key(pkKey(t, "left"))
+	if got := p.edit.pos; got != 0 {
+		t.Errorf("left again puts the cursor at rune %d, between the letter and its accent", got)
+	}
+	p.edit.key(pkKey(t, "right"))
+	if got := p.edit.pos; got != 2 {
+		t.Errorf("right from the start puts the cursor at rune %d, between the letter and its accent", got)
+	}
+
+	p.edit.setValue(accented)
+	p.edit.key(pkKey(t, "backspace"))
+	p.edit.key(pkKey(t, "backspace"))
+	if got := p.edit.value(); got != "" {
+		t.Errorf("two backspaces over %q leave %q, want the accented letter gone whole", accented, got)
+	}
+
+	p.edit.setValue(accented)
+	p.edit.pos = 0
+	p.edit.key(pkKey(t, "delete"))
+	if got := p.edit.value(); got != "x" {
+		t.Errorf("delete over the accented letter of %q leaves %q, want %q", accented, got, "x")
+	}
+
+	// An emoji joined out of several runes is one character as well. It is not
+	// a legal profile name — the joiner is an invisible character, which
+	// profile.ValidateName refuses — but the field is a text field, and what a
+	// player types into it has to behave.
+	const family = "\U0001F469\u200D\U0001F467z"
+	p.edit.setValue(family)
+	p.edit.key(pkKey(t, "backspace"))
+	p.edit.key(pkKey(t, "backspace"))
+	if got := p.edit.value(); got != "" {
+		t.Errorf("two backspaces over %q leave %q, want the joined emoji gone whole", family, got)
+	}
+}

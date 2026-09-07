@@ -130,6 +130,51 @@ func TestArrangePicksSchemesAndPanels(t *testing.T) {
 	}
 }
 
+// TestArrangeReservesTheWholeWideBlock is the layout half of the two-row
+// coordinate header. A board past column Z spends a row on the second letter
+// of its column names, so a layout engine that still reserves one row would
+// promise the whole board room it has not got: the frame would come back
+// clipped, with an overflow arrow, in a terminal big enough to show all of it.
+//
+// Two sizes, one per scale, chosen so that the block fits with room to spare.
+// What is asserted is the promise: the board that comes back is the whole
+// block, inside the space the arrangement gave it, and no arrow says
+// otherwise.
+func TestArrangeReservesTheWholeWideBlock(t *testing.T) {
+	const n = game.MaxSize
+	g := sizedGame(t, n)
+	st := PlainStyles()
+	for _, s := range []struct {
+		w, h  int
+		scale Scale
+	}{
+		{120, 60, Compact},
+		{210, 104, Detail},
+	} {
+		arr := Arrange(s.w, s.h, n)
+		if arr.TooSmall || arr.Scale != s.scale {
+			t.Fatalf("%dx%d: scale %s, too small %t, want scale %s", s.w, s.h, arr.Scale, arr.TooSmall, s.scale)
+		}
+		blockW, blockH := arr.Scale.BlockSize(n)
+		if blockW > arr.BoardAvailW || blockH > arr.BoardAvailH {
+			t.Fatalf("%dx%d: the %s block is %dx%d and the board is given %dx%d",
+				s.w, s.h, arr.Scale, blockW, blockH, arr.BoardAvailW, arr.BoardAvailH)
+		}
+		bv := &BoardView{Scale: arr.Scale}
+		board := bv.Render(g, &st, arr.BoardAvailW, arr.BoardAvailH)
+		if len(board) != blockH {
+			t.Errorf("%dx%d: %d board lines for a %d-row block", s.w, s.h, len(board), blockH)
+		}
+		frame := Compose(arr, board, nil, "", &st)
+		for _, r := range []rune{glyphUp, glyphDown, glyphLeft, glyphRight} {
+			if strings.ContainsRune(frame, r) {
+				t.Errorf("%dx%d: overflow arrow %q although the whole board fits:\n%s", s.w, s.h, r, frame)
+			}
+		}
+		checkFrameFits(t, frame, s.w, s.h)
+	}
+}
+
 func TestTooSmallStateIsExplicit(t *testing.T) {
 	for _, s := range [][2]int{{19, 24}, {80, 5}, {5, 3}, {1, 1}} {
 		frame := frameAt(t, s[0], s[1])

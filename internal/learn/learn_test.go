@@ -150,6 +150,33 @@ func TestLessonIDsUniqueAndFindable(t *testing.T) {
 	}
 }
 
+// TestLessonIDsMatchWhateverTheCaseIs covers how an identifier actually
+// arrives: typed at a shell, where every other value twixtui accepts is
+// matched without regard to case. "twixtui learn Board" used to be no lesson at
+// all. The canonical identifier is what comes back, so nothing that lists or
+// completes lessons gains a second spelling.
+func TestLessonIDsMatchWhateverTheCaseIs(t *testing.T) {
+	for _, l := range Lessons() {
+		for _, typed := range []string{
+			strings.ToUpper(l.ID),
+			strings.ToTitle(l.ID[:1]) + l.ID[1:],
+		} {
+			found, ok := Find(typed)
+			if !ok {
+				t.Errorf("Find(%q) found nothing, though %q is a lesson", typed, l.ID)
+				continue
+			}
+			if found.ID != l.ID {
+				t.Errorf("Find(%q) answered with the identifier %q, want the canonical %q",
+					typed, found.ID, l.ID)
+			}
+		}
+	}
+	if _, ok := Find("BOARDS"); ok {
+		t.Error("Find matched an identifier that is not a lesson")
+	}
+}
+
 func TestTaskAnswersAccepted(t *testing.T) {
 	tasks := 0
 	for _, l := range Lessons() {

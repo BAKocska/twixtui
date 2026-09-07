@@ -5,8 +5,19 @@
 // Each game is its own file, named by its identifier, because these are written
 // one at a time and a single shared file would make two twixtui processes
 // contend over unrelated games. The game itself is stored as an encoded
-// game.Record, so a file that has been edited or truncated is refused when it is
-// loaded rather than quietly producing a different position.
+// game.Record, so a record that has been edited or truncated is refused when it
+// is loaded rather than quietly producing a different position; a record is
+// canonicalised on the way in, so the file holds the checked encoding and
+// nothing else.
+//
+// What the record covers is the game: the ruleset, the moves, the result and
+// the final position. The fields around it — which profile played, which side,
+// what the opponent was called, when it was created — are this machine's own
+// notes about a game it played. They are local state the person at the keyboard
+// owns and can edit, not a claim anyone else has to trust, and the record's
+// digests say nothing about them. The one contradiction that would lose data
+// rather than mislabel a listing, an in-progress write over a game whose record
+// already holds a result, is checked against the record itself in Put.
 package gamestore
 
 import (
@@ -43,34 +54,50 @@ const (
 	Imported Kind = "imported"
 )
 
-// Saved is one stored game.
+// Saved is one stored game: a checked record of the game itself, and this
+// machine's own notes about it. Only the record carries integrity checks; see
+// the package comment for what that does and does not cover.
 type Saved struct {
 	ID      string    `json:"id"`
 	Kind    Kind      `json:"kind"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 
-	// Player is the local profile's name, and Side the axis it plays.
+	// Player is the local profile's name, and Side the axis it plays. These are
+	// labels this machine wrote for its own listings; the record names no
+	// players at all.
 	Player string `json:"player"`
 	Side   string `json:"side"`
 	// Opponent is the other player: a profile name, a bot tier, or a remote name.
 	Opponent string `json:"opponent"`
 
-	// Record is an encoded game.Record, which carries its own integrity checks.
+	// Record is an encoded game.Record: the ruleset, the moves, the result and
+	// the final position, with the digests that check them. Put stores the
+	// canonical encoding of a record it has loaded, so these bytes are always a
+	// record this build has checked.
 	Record string `json:"record"`
 
 	// Finished is set once the game has a result, so a listing can separate
-	// games that are waiting for a move from games that are over.
+	// games that are waiting for a move from games that are over. It is a
+	// label, and the record is the authority: Put reads the stored record's own
+	// result before letting a game be reopened.
 	Finished bool `json:"finished"`
+}
+
+// Load rebuilds the position and returns the record it was rebuilt from,
+// refusing a record that has been altered.
+func (s Saved) Load() (*game.Game, game.Record, error) {
+	g, rec, err := game.LoadRecord(s.Record)
+	if err != nil {
+		return nil, game.Record{}, fmt.Errorf("saved game %s: %w", s.ID, err)
+	}
+	return g, rec, nil
 }
 
 // Game rebuilds the position, refusing a record that has been altered.
 func (s Saved) Game() (*game.Game, error) {
-	g, _, err := game.LoadRecord(s.Record)
-	if err != nil {
-		return nil, fmt.Errorf("saved game %s: %w", s.ID, err)
-	}
-	return g, nil
+	g, _, err := s.Load()
+	return g, err
 }
 
 // Describe renders a one-line summary for a listing.
@@ -158,13 +185,19 @@ func ValidateID(id string) error {
 }
 
 // Put writes a game, replacing any earlier version of it. Updated is stamped
-// here so that a caller cannot forget to.
+// here so that a caller cannot forget to, and the record is stored in its
+// canonical encoding so that nothing the digests do not cover — a second
+// record appended to the first, trailing text, a comment — survives into the
+// store to be handed back out again.
 //
 // A finished game is final. Once a result has been recorded the game is over,
 // it has been rated, and there is nothing left to play; reopening it and
 // storing the position it had before the result would contradict the rating log
 // and lose the result. Such a write is refused here rather than in the caller,
-// because the store is the one place every writer passes through.
+// because the store is the one place every writer passes through. Whether the
+// stored game is already finished is read from its record rather than from the
+// label beside it, because the label is local state that can be edited and the
+// record's result is not.
 func (s *Store) Put(sv Saved) error {
 	if sv.ID == "" {
 		return errors.New("cannot store a game with no identifier")
@@ -176,15 +209,17 @@ func (s *Store) Put(sv Saved) error {
 	if sv.Created.IsZero() {
 		sv.Created = time.Now()
 	}
-	if !sv.Finished {
-		if old, err := s.Get(sv.ID); err == nil && old.Finished {
+	g, rec, err := game.LoadRecord(sv.Record)
+	if err != nil {
+		return fmt.Errorf("refusing to store a game whose record does not load: %w", err)
+	}
+	if !sv.Finished || !g.Result().Over() {
+		if old, err := s.Get(sv.ID); err == nil && old.finished() {
 			return fmt.Errorf("game %s is finished and cannot be reopened", sv.ID)
 		}
 	}
+	sv.Record = rec.Encode()
 	sv.Updated = time.Now()
-	if _, _, err := game.LoadRecord(sv.Record); err != nil {
-		return fmt.Errorf("refusing to store a game whose record does not load: %w", err)
-	}
 
 	body, err := json.MarshalIndent(sv, "", "  ")
 	if err != nil {
@@ -194,7 +229,23 @@ func (s *Store) Put(sv Saved) error {
 	return writeFileAtomic(path, body)
 }
 
+// finished reports whether a stored game is over, taking the answer from the
+// result inside its record, which a digest covers, rather than from the label
+// beside it, which nothing does. A record that no longer decodes falls back to
+// the label: a damaged file still has to be replaceable.
+func (s Saved) finished() bool {
+	if rec, err := game.DecodeRecord(s.Record); err == nil {
+		return rec.Outcome != game.Ongoing
+	}
+	return s.Finished
+}
+
 // Get reads one game.
+//
+// A game's identifier is its file's name, so a file whose contents claim a
+// different one is refused rather than handed back: every writer names the file
+// it writes from the identifier it was given, and a row claiming somebody
+// else's name would have its next save land on that other game's file.
 func (s *Store) Get(id string) (Saved, error) {
 	path, err := s.path(id)
 	if err != nil {
@@ -211,12 +262,17 @@ func (s *Store) Get(id string) (Saved, error) {
 	if err := json.Unmarshal(raw, &sv); err != nil {
 		return Saved{}, fmt.Errorf("saved game %q is not readable: %w", id, err)
 	}
+	if sv.ID != id {
+		return Saved{}, fmt.Errorf("saved game %q calls itself %q, so it is not the game this file is named for", id, sv.ID)
+	}
 	return sv, nil
 }
 
 // List returns every stored game, most recently updated first. A file that
 // cannot be read is skipped rather than failing the whole listing, so one
-// damaged game does not hide the rest.
+// damaged game does not hide the rest; a file claiming an identifier other than
+// its own name is damaged in the same way, since nothing could then resolve or
+// replace it.
 func (s *Store) List() []Saved {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -233,6 +289,9 @@ func (s *Store) List() []Saved {
 		}
 		var sv Saved
 		if err := json.Unmarshal(raw, &sv); err != nil {
+			continue
+		}
+		if sv.ID != strings.TrimSuffix(e.Name(), ".json") {
 			continue
 		}
 		out = append(out, sv)
