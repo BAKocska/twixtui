@@ -30,102 +30,50 @@ the renderer in internal/cover applies — and then snaps the result back onto
 its own dominant colours, so flat art stays flat instead of carrying
 thousands of one-off edge blends.
 
-The three files below are for the repository's front page rather than for the
-program: nothing in the binary reads them. They are SVG, which is to say they
-are their own source — text, diffable, edited in place — so unlike cover.png
-they need no regeneration recipe. What they do need is the record of which
-facts in the code they are repeating, because a picture that quietly stops
-agreeing with the program is worse than no picture. That is what each note
-below is for.
+The SVG files below are for the documentation rather than for the program:
+nothing in the binary reads them. They are SVG, which is to say they are their
+own source — text, diffable, edited in place — so unlike cover.png they need no
+regeneration recipe. What they do need is the record of which facts in the code
+they are repeating and which parts are only illustration, because a picture
+that quietly stops agreeing with the program is worse than no picture. That is
+what each note below is for.
 
 ## banner-light.svg, banner-dark.svg
 
-The front page's hero: the 1962 lid re-staged for a wide box, on a terminal
-screen. What the lid communicates, and what this picture is built to carry,
-is contemplation rather than fun. The lid's camera stands at board level,
-inside the game, so the pieces are architecture — two red pegs tower over
-the frame while the linked black chain reads as a bridge going up — and the
-player is the smallest thing in the picture: a suited man, faceless, chin
-on fist, behind the chain being built across his chest, because the
-position is bigger than anyone inside it. Over half the canvas is flat
-empty violet, the silence around concentration, and the one bright thing in
-it is the man's lit face and hand. The banner restates those devices at
-1280x320 rather than cropping the lid into it: a monumental red peg at
-each flank, taller than everything, one nearer and one farther; a chain of
-black pegs racing the whole width of a board of drilled holes, feet
-receding while the caps hold almost level, linked cap to cap by a taut
-line; the watcher small behind the board with the chain crossing his
-chest; the wordmark floating in the empty sky. The terminal carries it:
-a cream bezel frames an ink screen whose top band is chrome — a
-`$ twixtui` prompt with a block cursor, a status line — and the lid is
-what the command printed, which is true to the program, since the cover
-really is drawn beside the menu.
+The supplied 1280×320 front-page artwork places a cream-framed illustration of
+the 1962 box lid beside a shell prompt. The card holds the stencil wordmark,
+mauve sky, golden board, a receding chain of dark pegs and two tall red flankers.
+The type beside it names the project and shows
+`twixtui play bot --tier pro --side vertical`.
 
-The terminal is drawn, not captured: nothing here claims to be a
-screenshot. The prompt says what starting the program looks like, and the
-cursor after it is the character `█` in the same run of text, so it sits
-where the reader's own monospace font puts it instead of where some other
-font's metrics were guessed to.
+This is an illustration, not a screenshot or a playable board position. Its
+perspective and peg placement serve the composition; board.svg below is the
+documentary rendering of an actual position. The supplied visible artwork is
+unchanged; non-rendering export metadata has been omitted.
 
-Two files rather than one because README.md selects between them with a
-`<picture>` element and `prefers-color-scheme`. The composition is
-identical in both; the dark file is one step duskier, its sky `homageSky`
-where the light file's is `homageSkyHigh` and its bezel `homageCream`
-where the light file's is the lid's own cream, so the picture sits quietly
-on either of GitHub's backgrounds without pretending to be one of them.
+The palette draws on internal/cover/homage.go, with local shades for the
+highlights, clouds, holes and frame. The project name uses the `classic`
+scheme's red and blue from internal/theme/theme.go, and the cursor uses its
+yellow. `A GAME OF BARRIERS FOR TWO` is the project's `homageTagline`, not a
+quotation from the original lid.
 
-The colours are internal/cover/homage.go's, hex for hex, in the roles the
-program's own cover gives them wherever this picture has the same role:
-`homageInk` for the screen, the chain's links and the `ui` of the
-wordmark; `homageBlack` for the chain's pegs; `homageRed` for the flanking
-pegs and `twixt`; `homageBoard` for the board and `homageHole` for its
-holes; `homageCream` for the prompt and cursor; and `homageSkyHigh`,
-doing double duty, as the light file's sky and as the dim chrome text of
-both files. Three values have no name in the code, all measured from
-assets/cover-source.png: the light file's bezel `#f5eed4` and the maroon
-`#561d25` are the dominant colours of the source's border and of the
-watcher's jacket — the maroon now paints that jacket, his hair and the
-Randolph line — and the face and fist take `#e9b23d`, the dominant colour
-of the man's lit face and of the board's lit wedge, the lid's one bright
-accent; a fresh cluster pass over the source reproduces all three within
-a couple of least-significant steps. An earlier revision copied the
-banner's colours from web/style.css so page and banner could not drift
-apart; that pin is deliberately gone — the owner directed that the front
-page evoke the 1962 lid, and the site keeps its own red and blue — so the
-banner drifts with the cover art instead, and anyone re-tuning homage.go's
-palette should carry these two files along.
+README.md selects the two variants with `<picture>` and
+`prefers-color-scheme`. They have the same composition and a transparent
+canvas; the type and illustration colours change to suit the page background.
+The block cursor is a rectangle at a fixed position, so changing the command
+may also require moving it.
 
-The wordmark still splits the way the project's site splits it — `twixt`
-is the vertical player and `ui` the horizontal, the two goals that cut
-across each other — but in the colours of the 1962 set, red pegs against
-black, rather than the site's red and blue.
-
-The board is honest where it claims and silent where it cannot. The holes
-are a grid of 22 columns at a fixed pitch and three rows of equal board
-spacing drawn foreshortened — the far gap smaller, the near holes larger —
-and every chain peg's foot stands on a grid point, with consecutive feet a
-knight's move apart in board units, checked for all eleven links, and the
-cap-to-cap lines checked pairwise to cross nowhere. The chain is a side
-view: the linked line joins the pegs' caps the way the physical set's
-links ride near the peg tops, and ownership is carried by colour alone.
-The two red flankers stand on the board but outside the grid and claim
-nothing about the position, and the fragment is a crop — what the chain
-does beyond the frame is not claimed. The watcher is drawn in the lid's
-own colours rather than the ghost the character-cell homage reduces him
-to, because at SVG resolution the lid's device — the small thinker behind
-the monumental pieces — survives intact; his torso is cut by the board's
-far edge exactly as on the lid. Anyone editing the pegs should keep the
-foot geometry true or unclaim it, because a banner showing an impossible
-position teaches the rule wrongly to everybody who never reads on.
+TwixT is Alex Randolph's game. The historical lid artwork is © 1962 Minnesota
+Mining and Manufacturing Company (3M); the project's cover-reference history
+is recorded under cover.png above.
 
 ## board.svg
 
 The position printed as characters under "The board" in docs/MANUAL.md, drawn
-again in colour. README.md's "The board" section shows this file on the front
-page; the manual shows it below the character block. It is a rendering and not
-a screenshot: the
-glyphs are taken from that code block and the colours are applied to them here.
-Nothing was captured from a terminal, and the file does not claim otherwise.
+again in colour; the manual shows this file below that character block. It is
+a rendering and not a screenshot: the glyphs are taken from that code block and
+the colours are applied to them here. Nothing was captured from a terminal, and
+the file does not claim otherwise.
 
 Both halves of that are pinned to the code. The palette is the `classic` scheme
 from internal/theme/theme.go, hex for hex. Which colour reaches which glyph
@@ -156,3 +104,48 @@ The background is the one colour here that no scheme provides: no theme paints
 a background, since pegs and links sit on whatever colour the player's terminal
 already is. `classic` is a scheme for a dark terminal, so the file supplies a
 dark one to stand in for it.
+
+## Introductory video
+
+twixtui-demo.mp4 is the 68.3-second animated feature tour used by the README.
+It is an authored recreation of the terminal screens, not a screen recording.
+The sequence, camera movements and artwork come from the supplied design;
+the relay example uses a complete sample pairing code, and the hint panel is
+labelled illustrative rather than claiming measured search results.
+
+The movie is H.264, 1280×720, 30 frames per second, without audio. Its MP4 header
+is at the front of the file for progressive playback. demo-poster.png is the
+menu scene at ten seconds. Both are documentation assets; the game binary
+embeds only cover.png.
+
+The editable source and export command are in demo/. From the repository root:
+
+```sh
+bun install --cwd assets/demo --frozen-lockfile --ignore-scripts
+bun run assets/demo/render.mjs
+```
+
+Export requires Bun, Chrome or Chromium, and ffmpeg with libx264. Set `CHROME`
+or `FFMPEG` to an executable path if it is not found automatically. The source
+preview also loads pinned React/ReactDOM/Babel from unpkg and JetBrains Mono
+from Google Fonts, so export needs network access. These are authoring tools,
+not dependencies of the game or the public website.
+
+The exporter starts a loopback-only source server and a fresh headless browser,
+seeks each of the 2,049 frames synchronously, and passes PNG frames to ffmpeg.
+It replaces the movie and poster only after encoding succeeds. An optional
+output-directory argument keeps an experimental render outside assets/:
+
+```sh
+mkdir -p /tmp/twixtui-demo
+bun run assets/demo/render.mjs /tmp/twixtui-demo
+```
+
+For GitHub's inline README player, upload the finished MP4 as a GitHub
+attachment and use its returned URL. Committing an MP4 or linking its raw
+repository URL does not create that player. Uploading the attachment is a
+publication step even if no issue, comment or README edit is submitted.
+Keep the stable attachment URL in README.md, not the temporary signed media URL
+returned by the Markdown renderer. GitHub removes custom video posters, so its
+native player starts with the movie's shell-opening frame; demo-poster.png is
+retained as a separate still for other presentation surfaces.

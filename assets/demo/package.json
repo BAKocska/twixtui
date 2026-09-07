@@ -1,0 +1,11 @@
+{
+  "name": "twixtui-demo-export",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "bun render.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "24.15.0"
+  }
+}

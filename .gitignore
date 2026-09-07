@@ -8,6 +8,9 @@
 *.test
 *.out
 
+# Optional documentation-media export dependencies
+/assets/demo/node_modules/
+
 # Local state written by the app during development
 *.db
 *.db-shm

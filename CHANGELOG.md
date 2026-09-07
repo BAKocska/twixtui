@@ -9,21 +9,26 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- docs: replace the repository banner with a box-lid illustration beside a shell
+  prompt, and introduce the game with an animated feature tour. The tour keeps
+  its editable source and a frame-by-frame export command; the full board
+  explanation remains in the manual.
+
 - docs: the README is a front page rather than the whole manual. It had grown to
   something over six hundred lines and covered everything at full depth, which
   meant the answer to "what is this and how do I start" sat in the same
   undifferentiated column as the bot's confidence intervals and the PowerShell
   completion line. The depth moved, essentially unedited, to docs/MANUAL.md,
   which has a table of contents and a stable anchor per section; the README keeps
-  the pitch, the board, installing, starting, and a table of what the program
+  the pitch, an introductory tour, installing, starting, and a table of what the program
   does with a link per row into the manual. Nothing was dropped: every line of
   the old README between the opening and the licence is in the manual, and every
   measured strength figure moved across unchanged. The one sentence that did not
   move verbatim is the beginner tier's, which said the tier works from peg counts
   alone; it counts how many pegs each side still needs, which is a different
-  thing, and it now says so. A hero banner and a coloured rendering of the board
-  position ship under assets/ as SVG, with their provenance and the code they
-  repeat recorded in assets/README.md.
+  thing, and it now says so. A hero SVG serves the front page, while the coloured
+  board-position SVG illustrates the manual. Both live under assets/, with their
+  provenance and the code they repeat recorded in assets/README.md.
 
 ### Fixed
 
