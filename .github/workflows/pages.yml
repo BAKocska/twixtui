@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "web/**"
+      - "assets/banner-*.svg"
+      - "assets/twixtui-demo.mp4"
+      - "assets/demo-poster.png"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -30,9 +33,23 @@ jobs:
 
       - uses: actions/configure-pages@v6
 
+      # The site is web/ plus the repository's own artwork and tour export, so
+      # the page shows what the README shows without a second copy in the tree
+      # and without fetching anything from another origin.
+      - name: Assemble the site
+        run: |
+          set -eu
+          rm -rf _site
+          cp -R web _site
+          mkdir -p _site/assets
+          cp assets/banner-*.svg assets/twixtui-demo.mp4 assets/demo-poster.png _site/assets/
+          for f in banner-light.svg banner-dark.svg banner-compact-light.svg banner-compact-dark.svg twixtui-demo.mp4 demo-poster.png; do
+            test -s "_site/assets/$f"
+          done
+
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: web
+          path: _site
 
       - id: deployment
         uses: actions/deploy-pages@v5

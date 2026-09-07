@@ -6,30 +6,57 @@
     <title>twixtui — TwixT in the terminal</title>
     <meta
       name="description"
-      content="twixtui is a terminal UI and CLI for TwixT, Alex Randolph's connection game. Play a bot at three strengths, a friend at the same keyboard, or someone on another machine."
+      content="twixtui is a terminal UI and CLI for TwixT, Alex Randolph's connection game. Play a bot at four efforts, a friend at the same keyboard, or someone on another machine."
     />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <header class="hero">
       <div class="wrap">
+        <picture class="banner">
+          <source media="(prefers-color-scheme: dark) and (max-width: 480px)" srcset="assets/banner-compact-dark.svg" />
+          <source media="(max-width: 480px)" srcset="assets/banner-compact-light.svg" />
+          <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg" />
+          <img src="assets/banner-light.svg" alt="twixtui — TwixT in the terminal" />
+        </picture>
         <h1><span class="tw">twixt</span><span class="ui">ui</span></h1>
         <p class="pitch">
           TwixT in the terminal: play Alex Randolph's connection game against a
           bot, against someone at the same keyboard, or against someone on
-          another machine.
+          another machine, without leaving your shell.
         </p>
         <p class="actions">
           <a class="primary" href="#install">Install</a>
           <a href="https://github.com/BAKocska/twixtui">Source on GitHub</a>
-          <a href="https://github.com/BAKocska/twixtui/blob/main/docs/rules.md"
-            >The rules</a
-          >
+          <a href="https://github.com/BAKocska/twixtui/blob/main/docs/MANUAL.md">The manual</a>
+          <a href="https://github.com/BAKocska/twixtui/blob/main/docs/rules.md">The rules</a>
         </p>
       </div>
     </header>
 
     <main>
+      <section id="tour">
+        <div class="wrap">
+          <h2>A quick introduction</h2>
+          <!-- The movie and its poster are the repository's own exports, staged
+               beside the page by the deployment, so nothing here leaves this origin. -->
+          <video
+            class="tour"
+            controls
+            preload="metadata"
+            poster="assets/demo-poster.png"
+            src="assets/twixtui-demo.mp4"
+          >
+            <a href="assets/twixtui-demo.mp4">Watch the tour</a>
+          </video>
+          <p class="caption">
+            An animated tour of the menu, the bot tiers, a 24×24 board, hints,
+            remote play, standings and four colour schemes. About a minute, with
+            illustrative screens — an animation, not a recording.
+          </p>
+        </div>
+      </section>
+
       <section id="board">
         <div class="wrap">
           <h2>A game in progress</h2>
@@ -62,17 +89,16 @@
           <h2>What it does</h2>
           <ul class="features">
             <li>
-              <h3>A bot with three search depths</h3>
+              <h3>A bot at four efforts</h3>
               <p>
-                Beginner, intermediate and pro search to different depths. The
-                test suite requires intermediate to score at least 65% against
-                beginner over 60 games on 10×10. Pro's advantage over
-                intermediate depends on board size, and on a small board it may
-                not be stronger at all: 0.542 on 12×12 and 0.958 on 16×16 at the
-                shipped budgets, and no reliable advantage anywhere from 10×10 to
-                16×16 once both tiers are given the same lifted guard. Pick it for
-                the 24×24 board it was tuned on. Ask for a hint on your own turn and
-                it explains the move it would play, on the board.
+                <code>beginner</code>, <code>intermediate</code>, a clock-bounded
+                <code>pro</code>, and <code>max</code>, the largest effort on
+                offer. A tier names the work it may spend, not the strength it
+                reaches: on colour-balanced opening pairs, intermediate beat
+                beginner 24–0 on each of three board sizes, while what pro and
+                max do and do not establish over each other is set out in the
+                manual rather than assumed. Ask for a hint on your own turn and
+                the engine explains the move it would play, on the board.
               </p>
             </li>
             <li>
@@ -81,7 +107,9 @@
                 Two players at one keyboard, a direct connection between two
                 machines, a relay you can run yourself when neither side can
                 accept an inbound connection, or move codes pasted into chat
-                when there is no live connection at all.
+                when there is no live connection at all. A live game whose
+                connection drops is saved on both ends and can be resumed from
+                either.
               </p>
             </li>
             <li>
@@ -100,7 +128,8 @@
                 played here, and the three historical rulesets kept apart as
                 explicit options: the printed box rules, the paper-and-pencil
                 rules played online, and the original 1962 edition without
-                swap. Imported records can be replayed but are not rated.
+                swap. Boards from 6×6 to 48×48. Imported records can be
+                replayed but are not rated.
               </p>
             </li>
           </ul>

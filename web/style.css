@@ -1,5 +1,6 @@
 /* No build step, no framework, no external requests, no web fonts. The page is
-   two files and works with JavaScript disabled. */
+   two files plus the repository's own banner artwork and tour export, staged
+   beside it by the deployment, and it works with JavaScript disabled. */
 
 :root {
   color-scheme: light dark;
@@ -80,24 +81,34 @@ a:hover {
   border-bottom: 1px solid var(--border);
 }
 
-.hero h1 {
+/* The banner is the repository's own artwork, copied in by the deployment. It is
+   the picture of the thing and already carries the name, so the heading beneath
+   it stays in the document — the page's title for a screen reader, an outline
+   and a search engine — but is not drawn twice. */
+
+.banner {
+  display: block;
   margin: 0;
-  font-size: clamp(2.5rem, 9vw, 4rem);
-  line-height: 1.05;
-  letter-spacing: -0.03em;
-  font-weight: 700;
 }
 
-.hero h1 .tw {
-  color: var(--vertical);
+.banner img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
-.hero h1 .ui {
-  color: var(--horizontal);
+.hero h1 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .pitch {
-  margin: 0.75rem 0 0;
+  margin: 1.5rem 0 0;
   font-size: clamp(1.05rem, 3.4vw, 1.35rem);
   color: var(--muted);
   max-width: 34em;
@@ -165,6 +176,19 @@ section p {
   margin: 0.75rem 0 0;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+/* The tour. A video must not exceed the column, and it keeps the 16:9 box it
+   was rendered at so the page does not jump when the poster gives way. */
+
+.tour {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 16 / 9;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
 }
 
 /* Feature list */
