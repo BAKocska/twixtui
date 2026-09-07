@@ -126,6 +126,26 @@ type params struct {
 	// looking at a different candidate set further down. At full width the
 	// move set is the position's own and only the cost may differ.
 	killers bool
+	// aspiration narrows the window the root's first move is searched with,
+	// from the whole scale to a band around what the previous iteration
+	// concluded, and widens the failing side back to the end of the scale
+	// when the value turns out to lie outside. A root score is therefore only
+	// ever taken from a search whose window contained it and never from a
+	// bound.
+	//
+	// It is off in every tier, because it was measured and it does not pay
+	// here. Aspiration rests on consecutive iterations agreeing closely, and
+	// in this evaluation they do not: the leaf score is dominated by a term
+	// quantised in pegs, and the root score moves by more than two pegs
+	// between one iteration and the next on a third of them. The band
+	// therefore fails often, and every failure re-searches the root's largest
+	// subtree. At a fixed depth of six on the effort harness's frozen
+	// positions the band spent 3.4% more nodes than the whole window, and 13%
+	// more at depth eight on 10x10; no band width between one and forty-eight
+	// pegs saved any. The lever is kept, off, so that the measurement can be
+	// repeated -- docs/MANUAL.md records it -- and not because it is worth
+	// turning on.
+	aspiration bool
 }
 
 // scoredMove is one candidate placement: its ordering score before the search
@@ -821,6 +841,76 @@ type rootResult struct {
 	an *analysis
 }
 
+// aspirationDelta is how far either side of the previous iteration's score the
+// root's first window opens, in the units the evaluation itself uses: one peg
+// of head start is distWeight, so this band is two pegs wide either way.
+//
+// The scale is what fixes the choice. Distance dominates the leaf score and is
+// quantised in pegs, so the smallest change a deepening can make to a position
+// whose peg counts moved is one peg; the bottleneck and reach terms together
+// are worth less than a peg and move the score inside that step. A band of one
+// peg would therefore be missed by any iteration that changes the peg race at
+// all, and a band much wider than two stops pruning. Two pegs is the width
+// that absorbs the sub-peg terms and the ordinary one-peg swing.
+//
+// It is not what makes the lever unprofitable. Widths from one peg to
+// forty-eight were measured against the same positions and none of them saved
+// work; the number is documented here so that a reader knows where it came
+// from, not because a different one would change the verdict on the field.
+const aspirationDelta = 2 * distWeight
+
+// aspirationWindow is the band the root's first move may be searched in, given
+// what the previous iteration concluded.
+//
+// It stands down in the cases where a narrow window would measure the wrong
+// thing rather than the same thing faster. There is nothing to centre on
+// before an iteration has finished, so the first iteration is searched wide.
+// Sampling reads every root move's value and not just the best one, so it
+// keeps the full window at the root and cannot use this at all. And a decided
+// score sits at the far end of the scale rather than on it: a band around a
+// forced loss lies almost entirely below every real reply, so it would fail
+// high on the first move of every remaining iteration and pay for a re-search
+// each time.
+func (s *searcher) aspirationWindow(depth, prev int, have bool) (lo, hi int, ok bool) {
+	switch {
+	case !s.p.aspiration || !have || depth < 2 || s.p.temperature > 0:
+	case prev >= decidedScore || prev <= -decidedScore:
+	default:
+		return prev - aspirationDelta, prev + aspirationDelta, true
+	}
+	return -infScore, infScore, false
+}
+
+// aspirate searches one root move inside a narrow window and widens the window
+// on whichever side it failed, until the window contains the answer.
+//
+// A search whose window did not contain the value has established which side
+// of the window the value lies on and nothing more, so what comes back from a
+// failing window is a bound. The root reads its first move's score as a
+// measurement -- it is the alpha every later move is judged against, and the
+// beginner tier and the hint read the numbers themselves -- so a bound must
+// never be recorded as one. Widening the failing side to the end of the scale
+// makes a fail on that side impossible, which bounds this at three searches
+// and guarantees the value returned is one its own window contained.
+//
+// An interrupted search is handed straight back: the caller drops the whole
+// iteration, exactly as it does for any other root move.
+func (s *searcher) aspirate(g *game.Game, depth, lo, hi int) int {
+	for {
+		v := -s.search(g, depth-1, 1, -hi, -lo, s.p.extend)
+		switch {
+		case s.stopped:
+			return v
+		case v <= lo && lo > -infScore:
+			lo = -infScore
+		case v >= hi && hi < infScore:
+			hi = infScore
+		default:
+			return v
+		}
+	}
+}
+
 // root searches the position and returns the move to play.
 //
 // Only a finished iteration is ever handed back. An iteration that is cut short
@@ -896,8 +986,10 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 		return out, nil
 	}
 
+	prev, havePrev := 0, false
 	for depth := 1; depth <= s.p.maxDepth; depth++ {
 		alpha := -infScore
+		lo, hi, narrow := s.aspirationWindow(depth, prev, havePrev)
 		finished := true
 		for i := range moves {
 			if s.expired() {
@@ -913,10 +1005,10 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 				continue
 			}
 			var v int
-			// The first move to be scored is searched with the whole window
-			// and so is measured. After that the root asks each move only
-			// whether it beats alpha, and a move that says no comes back with
-			// a bound instead of a value.
+			// The first move to be scored is searched with a window that will
+			// contain its value, so it is measured. After that the root asks
+			// each move only whether it beats alpha, and a move that says no
+			// comes back with a bound instead of a value.
 			exact := alpha == -infScore || s.p.temperature > 0
 			if res.Over() {
 				switch res.Winner() {
@@ -931,12 +1023,19 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 				// the move was searched with.
 				exact = true
 			} else {
-				// Sampling needs values for every candidate, not upper bounds.
-				// Otherwise a losing move whose bound is close to the PV can
-				// receive the same probability as a genuinely close reply.
-				if s.p.temperature > 0 {
+				switch {
+				case s.p.temperature > 0:
+					// Sampling needs values for every candidate, not upper
+					// bounds. Otherwise a losing move whose bound is close to
+					// the PV can receive the same probability as a genuinely
+					// close reply.
 					v = -s.search(g, depth-1, 1, -infScore, infScore, s.p.extend)
-				} else {
+				case narrow && alpha == -infScore:
+					// The first move to be scored, and an earlier iteration to
+					// centre a band on. Whatever window ends up containing the
+					// value, the value comes back measured.
+					v = s.aspirate(g, depth, lo, hi)
+				default:
 					v = -s.search(g, depth-1, 1, -infScore, -alpha, s.p.extend)
 				}
 			}
@@ -994,6 +1093,10 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 		out.depth = depth
 		s.lastDepth = depth
 		out.moves = s.keep(moves)
+		// Only a finished iteration may centre the next one's first window:
+		// an interrupted iteration has scored some moves at the new depth and
+		// the rest at the old one, and the loop leaves before reaching here.
+		prev, havePrev = out.score, true
 		if out.score >= decidedScore {
 			// A forced win inside the moves the search looked at, and a forced
 			// win does not get better with depth, so deepening this same

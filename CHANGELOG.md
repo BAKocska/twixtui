@@ -13,7 +13,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   remembers the last two holes that produced a beta cutoff there and tries them
   first at the next node it reaches at that ply; a remembered hole the node
   cannot play is ignored rather than added, so the moves searched stay the
-  node's own. The effort benchmark gains a `pvs-nokiller` contender so the lever
+  node's own. The effort benchmark gains a `pvs-killers` contender so the lever
   can be measured against its absence, and the artifact records the lever.
 
   It ships off because the measurement did not support turning it on. At full
@@ -29,6 +29,18 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   budget the paired match was 12–11–1 on 10×10 and 9–13–2 on 16×16 for the
   killer side, both inconclusive under the conservative bound. What the tiers
   play is therefore unchanged from 0.3.0.
+- An aspiration-window lever at the search root, measured and left off. When
+  enabled it searches the root's first move inside a two-peg band around the
+  previous iteration's score and widens the failing side to the whole scale, so
+  a root score is never a bound. It is off in every tier because the harness
+  says it costs work rather than saving it: at a fixed depth of six over the
+  40 frozen positions of 10×10 and 16×16 seeds 1–12 it spent 3.4% more nodes
+  than the whole window, and 13.0% more at depth eight on 10×10, with no band
+  width between one and forty-eight pegs saving any. Twenty-four games a side
+  at 8,000 nodes on each board were 11–11–2 with every opening pair level,
+  which establishes no strength difference in either direction. The effort
+  benchmark gains a `pvs-aspiration` candidate and records the lever in every
+  artifact so the measurement can be repeated.
 
 ## [0.3.0] - 2026-09-07
 

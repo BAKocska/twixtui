@@ -191,22 +191,26 @@ type ebCandidateSpec struct {
 
 // ebCandidates is the whole roster the experiment can run. The four preset
 // candidates measure the shipped tiers; plain and pvs are the same tier with
-// the principal-variation lever off and on, and pvs-nokiller is pvs with the
-// killer-move lever off, which are the pairs a semantics-preserving claim is
-// made from; mcts is the different architecture.
+// the principal-variation lever off and on, pvs-killers is pvs with the
+// killer-move lever on, and pvs-aspiration is pvs with the root's aspiration
+// band on; those are the pairs a semantics- and work-preserving claim is made
+// from. mcts is the different architecture.
 //
-// Each tuned candidate sets both levers of its pair explicitly, so that the
+// Each tuned candidate sets every lever of its pair explicitly, so that the
 // pair keeps meaning what its name says if a tier is ever retuned underneath
-// it.
+// it. The ordering pairs are the way round they are because both levers are
+// off in every tier: the deviation from what ships is the candidate that turns
+// one on.
 func ebCandidates() []ebCandidateSpec {
 	return []ebCandidateSpec{
 		{name: "beginner", tier: Beginner, kind: ebKindPreset},
 		{name: "intermediate", tier: Intermediate, kind: ebKindPreset},
 		{name: "pro", tier: Pro, kind: ebKindPreset},
 		{name: "max", tier: Max, kind: ebKindPreset},
-		{name: "plain", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers = false, true }},
-		{name: "pvs", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers = true, true }},
-		{name: "pvs-nokiller", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers = true, false }},
+		{name: "plain", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration = false, false, false }},
+		{name: "pvs", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration = true, false, false }},
+		{name: "pvs-killers", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration = true, true, false }},
+		{name: "pvs-aspiration", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration = true, false, true }},
 		{name: "mcts", tier: Pro, kind: ebKindMCTS},
 	}
 }
@@ -814,6 +818,7 @@ type ebParamsReport struct {
 	NodeLimit   int64   `json:"node_limit"`
 	PVS         bool    `json:"pvs"`
 	Killers     bool    `json:"killers"`
+	Aspiration  bool    `json:"aspiration"`
 }
 
 func ebReportParams(p params) ebParamsReport {
@@ -830,6 +835,7 @@ func ebReportParams(p params) ebParamsReport {
 		NodeLimit:   p.nodeLimit,
 		PVS:         p.pvs,
 		Killers:     p.killers,
+		Aspiration:  p.aspiration,
 	}
 }
 
