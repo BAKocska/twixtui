@@ -46,20 +46,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the Continue list's own reconnection route now continue the stored game:
   the two copies reconcile the moves one side missed, refuse transcripts that
   disagree, and keep the saved game's identifier rather than adding a second row.
+  Connection results stay bound to the attempt and saved game that requested
+  them, so a late result from a cancelled attempt cannot replace another game.
+  Replayed entries are checked against their own positions rather than the
+  session's later state, including a queued move followed by a draw offer.
 - A record file holding more than one record imported the last of them and
   stored the file's bytes as they arrived, so content no digest covered survived
   a round trip. A record with a repeated field is now refused by name, imports
   are bounded at a megabyte rather than read whole, every diagnostic quotes at
   most a fragment of its input, and what is stored is the checked canonical
-  record.
+  record. Its canonical encoding must also fit the size limit before a store
+  or export accepts it.
 - `game export` wrote the stored record without the check `game show` and
   `game replay` make, so a corrupt saved game was handed out as a record this
   same build refuses on import. It is validated and replayed first, and a
-  failure leaves an existing `--out` file untouched.
+  validation failure leaves an existing `--out` file untouched.
 - `game --help` claimed an edited saved file is refused. Only the record itself
   carries that check; the labels around it are this machine's own notes. The
-  help now says which is which, and a saved game's own recorded result, rather
-  than an editable label, decides whether a finished game may be reopened.
+  help now says which is which. The stored record's result also prevents
+  reopening a finished game even if its local finished label has been cleared.
 - `play host --help` said a relay never sees the game, while the relay's own
   documentation says the operator reads both names, the ruleset and every move
   in plain text. The help now says what the pairing code does and does not
@@ -100,6 +105,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in the same second apart; `leaderboard reset` says it deletes the result log
   and not the saved games; and browsing profiles, standings or saved games no
   longer needs a writable configuration directory.
+- Read-only profile and standings snapshots take their revision stamp from the
+  same opened file as their contents. A concurrent atomic replacement can no
+  longer pair old contents with the new stamp and leave a reader stale.
 
 - ci: a tag push matched no trigger of the test workflow, so releases were
   built and published from refs the checks had never run on. The release

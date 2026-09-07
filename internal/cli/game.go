@@ -195,9 +195,11 @@ keys used to play it.`,
 The record holds the ruleset, the moves, the result and two digests, so whoever
 receives it can check it arrived intact and replays to the game it claims to be.
 
-The saved game is loaded and replayed before anything is written, so a record
-this build would refuse to read is refused here too, and a file named by --out
-is left as it was.`,
+The saved game is loaded and replayed before anything is written, and the record
+it hands out is checked against the size a record may have, so a record this
+build would refuse to read is refused here too. Both checks happen before the
+file named by --out is opened, so a refusal leaves it as it was; a failure of
+the write itself is a different matter, and may leave the file part-written.`,
 		Args:              exactArgs(1),
 		ValidArgsFunction: opts.gameIDCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -218,7 +220,10 @@ is left as it was.`,
 			if err != nil {
 				return err
 			}
-			record := rec.Encode()
+			record, err := rec.EncodeCanonical()
+			if err != nil {
+				return err
+			}
 			if outPath == "" || outPath == "-" {
 				_, err := fmt.Fprint(cmd.OutOrStdout(), record)
 				return err
@@ -283,12 +288,20 @@ record already held here is recognised and named rather than saved twice.`,
 			// What is stored is the record as this build encodes it, not the
 			// bytes that arrived: those may carry anything the digests do not
 			// cover, and once stored they would be handed back out by export.
+			// That encoding is checked before the game is stored, because the
+			// reader takes spellings the canonical encoding does not: a record
+			// accepted here can canonicalise past the size a record may have,
+			// and what could not be read again is not imported.
+			record, err := rec.EncodeCanonical()
+			if err != nil {
+				return err
+			}
 			sv := gamestore.Saved{
 				ID:       gamestore.NewID(),
 				Kind:     gamestore.Imported,
 				Player:   game.Vertical.String(),
 				Opponent: game.Horizontal.String(),
-				Record:   rec.Encode(),
+				Record:   record,
 				Finished: g.Result().Over(),
 			}
 			if err := store.Put(sv); err != nil {

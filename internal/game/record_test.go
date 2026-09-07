@@ -1,10 +1,33 @@
 package game
 
 import (
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"strings"
 	"testing"
+)
+
+// The sizes the checks in this file are written for. They are fixed numbers
+// rather than expressions in MaxRecordBytes on purpose: a fixture derived from
+// the bound it is checking grows with that bound, so raising MaxRecordBytes to
+// try something out would have strings.Repeat ask for a terabyte before the
+// assertion that was going to fail is ever reached, and taking the limiter out
+// of ReadRecord would have a test read until the machine gave way. These
+// fixtures are the same size whatever the build says, and what they assert is
+// behaviour: a record padded past a megabyte is refused, and a reader is
+// stopped before its own budget runs out. A build that no longer does either
+// fails on that rather than on a constant having moved.
+const (
+	fixtureRecordLimit = 1 << 20
+	// fixtureReadBudget is what a test input hands over before giving up on
+	// the reader it is feeding. It is past the limit, so a loader that stops
+	// at the limit never reaches it.
+	fixtureReadBudget = fixtureRecordLimit + 64<<10
+	// fixtureMaxBoard is the widest board the controls here play on. Unlike
+	// the sizes above, a board is allocated in full, so a build whose MaxSize
+	// has grown past this is told to widen it deliberately.
+	fixtureMaxBoard = 48
 )
 
 func TestCanonicalRulesetRoundTrip(t *testing.T) {
@@ -350,42 +373,57 @@ func TestDecodeRequiresTheMovesField(t *testing.T) {
 }
 
 // TestOversizedInputIsRefusedBeforeItIsHeld covers what a record loader does
-// with something that is not a record: a device that never ends, or a file
-// large enough that reading it whole is the problem. The bound has to apply
-// while reading, so the assertion is on how much was read as well as on the
-// refusal.
+// with something that is not a record: a file large enough that reading it
+// whole is the problem, or a device that keeps handing bytes over. The bound
+// has to apply while reading, so the assertion is on how much was read as well
+// as on the refusal.
 func TestOversizedInputIsRefusedBeforeItIsHeld(t *testing.T) {
 	// A run of junk is refused by the parser whatever the limit is, so the
 	// oversized case has to be a record the parser would otherwise accept: a
 	// sound one padded past the limit with comment lines, which decoding
 	// skips. Only the size check can refuse this.
 	sound := encodeSample(t, playSample(t))
-	padding := strings.Repeat("# padding\n", 1+(MaxRecordBytes-len(sound))/len("# padding\n"))
+	padding := strings.Repeat("# padding\n", 1+(fixtureRecordLimit-len(sound))/len("# padding\n"))
 	oversized := sound + padding
-	if len(oversized) <= MaxRecordBytes {
-		t.Fatalf("the padded record is %d bytes, which does not exceed the %d-byte limit", len(oversized), MaxRecordBytes)
+	if len(oversized) <= fixtureRecordLimit {
+		t.Fatalf("the padded record is %d bytes, which does not exceed the %d-byte fixture limit", len(oversized), fixtureRecordLimit)
 	}
 	if _, err := DecodeRecord(oversized); err == nil {
 		t.Error("a record larger than the limit was decoded")
-	} else if !strings.Contains(err.Error(), "bytes") {
-		t.Errorf("the refusal reads %q, which does not name the size", err)
+	} else if !errors.Is(err, ErrRecordTooLarge) {
+		t.Errorf("the refusal reads %q, which is not a refusal on size", err)
 	}
-	if _, _, err := ReadRecord(strings.NewReader(oversized)); err == nil {
-		t.Error("a stream larger than the limit was read as a record")
+	if _, _, err := ReadRecord(strings.NewReader(oversized)); !errors.Is(err, ErrRecordTooLarge) {
+		t.Errorf("a stream larger than the limit was refused with %v, want a refusal on size", err)
 	}
 	// The same record inside the limit still loads, so the refusal above is
 	// the size and not the padding.
 	if _, _, err := LoadRecord(sound + "# padding\n"); err != nil {
 		t.Errorf("a commented record inside the limit was refused: %v", err)
 	}
-
-	endless := &countingReader{}
-	if _, _, err := ReadRecord(endless); err == nil {
-		t.Error("an input that never ends was read as a record")
+	// A record refused for what it says is not refused on size, which is what
+	// makes the assertions above about the limit rather than about refusals in
+	// general.
+	if _, err := DecodeRecord(strings.Replace(sound, "entries ", "entries x", 1)); err == nil {
+		t.Error("a record with an unreadable entry count was decoded")
+	} else if errors.Is(err, ErrRecordTooLarge) {
+		t.Errorf("a record refused for its contents was reported as too large: %v", err)
 	}
-	if endless.read > MaxRecordBytes+1 {
-		t.Errorf("ReadRecord took %d bytes from an endless input, which is past the %d-byte limit",
-			endless.read, MaxRecordBytes+1)
+
+	// An input that keeps handing bytes over, with a budget of its own: a test
+	// that relies on the code under test to stop reading has nothing to assert
+	// left when that code is what broke.
+	endless := &budgetedReader{budget: fixtureReadBudget}
+	_, _, err := ReadRecord(endless)
+	if !errors.Is(err, ErrRecordTooLarge) {
+		t.Errorf("an input that never ends was refused with %v, want a refusal on size", err)
+	}
+	if errors.Is(err, errReaderSpent) {
+		t.Error("ReadRecord read until the input gave up, so nothing bounded it")
+	}
+	if endless.read > fixtureRecordLimit+1 {
+		t.Errorf("ReadRecord took %d bytes from an input that never ends, which is past the %d-byte limit",
+			endless.read, fixtureRecordLimit)
 	}
 
 	if _, _, err := ReadRecord(strings.NewReader(sound)); err != nil {
@@ -393,11 +431,97 @@ func TestOversizedInputIsRefusedBeforeItIsHeld(t *testing.T) {
 	}
 }
 
-// countingReader is an input that never ends, like a character device, and
-// remembers how much of it was taken.
-type countingReader struct{ read int }
+// TestAnAcceptedRecordCanBeWrittenBackOut covers the gap between what the
+// reader takes and what the writer produces. The ruleset's flags are read with
+// strconv.ParseBool, so "swap=1" is accepted where "swap=true" is written, and
+// an input inside the limit can canonicalise past it. Such a record used to be
+// accepted as a game and then stored and exported in a form nothing could read
+// again, this build included.
+func TestAnAcceptedRecordCanBeWrittenBackOut(t *testing.T) {
+	rs := Std
+	rs.Size = 8
+	rec, err := MustNew(rs).Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	compactRules := strings.NewReplacer("true", "1", "false", "0")
+	full := rs.Canonical()
+	short := compactRules.Replace(full)
+	if len(short) >= len(full) {
+		t.Fatalf("the ruleset %q has no shorter accepted spelling, so this fixture cannot straddle the limit", full)
+	}
+	// Empty entries are what makes the record large without making it
+	// anything other than a record: a replay skips them, so it still replays
+	// to the game it claims to be, and the digest is recomputed over what is
+	// now there. The canonical encoding lands one byte past the limit, which
+	// leaves the shorter spelling inside it.
+	pad := fixtureRecordLimit + 1 - len(rec.Encode())
+	if pad <= 0 {
+		t.Fatalf("an unplayed record is already %d bytes, so there is nothing to pad", len(rec.Encode()))
+	}
+	rec.Moves = strings.Repeat(";", pad)
+	rec.Digest = rec.digest()
+	canonical := rec.Encode()
+	compact := strings.Replace(canonical, full, short, 1)
+	if len(compact) > fixtureRecordLimit || len(canonical) <= fixtureRecordLimit {
+		t.Fatalf("the fixture is meant to be inside the limit as it arrives and past it once canonical; it is %d and %d bytes against %d",
+			len(compact), len(canonical), fixtureRecordLimit)
+	}
 
-func (r *countingReader) Read(p []byte) (int, error) {
+	// The reader's own contract is unchanged: this is a record, and it loads.
+	_, decoded, err := LoadRecord(compact)
+	if err != nil {
+		t.Fatalf("a record of %d bytes was refused: %v", len(compact), err)
+	}
+	// What it cannot do is go back out, because what it would write is what
+	// nothing can read.
+	if _, err := decoded.EncodeCanonical(); err == nil {
+		t.Error("a record that canonicalises past the limit was encoded for writing")
+	} else if !errors.Is(err, ErrRecordTooLarge) {
+		t.Errorf("the refusal reads %q, which is not a refusal on size", err)
+	}
+	if _, _, err := LoadRecord(decoded.Encode()); !errors.Is(err, ErrRecordTooLarge) {
+		t.Errorf("the canonical encoding of that record loads with %v, so the refusal above guards nothing", err)
+	}
+
+	// A record inside the limit is handed out unchanged, flags spelled out in
+	// full: the check refuses, it does not rewrite.
+	inside, err := playSample(t).Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := inside.EncodeCanonical()
+	if err != nil {
+		t.Fatalf("a record of %d bytes was refused for its size: %v", len(inside.Encode()), err)
+	}
+	if out != inside.Encode() {
+		t.Errorf("the checked encoding differs from the canonical one:\n%q\n%q", out, inside.Encode())
+	}
+	if !strings.Contains(out, rs.Canonical()) {
+		t.Errorf("the checked encoding does not spell the ruleset out in full: %q", out)
+	}
+}
+
+// budgetedReader is an input that keeps handing bytes over, like a character
+// device, but only up to a budget of its own. Past that it fails instead of
+// ending or blocking, so a loader that reads to EOF finishes with an error
+// rather than with as much of the machine's memory as it can get.
+type budgetedReader struct {
+	budget int
+	read   int
+}
+
+// errReaderSpent is what a budgetedReader says once its budget is gone, which
+// tells a test that the loader it was feeding never stopped by itself.
+var errReaderSpent = errors.New("the test input's budget is spent")
+
+func (r *budgetedReader) Read(p []byte) (int, error) {
+	if r.read >= r.budget {
+		return 0, errReaderSpent
+	}
+	if len(p) > r.budget-r.read {
+		p = p[:r.budget-r.read]
+	}
 	for i := range p {
 		p[i] = 'Z'
 	}
@@ -465,15 +589,21 @@ func TestDiagnosticsDoNotRepeatTheInput(t *testing.T) {
 	}
 }
 
-// TestAnOrdinaryFullBoardRecordFitsTheLimit is the control on MaxRecordBytes:
-// the limit exists to stop a loader materialising something that is not a
-// record, and it is worth nothing if it also refuses a real game on the widest
-// board this build offers. The projection from a sampled game's own density is
-// what makes this a check on the limit rather than on the sample: the sample is
-// a few hundred entries, a filled board is 2304.
-func TestAnOrdinaryFullBoardRecordFitsTheLimit(t *testing.T) {
+// TestAWideBoardGameFitsTheLimit is the control on MaxRecordBytes: the limit
+// exists to stop a loader materialising something that is not a record, and it
+// is worth nothing if it also refuses a real game on the widest board this
+// build offers. What it covers is a played game of a few hundred entries on
+// that board; the headroom the limit is chosen for is documented beside the
+// constant rather than projected from this sample, since multiplying a
+// sample's own bytes an entry by the number of holes asserts arithmetic rather
+// than anything this code does.
+func TestAWideBoardGameFitsTheLimit(t *testing.T) {
 	rs := Std
 	rs.Size = MaxSize
+	if rs.Size > fixtureMaxBoard {
+		t.Fatalf("this control plays on a board of up to %dx%d and MaxSize is now %d; widen it deliberately",
+			fixtureMaxBoard, fixtureMaxBoard, MaxSize)
+	}
 	g := MustNew(rs)
 	rng := rand.New(rand.NewPCG(11, 13))
 	for range 200 {
@@ -492,24 +622,15 @@ func TestAnOrdinaryFullBoardRecordFitsTheLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded := rec.Encode()
-	if len(encoded) >= MaxRecordBytes {
-		t.Fatalf("a %d-entry game on a %dx%d board encodes to %d bytes, past the %d-byte limit",
-			rec.Entries, rs.Size, rs.Size, len(encoded), MaxRecordBytes)
+	if rec.Entries == 0 {
+		t.Fatal("the sample played no entries, so it is not a game")
+	}
+	encoded, err := rec.EncodeCanonical()
+	if err != nil {
+		t.Fatalf("a %d-entry game on a %dx%d board cannot be written out: %v", rec.Entries, rs.Size, rs.Size, err)
 	}
 	if _, _, err := LoadRecord(encoded); err != nil {
 		t.Fatalf("the sampled record does not load: %v", err)
-	}
-
-	if rec.Entries == 0 {
-		t.Fatal("the sample played no entries, so there is nothing to project from")
-	}
-	perEntry := (len(rec.Moves) + rec.Entries - 1) / rec.Entries
-	overhead := len(encoded) - len(rec.Moves)
-	filled := overhead + perEntry*rs.Size*rs.Size
-	if filled >= MaxRecordBytes {
-		t.Errorf("at %d bytes an entry, a filled %dx%d board projects to %d bytes, which the %d-byte limit would refuse",
-			perEntry, rs.Size, rs.Size, filled, MaxRecordBytes)
 	}
 }
 

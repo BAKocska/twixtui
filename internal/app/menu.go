@@ -82,6 +82,9 @@ type Menu struct {
 
 	// cancelWait gives up on a network connection the player is waiting for.
 	cancelWait context.CancelFunc
+	// Connection results can arrive after cancellation and a newer attempt.
+	// The sequence belongs to the attempt, not to whichever form is now open.
+	connectSeq uint64
 }
 
 // gameSetup is the set of answers a new game is assembled from.
@@ -1662,33 +1665,44 @@ func (m *Menu) describeTarget() string {
 
 // connectAs installs the waiting form and returns the command that connects.
 func (m *Menu) connectAs(title string, info []string, dial func(context.Context) (netplay.Session, error)) tea.Cmd {
+	if m.cancelWait != nil {
+		m.cancelWait()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
+	m.connectSeq++
+	attempt := m.connectSeq
+	player, resume := m.player, m.pending.resume
 	m.cancelWait = cancel
 	m.form = &waitForm{title: title, info: info}
 	return func() tea.Msg {
 		s, err := dial(ctx)
 		cancel()
-		return menuSessionMsg{session: s, err: err}
+		return menuSessionMsg{session: s, err: err, attempt: attempt, player: player, resume: resume}
 	}
 }
 
-// menuSessionMsg is the outcome of a connection attempt.
+// menuSessionMsg binds a connection outcome to the attempt and saved game
+// that requested it, rather than to the menu's current answers.
 type menuSessionMsg struct {
 	session netplay.Session
 	err     error
+	attempt uint64
+	player  string
+	resume  *RemoteResume
 }
 
 // connected acts on a finished connection attempt.
 func (m *Menu) connected(msg menuSessionMsg) tea.Cmd {
-	m.cancelWait = nil
-	if _, waiting := m.form.(*waitForm); !waiting {
-		// The player gave up and moved on. A session that arrived anyway is
-		// closed rather than left holding a socket.
+	_, waiting := m.form.(*waitForm)
+	if msg.attempt != m.connectSeq || !waiting {
+		// Do not clear a newer attempt's cancellation function or use its
+		// saved-game identity for a connection that finished late.
 		if msg.session != nil {
 			msg.session.Close()
 		}
 		return nil
 	}
+	m.cancelWait = nil
 	m.form = nil
 	if msg.err != nil {
 		if errors.Is(msg.err, context.Canceled) {
@@ -1698,10 +1712,10 @@ func (m *Menu) connected(msg menuSessionMsg) tea.Cmd {
 		}
 		return nil
 	}
-	if r := m.pending.resume; r != nil {
+	if r := msg.resume; r != nil {
 		return m.start(r.Continue(msg.session))
 	}
-	return m.start(RemoteConfig(m.player, msg.session))
+	return m.start(RemoteConfig(msg.player, msg.session))
 }
 
 // reconnectSaved begins the form that gets a stored network game's connection

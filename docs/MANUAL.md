@@ -420,12 +420,18 @@ twixtui play host --resume <host-saved-id>
 twixtui play join host.example:4270 --resume <guest-saved-id>
 ```
 
-For a relay reconnection, add `--relay relay.example:4271` on both sides and
-give the joining player the new complete pairing code. The saved game restores
-the rules, board size, players and sides; the two copies reconcile any missing
-moves and refuse divergent transcripts. A successful resume updates the
-existing saved-game IDs instead of creating a new game. The menu's
-**Continue a saved game** route also offers reconnection setup for remote games.
+For a relay reconnection, the joining command takes the new complete pairing
+code instead of an address:
+
+```
+twixtui play host --relay relay.example:4271 --resume <host-saved-id>
+twixtui play join <new-pairing-code> --relay relay.example:4271 --resume <guest-saved-id>
+```
+
+The saved game restores the rules, board size, players and sides; the two copies
+reconcile any missing moves and refuse divergent transcripts. A successful
+resume updates the existing saved-game IDs instead of creating a new game.
+The menu's **Continue a saved game** route also offers reconnection setup.
 
 **Correspondence.** No live connection at all, and no network requirement whatsoever.
 Each move produces a short checksummed code beginning `TWX-`, which you send to your

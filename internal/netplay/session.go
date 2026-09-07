@@ -88,6 +88,12 @@ type Event struct {
 	Err error
 	// Text is a line fit to show the player.
 	Text string
+	// PositionHash is the checked position immediately after this entry.
+	// The live session may already hold later queued entries when the UI
+	// consumes the event, so consumers must not compare against that state.
+	PositionHash string
+	// Entries identifies this checkpoint within the ordered record.
+	Entries int
 }
 
 // Session is one end of a remote game. The caller owns its own game state; the
@@ -630,6 +636,8 @@ func (s *session) absorb(m message) ([]Event, error) {
 		s.moves = append(s.moves, Entry{Side: side, Move: e.Move})
 		ev := eventFor(e.Move)
 		ev.Text = fmt.Sprintf("move %d, replayed after reconnecting", len(s.moves))
+		ev.PositionHash = PositionHash(s.game)
+		ev.Entries = len(s.moves)
 		events = append(events, ev)
 	}
 	if m.Entries != len(s.moves) {
@@ -1077,6 +1085,8 @@ func (s *session) applyPeer(m message) (Event, error) {
 	}
 	s.game = trial
 	s.moves = append(s.moves, entry)
+	ev.PositionHash = m.PosHash
+	ev.Entries = m.Entries
 	return ev, nil
 }
 

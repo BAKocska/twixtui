@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,14 +47,28 @@ func Bind(addr string) (*Listener, error) {
 // something that resolved elsewhere, would find out from the connection that
 // arrived rather than from the bind. An empty host is every interface, which is
 // what a bare port has always meant here.
+//
+// A link-local address carries the interface it belongs to as a "%zone"
+// suffix, and is not usable without it: fe80::1 alone does not say which of
+// this machine's links it is on. That form is a numeric literal like any
+// other and is accepted as one.
 func BindAddr(addr string) (string, error) {
 	target := NormalizeAddr(addr)
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
 		return "", fmt.Errorf("%q is not an address to listen on: %w", addr, err)
 	}
-	if host != "" && net.ParseIP(host) == nil {
-		return "", fmt.Errorf("%q is not an interface address: give one this machine holds — 127.0.0.1 for this machine alone, ::1 for its IPv6 loopback — or leave it out to listen on every interface", host)
+	// netip parses the numeric forms and only those, which is exactly the
+	// distinction being drawn here — a literal this machine can hold, against
+	// a name that would have to be resolved somewhere. It is asked rather
+	// than net.ParseIP because that one reads the zone as part of the address
+	// and then finds no address there at all: a host who gave a link-local
+	// address in the only form it works in was told their own interface was
+	// not an interface.
+	if host != "" {
+		if _, err := netip.ParseAddr(host); err != nil {
+			return "", fmt.Errorf("%q is not an interface address: give one this machine holds — 127.0.0.1 for this machine alone, ::1 for its IPv6 loopback, fe80::1%%en0 for a link-local address on one interface — or leave it out to listen on every interface", host)
+		}
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
 		return "", fmt.Errorf("%q is not a port: give a number from 0 to 65535, where 0 asks for a free one", port)

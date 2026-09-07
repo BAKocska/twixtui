@@ -41,6 +41,41 @@ func TestBindAddrRefusesWhatIsNotAnInterface(t *testing.T) {
 	}
 }
 
+// TestBindAddrKeepsALinkLocalAddressesZone: a link-local address carries the
+// interface it belongs to as "%en0" and is not usable without it — fe80::1
+// alone does not say which of this machine's links it is on. The zone used to
+// be read as part of the address, which left the whole thing looking like no
+// address at all, so the one form a link-local bind works in was the one form
+// refused.
+//
+// Nothing is bound here. Which interfaces the machine running this holds is
+// not something a test may assume, and what this covers is which addresses
+// are accepted rather than what a socket does with one; loopback is the only
+// address any test in this package binds.
+func TestBindAddrKeepsALinkLocalAddressesZone(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"fe80::1%en0", "[fe80::1%en0]:" + DefaultPort},
+		{"[fe80::1%en0]:4271", "[fe80::1%en0]:4271"},
+		{"[fe80::1%en0]:0", "[fe80::1%en0]:0"},
+	} {
+		got, err := BindAddr(c.in)
+		if err != nil {
+			t.Errorf("BindAddr(%q): %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("BindAddr(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	// A zone says which interface, not which host: a name that would have to
+	// be resolved is still not a thing to bind, zone or no zone.
+	for _, in := range []string{"localhost%en0", "example.com%en0", "%en0"} {
+		if got, err := BindAddr(in); err == nil {
+			t.Errorf("BindAddr(%q) accepted it as %q", in, got)
+		}
+	}
+}
+
 // TestBindToLoopbackListensThereAndNowhereElse is what --bind exists for: the
 // interface the caller asked for is the interface the socket is bound to, so
 // a host who asked for this machine alone is not reachable from the network.

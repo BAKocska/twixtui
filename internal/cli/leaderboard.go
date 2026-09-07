@@ -303,29 +303,66 @@ func resolveHistoryName(participants []historyParticipant, query string) (histor
 	return historyParticipant{}, fmt.Errorf("%q matches several recorded players: %s", query, strings.Join(shown, ", "))
 }
 
-// exactParticipant finds the one participant a name identifies outright, trying
-// the three names a participant answers to in order of how exactly they say
-// which participant is meant. A name that identifies two of them at one level
-// identifies neither, and is left to the loose search to report.
+// exactParticipant finds the one participant a name identifies outright.
 func exactParticipant(participants []historyParticipant, query string) (historyParticipant, bool) {
+	i, ok := exactParticipantIndex(participants, query)
+	if !ok {
+		return historyParticipant{}, false
+	}
+	return participants[i], true
+}
+
+// exactParticipantIndex is exactParticipant as a position in the list, which
+// is what asking whether a name identifies one particular participant — rather
+// than merely one of them — needs.
+//
+// It tries the three names a participant answers to in order of how exactly
+// they say which participant is meant. A name that identifies two of them at
+// one level identifies neither, and is left to the loose search to report.
+func exactParticipantIndex(participants []historyParticipant, query string) (int, bool) {
 	key := foldName(query)
 	for _, nameOf := range []func(historyParticipant) string{
 		func(h historyParticipant) string { return h.stored },
 		func(h historyParticipant) string { return h.display },
 		func(h historyParticipant) string { return leaderboard.BareName(h.stored) },
 	} {
-		var found historyParticipant
-		hits := 0
-		for _, h := range participants {
+		found, hits := 0, 0
+		for i, h := range participants {
 			if foldName(nameOf(h)) == key {
-				found, hits = h, hits+1
+				found, hits = i, hits+1
 			}
 		}
 		if hits == 1 {
 			return found, true
 		}
 	}
-	return historyParticipant{}, false
+	return 0, false
+}
+
+// participantSelector is the value to offer for one participant: the name they
+// are shown under, where that name identifies them, and the name the log
+// stores them under where it does not.
+//
+// Two participants can be shown under one name — a local profile called
+// "Reka (remote)" and a networked opponent called Reka are both shown that way
+// — and completing to it would name neither of them. Leaving both out instead,
+// which is what the collision used to do, loses exactly the two histories
+// somebody typing that name is looking for. A stored name is the identity
+// itself and answers for nobody else, so it is what a shell offers where the
+// shown name cannot say which player is meant.
+//
+// Each candidate is put back through the resolver rather than judged here, so
+// that what is offered is what typing it would find: a value that would
+// resolve to somebody else is never offered, and the resolver's own order —
+// stored name first, which is what keeps a local profile named literally what
+// a networked opponent is shown as — is the order that decides.
+func participantSelector(participants []historyParticipant, i int) (string, bool) {
+	for _, candidate := range []string{participants[i].display, participants[i].stored} {
+		if at, ok := exactParticipantIndex(participants, candidate); ok && at == i {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // participantProfiles presents the participants to the profile matcher, under
@@ -365,6 +402,10 @@ func foldName(name string) string {
 // historyCompletions completes a --player value with everybody the log can be
 // asked about, live profile or not, so that a history that outlived its profile
 // can still be found by pressing TAB.
+//
+// What is offered for each of them is a value that resolves back to that one
+// participant; see participantSelector for the names that share a spelling and
+// what is offered for those.
 func (o *options) historyCompletions(_ *cobra.Command, _ []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
 	store, err := o.openProfiles()
 	if err != nil {
@@ -377,12 +418,26 @@ func (o *options) historyCompletions(_ *cobra.Command, _ []string, toComplete st
 	participants := historyParticipants(store, board)
 	matches := profile.SearchProfiles(participantProfiles(participants), toComplete)
 	out := make([]cobra.Completion, 0, len(matches))
+	shown := make(map[string]bool, len(matches))
 	for _, m := range matches {
-		h, ok := participantNamed(participants, m.Profile.Name)
-		if !ok {
+		// The matcher is given the names participants are shown under, so a
+		// name two of them share comes back once for each. Everybody shown
+		// under it is offered the first time it is seen, and the second match
+		// on the same name adds nobody again.
+		if shown[m.Profile.Name] {
 			continue
 		}
-		out = append(out, cobra.CompletionWithDesc(m.Profile.Name, h.describe()))
+		shown[m.Profile.Name] = true
+		for i, h := range participants {
+			if h.display != m.Profile.Name {
+				continue
+			}
+			value, ok := participantSelector(participants, i)
+			if !ok {
+				continue
+			}
+			out = append(out, cobra.CompletionWithDesc(value, h.describe()))
+		}
 	}
 	return out, cobra.ShellCompDirectiveNoFileComp
 }

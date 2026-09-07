@@ -3,6 +3,7 @@ package profile
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,15 +56,39 @@ func statStamp(path string) stamp {
 
 // readFile returns the contents of path, or no contents at all when the file
 // does not exist yet. A first run is not an error.
+//
+// The bytes and the stamp describing them come from one open file, not from the
+// path twice. A read here can run without the advisory lock — a directory
+// nothing may write to cannot be given a lock file, and listing what is in it
+// is still reasonable — so a writer's rename can land between reading the path
+// and statting it. Statting the path afterwards would then describe the file
+// that has just arrived while the bytes are the one it replaced, and a caller
+// that reloads when the stamp moves would never reload again: the stamp it is
+// holding is already the one on disk. A rename does not touch an open
+// descriptor, so taking both from it pairs the old contents with the old
+// file's stamp, which the next stat of the path disagrees with.
 func readFile(path string) ([]byte, stamp, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, stamp{}, nil
 	}
 	if err != nil {
 		return nil, stamp{}, fmt.Errorf("reading %s: %w", path, err)
 	}
-	return data, statStamp(path), nil
+	defer f.Close()
+	// The stamp is taken before the contents rather than after, so that it can
+	// only describe the file as it was at or before the bytes that follow. The
+	// wrong way round costs a redundant reload; this way round cannot pass off
+	// stale contents as current ones.
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, stamp{}, fmt.Errorf("reading %s: %w", path, err)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, stamp{}, fmt.Errorf("reading %s: %w", path, err)
+	}
+	return data, stamp{exists: true, size: fi.Size(), mod: fi.ModTime()}, nil
 }
 
 // atomicWrite replaces path with data, or leaves the previous contents intact.

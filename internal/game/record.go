@@ -38,12 +38,20 @@ const recordHeader = "twixtui-record"
 // It is a practical safety cap, not a statement about every record that could
 // ever be written: a history may hold entries that place no peg, and link
 // edits can revisit holes already played, so there is no small bound on a
-// transcript in general. What it is chosen to clear with room to spare is an
-// ordinary game on the widest board this build allows, 48x48: filling every
-// one of its 2304 holes with its link annotations encodes to a few hundred
-// kilobytes, and a genuine short game is a couple of hundred bytes. A record
-// larger than this is refused by name rather than read into memory.
+// transcript in general. The cap leaves room for ordinary games on the widest
+// supported board, 48x48. Longer custom histories can exceed it and are refused
+// explicitly rather than read into memory without a bound.
+//
+// The bound holds in both directions, and it has to: a record this build would
+// refuse to read is not one to store or send on. EncodeCanonical is where the
+// outgoing side of it is checked.
 const MaxRecordBytes = 1 << 20
+
+// ErrRecordTooLarge is what every refusal on size wraps, and the one place the
+// bound is named to a reader. A caller can then tell a record refused for its
+// size from one refused for what it says, which are different problems: the
+// first was never read, the second was read and found wanting.
+var ErrRecordTooLarge = fmt.Errorf("a game record is at most %d bytes", MaxRecordBytes)
 
 // excerptBytes bounds how much of the input a diagnostic repeats.
 const excerptBytes = 64
@@ -163,7 +171,9 @@ func lookupName[T comparable](names map[T]string, want string) (T, bool) {
 }
 
 // Encode writes the record as text: one field per line, the moves last but for
-// the digest, so a record stays readable and diffable.
+// the digest, so a record stays readable and diffable. It says nothing about
+// how large the result is; a record on its way out of this program goes through
+// EncodeCanonical instead.
 func (r Record) Encode() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %d\n", recordHeader, r.Version)
@@ -176,6 +186,27 @@ func (r Record) Encode() string {
 	return b.String()
 }
 
+// EncodeCanonical is Encode for a record leaving this program — into the store,
+// into a file, onto standard output — and it refuses a record whose encoding
+// this build would not read back.
+//
+// Reading and writing are not symmetric, which is why this exists. A reader is
+// lenient about spelling: the ruleset's flags go through strconv.ParseBool, so
+// the value in "swap=1" expands from "1" to "true" when it is written back out.
+// An input inside the limit can therefore canonicalise past it, and a record
+// accepted as a game would be stored or handed to somebody else in a form
+// nothing — this build included — could read again. Whatever is accepted as a
+// game has to survive being written down, so the size of the encoding is
+// checked here, before its caller has anything to write. The encoding itself is
+// unchanged: canonical means canonical, flags spelled out in full.
+func (r Record) EncodeCanonical() (string, error) {
+	s := r.Encode()
+	if len(s) > MaxRecordBytes {
+		return "", fmt.Errorf("%w; this one encodes to %d", ErrRecordTooLarge, len(s))
+	}
+	return s, nil
+}
+
 // DecodeRecord parses a record and checks its digest. It does not replay the
 // game; call Replay for that.
 //
@@ -185,7 +216,7 @@ func (r Record) Encode() string {
 // beside a game that was checked.
 func DecodeRecord(s string) (Record, error) {
 	if len(s) > MaxRecordBytes {
-		return Record{}, fmt.Errorf("a game record is at most %d bytes; this one is %d", MaxRecordBytes, len(s))
+		return Record{}, fmt.Errorf("%w; this one is %d", ErrRecordTooLarge, len(s))
 	}
 	var r Record
 	seen := map[string]bool{}
@@ -308,7 +339,7 @@ func ReadRecord(r io.Reader) (*Game, Record, error) {
 		return nil, Record{}, err
 	}
 	if n > MaxRecordBytes {
-		return nil, Record{}, fmt.Errorf("a game record is at most %d bytes; this input is longer", MaxRecordBytes)
+		return nil, Record{}, fmt.Errorf("%w; this input is longer", ErrRecordTooLarge)
 	}
 	return LoadRecord(b.String())
 }

@@ -190,6 +190,13 @@ func ValidateID(id string) error {
 // record appended to the first, trailing text, a comment — survives into the
 // store to be handed back out again.
 //
+// A stored game is stored to be read again, so the canonical encoding is
+// checked against the size a record may have before anything is written. The
+// reader is lenient about spelling where the canonical encoding is not, so an
+// accepted record can canonicalise past that size; storing it would leave a
+// file this build could no longer load, and the caller would have been told the
+// game was saved. Such a write is refused with the file left as it was.
+//
 // A finished game is final. Once a result has been recorded the game is over,
 // it has been rated, and there is nothing left to play; reopening it and
 // storing the position it had before the result would contradict the rating log
@@ -213,12 +220,16 @@ func (s *Store) Put(sv Saved) error {
 	if err != nil {
 		return fmt.Errorf("refusing to store a game whose record does not load: %w", err)
 	}
+	record, err := rec.EncodeCanonical()
+	if err != nil {
+		return fmt.Errorf("refusing to store a game whose record would not load back: %w", err)
+	}
 	if !sv.Finished || !g.Result().Over() {
 		if old, err := s.Get(sv.ID); err == nil && old.finished() {
 			return fmt.Errorf("game %s is finished and cannot be reopened", sv.ID)
 		}
 	}
-	sv.Record = rec.Encode()
+	sv.Record = record
 	sv.Updated = time.Now()
 
 	body, err := json.MarshalIndent(sv, "", "  ")

@@ -173,6 +173,10 @@ in the terms the search actually measured.`,
 			if err != nil {
 				return err
 			}
+			if !chosen {
+				// R7 says the player picks; ask rather than assume.
+				return fmt.Errorf("choose a side with --side vertical, --side horizontal or --side random")
+			}
 
 			deps, player, err := opts.deps()
 			if err != nil {
@@ -180,10 +184,6 @@ in the terms the search actually measured.`,
 			}
 			if player == "" {
 				return errFirstRunNeedsProfile
-			}
-			if !chosen {
-				// R7 says the player picks; ask rather than assume.
-				return fmt.Errorf("choose a side with --side vertical, --side horizontal or --side random")
 			}
 
 			opponent := bot.New(tier, seed)
@@ -234,19 +234,19 @@ whose turn it is, and each player's own border rows are marked.`,
 			if err != nil {
 				return err
 			}
-			deps, player, err := opts.deps()
-			if err != nil {
-				return err
-			}
-			if player == "" {
-				return errFirstRunNeedsProfile
-			}
 			side, chosen, err := f.resolveSide(time.Now().UnixNano())
 			if err != nil {
 				return err
 			}
 			if !chosen {
 				side = game.Vertical
+			}
+			deps, player, err := opts.deps()
+			if err != nil {
+				return err
+			}
+			if player == "" {
+				return errFirstRunNeedsProfile
 			}
 			other := second
 			if other == "" {
@@ -311,6 +311,38 @@ each time, not something the saved game decides.
 The address to share is printed before the wait begins.`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Whatever the flags settle between themselves is settled before
+			// the first thing that writes. Resolving the profile creates it on
+			// a machine that has none and dates it on one that has it, so a
+			// command line refused for a board size it cannot build or an
+			// interface it cannot bind is refused before that: otherwise the
+			// run leaves a profile behind and plays no game, which is the one
+			// outcome a refusal is supposed to rule out.
+			resumeID, err := f.resumeOverrides(cmd)
+			if err != nil {
+				return err
+			}
+			var rs game.Ruleset
+			var side game.Player
+			if resumeID == "" {
+				if rs, err = f.rules(); err != nil {
+					return err
+				}
+				chosen := false
+				if side, chosen, err = f.resolveSide(time.Now().UnixNano()); err != nil {
+					return err
+				}
+				if !chosen {
+					side = game.Vertical
+				}
+			}
+			var target string
+			if f.relay == "" {
+				if target, err = f.listenAddr(); err != nil {
+					return err
+				}
+			}
+
 			deps, player, err := opts.deps()
 			if err != nil {
 				return err
@@ -318,28 +350,17 @@ The address to share is printed before the wait begins.`,
 			if player == "" {
 				return errFirstRunNeedsProfile
 			}
-			resume, err := f.resumed(cmd, deps, player)
-			if err != nil {
-				return err
-			}
 
 			out := cmd.OutOrStdout()
+			var resume *app.RemoteResume
 			var hostOpts netplay.HostOptions
-			if resume != nil {
+			if resumeID != "" {
+				if resume, err = resumeSaved(deps, resumeID, player); err != nil {
+					return err
+				}
 				hostOpts = resume.Host()
 				fmt.Fprintln(out, resume.Describe())
 			} else {
-				rs, rulesErr := f.rules()
-				if rulesErr != nil {
-					return rulesErr
-				}
-				side, chosen, sideErr := f.resolveSide(time.Now().UnixNano())
-				if sideErr != nil {
-					return sideErr
-				}
-				if !chosen {
-					side = game.Vertical
-				}
 				hostOpts = netplay.HostOptions{Name: player, Rules: rs, Side: side}
 			}
 
@@ -354,10 +375,6 @@ The address to share is printed before the wait begins.`,
 				fmt.Fprintln(out, "Waiting for them to join. Press ctrl+c to give up.")
 				session, err = netplay.HostViaRelay(ctx, f.relay, code, hostOpts)
 			} else {
-				target, addrErr := f.listenAddr()
-				if addrErr != nil {
-					return addrErr
-				}
 				listener, bindErr := netplay.Bind(target)
 				if bindErr != nil {
 					return bindErr
@@ -417,6 +434,24 @@ a host offering anything else is refused rather than played on other terms.`,
 			if target == "" {
 				return errors.New("give the address they printed, or their pairing code together with --relay")
 			}
+			// What the flags say on their own is settled before the profile is
+			// resolved, which writes; the host command says what a refusal
+			// after that leaves behind. A pairing code is checked here for a
+			// second reason as well: the banner below echoes the code back,
+			// which is the one thing a player can check without the host on
+			// the phone — and echoing a code that was never going to pair,
+			// over a promise to wait for an opponent who cannot arrive, is
+			// exactly the reading that hides a typo.
+			resumeID, err := f.resumeOverrides(cmd)
+			if err != nil {
+				return err
+			}
+			if f.relay != "" {
+				if err := netplay.CheckPairingCode(target); err != nil {
+					return err
+				}
+			}
+
 			deps, player, err := opts.deps()
 			if err != nil {
 				return err
@@ -424,24 +459,13 @@ a host offering anything else is refused rather than played on other terms.`,
 			if player == "" {
 				return errFirstRunNeedsProfile
 			}
-			resume, err := f.resumed(cmd, deps, player)
-			if err != nil {
-				return err
-			}
 			guestOpts := netplay.GuestOptions{Name: player}
-			if resume != nil {
-				guestOpts = resume.Guest()
-			}
-
-			// A pairing code is checked before anything is printed. The banner
-			// below echoes the code back, which is the one thing a player can
-			// check without the host on the phone — and echoing a code that
-			// was never going to pair, over a promise to wait for an opponent
-			// who cannot arrive, is exactly the reading that hides a typo.
-			if f.relay != "" {
-				if err := netplay.CheckPairingCode(target); err != nil {
+			var resume *app.RemoteResume
+			if resumeID != "" {
+				if resume, err = resumeSaved(deps, resumeID, player); err != nil {
 					return err
 				}
+				guestOpts = resume.Guest()
 			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -501,26 +525,50 @@ func (f *gameFlags) addResumeFlag(cmd *cobra.Command, opts *options) {
 	registerFlagCompletion(cmd, "resume", opts.gameIDCompletions)
 }
 
-// resumed resolves --resume into the stored game it names, and reports nil when
-// the flag was not given.
+// resumeOverrides settles what --resume means between the flags alone: the
+// identifier of the saved game to continue, empty when the flag was not
+// given, and a refusal when the command line gives no identifier, gives one
+// that could not name a saved game anywhere, or names both a saved game and
+// new terms for it.
 //
 // The terms of a continued game come from its record, so a flag that would set
 // them differently is refused rather than quietly ignored: a player who passed
 // both meant one of the two, and playing the saved game on the saved terms
 // while appearing to accept the others is the reading that goes wrong later.
-func (f *gameFlags) resumed(cmd *cobra.Command, deps app.Deps, player string) (*app.RemoteResume, error) {
+//
+// It reads nothing but the flags, which is what lets every caller settle it
+// before opening a store or resolving a profile: both of those write, and a
+// command line this refuses is one that was never going to play a game.
+func (f *gameFlags) resumeOverrides(cmd *cobra.Command) (string, error) {
 	id := strings.TrimSpace(f.resume)
 	if id == "" {
 		if cmd.Flags().Changed("resume") {
-			return nil, errors.New("--resume needs the identifier of the saved game to continue")
+			return "", errors.New("--resume needs the identifier of the saved game to continue")
 		}
-		return nil, nil
+		return "", nil
 	}
 	for _, name := range []string{"ruleset", "size", "side"} {
 		if cmd.Flags().Changed(name) {
-			return nil, fmt.Errorf("--%s cannot be given with --resume: a continued game keeps the terms it was played on", name)
+			return "", fmt.Errorf("--%s cannot be given with --resume: a continued game keeps the terms it was played on", name)
 		}
 	}
+	// Whether an identifier could name a saved game at all is a fact about
+	// what was typed, so it is settled here; whether this machine holds that
+	// game, and whether it is one this player can continue, is what the store
+	// is still asked. The store checks the same thing again on the way in and
+	// reports it in the same words, so nothing but the moment of the refusal
+	// changes — and that moment is the point: it now comes before a profile
+	// is created or dated for a game that was never going to be continued.
+	if err := gamestore.ValidateID(id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// resumeSaved reads the saved game an identifier names and prepares it to be
+// continued as this player. The identifier is the one resumeOverrides
+// returned, so what is left here is the half that needs the store.
+func resumeSaved(deps app.Deps, id, player string) (*app.RemoteResume, error) {
 	if deps.Games == nil {
 		return nil, errors.New("there is nowhere to read saved games from")
 	}
@@ -533,6 +581,18 @@ func (f *gameFlags) resumed(cmd *cobra.Command, deps app.Deps, player string) (*
 		return nil, err
 	}
 	return &res, nil
+}
+
+// checkGameTerms reports whether the ruleset and side flags can mean anything
+// at all, without settling which side a "random" one lands on. It is what a
+// command that resolves its terms further in refuses a typo by before it
+// resolves the profile, which writes.
+func (f *gameFlags) checkGameTerms() error {
+	if _, err := f.rules(); err != nil {
+		return err
+	}
+	_, _, err := f.resolveSide(0)
+	return err
 }
 
 // listenAddr is the address a direct host binds, assembled from the interface
@@ -595,6 +655,19 @@ rather than corrupting the game.
   twixtui play correspondence --game ID        open that game, when several are open`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Which of the three things this command does is decided by the
+			// flags alone, and so is whether the terms of a new game can mean
+			// anything: both are settled before the profile is resolved,
+			// because resolving it writes.
+			switch {
+			case f.newGame && f.join != "":
+				return errors.New("choose either --new or --join, not both")
+			case f.newGame:
+				if err := f.checkGameTerms(); err != nil {
+					return err
+				}
+			}
+
 			deps, player, err := opts.deps()
 			if err != nil {
 				return err
@@ -603,8 +676,6 @@ rather than corrupting the game.
 				return errFirstRunNeedsProfile
 			}
 			switch {
-			case f.newGame && f.join != "":
-				return errors.New("choose either --new or --join, not both")
 			case f.newGame:
 				return startCorrespondence(cmd, deps, player, &f)
 			case f.join != "":

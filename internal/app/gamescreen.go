@@ -1111,6 +1111,7 @@ func (s *gameScreen) applyNetEvent(ev netplay.Event) tea.Cmd {
 	if s.leaving {
 		return nil
 	}
+	before := s.g.Entries()
 	again := s.watchSession()
 	switch ev.Kind {
 	case netplay.EventConnected:
@@ -1135,7 +1136,8 @@ func (s *gameScreen) applyNetEvent(ev netplay.Event) tea.Cmd {
 			return again
 		}
 		s.message = fmt.Sprintf("%s offers a draw — %s accepts", s.opponentName(), s.gameKeyLabel(gaDraw))
-		return again
+		// This is a recorded entry too. Check its corresponding checkpoint
+		// and let autosave retain it before consuming the next event.
 	case netplay.EventDrawAccept:
 		if err := s.g.AcceptDraw(s.remoteSide); err != nil {
 			s.stop("the opponent accepted a draw the game does not know about: " + s.explain(err))
@@ -1163,7 +1165,15 @@ func (s *gameScreen) applyNetEvent(ev netplay.Event) tea.Cmd {
 	default:
 		return again
 	}
-	if !s.checkSync() {
+	if !s.checkEventSync(ev) {
+		// Never persist a transition the session did not validate. A
+		// disconnect can still save prior agreed play, but a rejected
+		// transition must leave the previous record intact.
+		for s.g.Entries() > before {
+			if err := s.g.UndoLastMove(); err != nil {
+				break
+			}
+		}
 		return nil
 	}
 	if s.g.Result().Over() {
@@ -1173,16 +1183,40 @@ func (s *gameScreen) applyNetEvent(ev netplay.Event) tea.Cmd {
 	return tea.Batch(again, s.maybeBotMove())
 }
 
-// checkSync compares this end's position with the copy the session keeps in
-// step with the opponent's. They are separate games, so a disagreement is a
-// divergence whether or not the protocol has noticed it yet, and the honest
-// answer is to stop.
+func (s *gameScreen) checkEventSync(ev netplay.Event) bool {
+	if ev.PositionHash == "" {
+		return s.checkSync()
+	}
+	position := s.g
+	if ev.Kind == netplay.EventDrawOffer {
+		// An off-turn offer may arrive while the local player edits a turn.
+		// The wire checkpoint covers committed play, not those private edits.
+		position = s.g.Clone()
+		position.AbortTurn()
+	}
+	if position.Entries() == ev.Entries && netplay.PositionHash(position) == ev.PositionHash {
+		return true
+	}
+	s.stop("this end and the opponent no longer hold the same position, " +
+		"so play stops rather than carrying on from a board you do not agree on")
+	return false
+}
+
+// checkSync compares at the UI's current record length. The session can
+// already have received later peer events while a local send was returning;
+// reverse only that queued suffix on its independent copy before comparing.
 func (s *gameScreen) checkSync() bool {
 	r, ok := s.session.(netplay.Resumable)
 	if !ok {
 		return true
 	}
-	if netplay.PositionHash(s.g) == netplay.PositionHash(r.Position()) {
+	position := r.Position()
+	for position.Entries() > s.g.Entries() {
+		if err := position.UndoLastMove(); err != nil {
+			break
+		}
+	}
+	if position.Entries() == s.g.Entries() && netplay.PositionHash(s.g) == netplay.PositionHash(position) {
 		return true
 	}
 	s.stop("this end and the opponent no longer hold the same position, " +
@@ -1304,7 +1338,17 @@ func (s *gameScreen) save(finished bool) error {
 	if s.deps.Games == nil {
 		return nil
 	}
-	rec, err := s.g.Record()
+	position := s.g
+	staged := s.g.Staged()
+	if staged.PegPlaced || len(staged.Added) > 0 || len(staged.Removed) > 0 ||
+		len(staged.RemovedPegs) > 0 || len(staged.PegLinks) > 0 {
+		// An off-turn draw offer is committed even while the local player
+		// edits a turn. Persist that entry without saving or discarding the
+		// player's private, uncommitted edits.
+		position = s.g.Clone()
+		position.AbortTurn()
+	}
+	rec, err := position.Record()
 	if err != nil {
 		return err
 	}

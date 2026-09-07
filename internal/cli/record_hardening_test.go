@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,15 @@ import (
 	"github.com/BAKocska/twixtui/internal/game"
 	"github.com/BAKocska/twixtui/internal/gamestore"
 )
+
+// fixtureRecordLimit is the record size the oversized fixture here is built
+// around. It is a fixed number rather than an expression in game.MaxRecordBytes
+// because a fixture derived from the bound it is checking grows with that
+// bound: raising the bound to try something out would have this test write a
+// terabyte to a temporary directory before asserting anything. What it asserts
+// is behaviour — a record padded past a megabyte is refused — so a build that
+// stops refusing one fails here rather than passing on a constant.
+const fixtureRecordLimit = 1 << 20
 
 // canonicalRecord is the record of a short finished game as this build encodes
 // it, which is what a stored game and an export must both hold.
@@ -106,14 +116,24 @@ func TestImportStoresTheCheckedRecord(t *testing.T) {
 // this program's choice; the loader stops at the limit instead of materialising
 // whatever is on the other end.
 func TestImportRefusesAnOversizedFile(t *testing.T) {
+	// The padding is comment lines on an otherwise sound record rather than a
+	// run of junk. A parser refuses junk whatever the limit is, so only a
+	// record it would otherwise accept can tell the size check apart from the
+	// syntax check — which is the check that would go missing.
+	record := canonicalRecord(t)
+	padding := strings.Repeat("# padding\n", 1+(fixtureRecordLimit-len(record))/len("# padding\n"))
+	oversized := record + padding
+	if len(oversized) <= fixtureRecordLimit {
+		t.Fatalf("the padded record is %d bytes, which does not exceed the %d-byte fixture limit", len(oversized), fixtureRecordLimit)
+	}
+
 	dir := t.TempDir()
-	path := recordFile(t, "huge.rec", strings.Repeat("Z", game.MaxRecordBytes+1))
-	out, err := run(t, dir, "game", "import", path)
+	out, err := run(t, dir, "game", "import", recordFile(t, "huge.rec", oversized))
 	if err == nil {
 		t.Fatalf("a file past the record size limit was imported:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "at most") {
-		t.Errorf("the refusal reads %q, which does not say a record has a size limit", err)
+	if !errors.Is(err, game.ErrRecordTooLarge) {
+		t.Errorf("the refusal reads %q, which is not a refusal on size", err)
 	}
 	games, err := gamestore.Open(dir)
 	if err != nil {
@@ -121,6 +141,12 @@ func TestImportRefusesAnOversizedFile(t *testing.T) {
 	}
 	if saved := games.List(); len(saved) != 0 {
 		t.Errorf("the refused import left %d games in the store", len(saved))
+	}
+
+	// The same record with one comment line on it imports, so the refusal
+	// above is the size of the file and not the padding.
+	if _, err := run(t, dir, "game", "import", recordFile(t, "sound.rec", record+"# padding\n")); err != nil {
+		t.Fatalf("a commented record inside the limit was refused: %v", err)
 	}
 }
 

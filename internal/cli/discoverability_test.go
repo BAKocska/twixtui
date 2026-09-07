@@ -369,6 +369,58 @@ func TestHistoryReachesPlayersWithoutAProfile(t *testing.T) {
 	}
 }
 
+// TestPlayerCompletionKeepsCollidingIdentitiesReachable: a local profile may
+// be called literally what a networked opponent is shown as — "Reka (remote)"
+// — and then one shown name stands for two people. Offering that name for both
+// would complete to a value naming neither, so both used to be dropped from
+// the completion instead, which lost exactly the two histories a shell was
+// being asked to help find. Neither may be conflated with the other and
+// neither may disappear: each is offered under a value that reaches it.
+func TestPlayerCompletionKeepsCollidingIdentitiesReachable(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"Balint", "Reka (remote)"} {
+		mustRun(t, dir, "profile", "create", name)
+	}
+	board, err := leaderboard.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := board.Record(leaderboard.Result{
+		Played:   time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC),
+		Player:   "Balint",
+		Opponent: leaderboard.RemoteName("Reka"),
+		Outcome:  leaderboard.Win,
+		Side:     "vertical",
+		Moves:    20,
+		Ruleset:  game.Std.Canonical(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The local profile keeps its own name, which is what somebody who typed
+	// it meant; the networked opponent is offered the identity the log stores,
+	// which is the one name that says which of the two is being asked for.
+	local, remote := "Reka (remote)", leaderboard.RemoteName("Reka")
+	offered := completionPairs(t, mustRun(t, dir, "__complete", "leaderboard", "show", "--player", ""))
+	for _, want := range []string{"Balint", local, remote} {
+		if _, ok := offered[want]; !ok {
+			t.Fatalf("%q is not offered, so that history cannot be found by pressing TAB: %v", want, offered)
+		}
+	}
+
+	// Offered is not the same as reachable: what each value completes to has
+	// to answer with that participant's games and not the other's. The
+	// networked Reka beat Balint; the profile of the same name never played.
+	remoteGames := mustRun(t, dir, "leaderboard", "show", "--player", remote)
+	if !strings.Contains(remoteGames, "Balint") {
+		t.Errorf("completing to %q does not reach the networked opponent's game:\n%s", remote, remoteGames)
+	}
+	localGames := mustRun(t, dir, "leaderboard", "show", "--player", local)
+	if !strings.Contains(localGames, "no recorded games") {
+		t.Errorf("completing to %q was answered with the networked opponent's games:\n%s", local, localGames)
+	}
+}
+
 // TestProfileCompletionsStayDistinct is F23. The description was when the
 // profile last played, and when it last played is not a distinguishing fact:
 // profiles created by one script share a timestamp to the second, so a shell
