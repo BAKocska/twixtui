@@ -250,6 +250,13 @@ func (tm *Terminal) Alive() bool {
 }
 
 // ExitStatus returns the program's exit status, and whether it has exited.
+//
+// A pane is dead the moment its terminal closes; its exit status arrives when
+// tmux reaps the child, which is a separate event and can come later. In that
+// window tmux prints the pane as dead with an empty status, and reading the
+// empty string as zero made an immediate `exit 3` report as a clean exit on a
+// loaded runner. A dead pane with no status yet is therefore not "exited" here:
+// the caller keeps polling, and the answer it gets is the program's own.
 func (tm *Terminal) ExitStatus() (int, bool) {
 	tm.t.Helper()
 	out, err := tm.tmux("display-message", "-p", "-t", "main", "#{pane_dead}:#{pane_dead_status}")
@@ -262,9 +269,31 @@ func (tm *Terminal) ExitStatus() (int, bool) {
 	}
 	code, err := strconv.Atoi(parts[1])
 	if err != nil {
-		return 0, true
+		return 0, false
 	}
 	return code, true
+}
+
+// WaitExit blocks until the program has exited and tmux has published its
+// status, and returns that status. It is the wait to use before asserting on an
+// exit code: Alive going false says the terminal closed, which is earlier than
+// the status being known, so a caller that polls Alive and then reads
+// ExitStatus once can read it in the gap.
+func (tm *Terminal) WaitExit(timeout time.Duration) (int, bool) {
+	tm.t.Helper()
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if code, exited := tm.ExitStatus(); exited {
+			return code, true
+		}
+		if !time.Now().Before(deadline) {
+			return 0, false
+		}
+		time.Sleep(pollInterval)
+	}
 }
 
 // ErrTimeout is returned when a wait gives up.

@@ -60,19 +60,12 @@ func TestWaitForCanFail(t *testing.T) {
 func TestDetectsImmediateExit(t *testing.T) {
 	t.Parallel()
 	tm := Start(t, `sh -c 'exit 3'`, Options{Width: 40, Height: 10})
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if !tm.Alive() {
-			break
-		}
-		time.Sleep(pollInterval)
+	code, exited := tm.WaitExit(5 * time.Second)
+	if !exited {
+		t.Fatal("ExitStatus never reported the program as exited")
 	}
 	if tm.Alive() {
 		t.Fatal("a program that exited is still reported as alive")
-	}
-	code, exited := tm.ExitStatus()
-	if !exited {
-		t.Fatal("ExitStatus does not report the program as exited")
 	}
 	if code != 3 {
 		t.Errorf("exit status = %d, want 3", code)

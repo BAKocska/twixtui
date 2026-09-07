@@ -414,16 +414,9 @@ func TestQuitEndsTheProgramCleanly(t *testing.T) {
 	}
 
 	tm.SendKeys("q")
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) && tm.Alive() {
-		time.Sleep(pollInterval)
-	}
-	if tm.Alive() {
-		t.Fatalf("the program is still running after quit\n%s", tm.Capture())
-	}
-	code, exited := tm.ExitStatus()
+	code, exited := tm.WaitExit(20 * time.Second)
 	if !exited {
-		t.Fatal("the program stopped without reporting an exit status")
+		t.Fatalf("the program is still running after quit, or stopped without reporting an exit status\n%s", tm.Capture())
 	}
 	if code != 0 {
 		t.Errorf("exit status = %d, want 0\n%s", code, tm.Capture())
@@ -439,11 +432,7 @@ func TestCtrlCEndsTheProgramCleanly(t *testing.T) {
 	tm.WaitSettled(10 * time.Second)
 
 	tm.SendKeys("C-c")
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) && tm.Alive() {
-		time.Sleep(pollInterval)
-	}
-	if tm.Alive() {
+	if _, exited := tm.WaitExit(20 * time.Second); !exited {
 		t.Fatalf("the program ignored ctrl+c\n%s", tm.Capture())
 	}
 }
