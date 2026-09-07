@@ -2,16 +2,18 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"time"
 
 	"github.com/BAKocska/twixtui/internal/game"
 )
 
-// One alpha-beta search serves all three tiers. The tiers differ only in the
-// params below: how long they may think, how deep they may look, how many
-// candidate moves they keep per node, whether they can see route redundancy at
-// all, and whether they sample instead of playing the best move found.
+// One alpha-beta search serves every tier. The tiers differ only in the params
+// below: how long they may think, how many nodes they may enter, how deep they
+// may look, how many candidate moves they keep per node, whether they can see
+// route redundancy at all, whether they search the moves after the first with a
+// null window, and whether they sample instead of playing the best move found.
 //
 // Two things are true of every tier, because a bot that walks into a one-move
 // loss or misses a one-move win looks broken rather than weak:
@@ -36,18 +38,44 @@ const (
 	decidedScore = winScore - maxSearchPly
 )
 
-// params are the strength levers. All three tiers share one engine and differ
-// only here.
+// Why a search stopped. A search that ran to its own end reports depth or
+// decided; every other reason means it was cut short, and what the caller gets
+// is the last iteration that finished rather than the one that was running.
+const (
+	// stopDepth means every iteration the tier allows was finished.
+	stopDepth = "depth"
+	// stopDecided means the search found a forced win inside the moves it
+	// looked at and stopped deepening, since a forced win does not improve
+	// with depth. It is a statement about the tree that was searched and not
+	// about the position: the width caps discard candidate moves, so a defence
+	// the ordering threw away is a defence the search never saw.
+	stopDecided = "decided"
+	// stopImmediate means the side to move had a winning hole and took it
+	// without searching.
+	stopImmediate = "immediate"
+	// stopTime means the wall-clock budget or the context deadline ran out.
+	stopTime = "time"
+	// stopNodes means the node budget was spent.
+	stopNodes = "nodes"
+	// stopCanceled means the context was canceled.
+	stopCanceled = "canceled"
+	// stopNoMove means the position had nowhere to play.
+	stopNoMove = "no-move"
+	// stopError means the engine could not restore the position after a trial
+	// move. The search's own numbers cannot be trusted after that, which is
+	// why it is a reason of its own rather than an ordinary stop.
+	stopError = "error"
+)
+
+// params are the effort levers. Every tier shares one engine and differs only
+// here.
 type params struct {
-	// budget is the longest a move may take. Only the strongest tier normally
-	// reaches it; the weaker tiers stop at their depth ceiling first, so for
-	// them the budget is a guard against a pathological position rather than
-	// the thing that decides how hard they think.
+	// budget is a wall-time guard checked at work boundaries. Small depth
+	// ceilings normally finish first; elapsed time can exceed the guard by
+	// the work between checks.
 	budget time.Duration
-	// maxDepth caps iterative deepening. It is the main strength lever: each
-	// extra ply up to about five is worth a large win-rate margin, whereas
-	// extra time on its own buys only a fraction of a ply, so a tier is defined
-	// by how deep it may look rather than by how long it may take.
+	// maxDepth caps iterative deepening; a larger horizon is more effort, not
+	// a guarantee of better play.
 	maxDepth int
 	// width is how many candidate moves survive ordering at an interior node.
 	width int
@@ -66,6 +94,21 @@ type params struct {
 	// temperature, in pegs, spreads the root choice over near-best moves
 	// instead of taking the best. Zero plays the best move found.
 	temperature float64
+	// nodeLimit caps how many nodes one search may enter, counted across every
+	// iteration of the deepening loop. Zero means no limit. It exists so that
+	// two configurations can be given the same work rather than the same time:
+	// a clock budget measures the machine as much as the search, whereas a node
+	// budget stops at the same node on any machine, which is what makes a
+	// comparison between two searches repeatable.
+	nodeLimit int64
+	// pvs enables principal variation search at interior nodes: once one move
+	// has a score, the others are asked only whether they beat it, and only a
+	// move that says yes is searched again properly. With the same move set it
+	// returns the same value as plain alpha-beta, so it is a speed lever rather
+	// than a strength one -- but it changes which cutoffs happen, and cutoffs
+	// feed the history heuristic that decides which moves survive the width
+	// cap, so a narrow search can still end up choosing differently.
+	pvs bool
 }
 
 // scoredMove is one candidate placement: its ordering score before the search
@@ -75,6 +118,11 @@ type scoredMove struct {
 	hole  int32
 	order int32
 	score int
+	// exact marks a score the search measured rather than bounded. At the root
+	// only the moves that improved on everything before them are measured; the
+	// rest were asked whether they beat the best so far, and an answer of no is
+	// an upper bound that may sit far above what the move is really worth.
+	exact bool
 }
 
 // Transposition table entry flags.
@@ -89,7 +137,17 @@ type tableEntry struct {
 	score int32
 	best  int32
 	depth int16
-	flag  int8
+	// ext is the threat-extension budget the node that produced this entry
+	// still had. Two searches of one position to the same nominal depth are
+	// not the same search when one of them may still extend past that depth
+	// and the other may not: the first can resolve a forced sequence the
+	// second has to guess at. The score is therefore only reused by a node
+	// holding exactly the same budget, which stops an entry stored near the
+	// root, where extensions were plentiful, from answering a node that spent
+	// them on the way down. The move is a hint about where to look rather than
+	// a claim about the value, so it is reused whatever the budget was.
+	ext  int16
+	flag int8
 }
 
 // packScore and unpackScore make a win score storable: a win found at ply p is
@@ -123,14 +181,29 @@ type searcher struct {
 	deadline time.Time
 	stopped  bool
 	nodes    int64
+	// evaluations counts the position analyses the search performed. It is a
+	// different quantity from nodes: a node that hits the transposition table
+	// still had to analyse the position to know its hash, and confirming a
+	// defence analyses a position that never becomes a node at all.
+	evaluations int64
 	// lastDepth is the deepest iteration the most recent search finished, kept
 	// so that a strength measurement can report how far each tier actually got.
 	lastDepth int
+	// elapsed is how long the most recent search took, set on every exit.
+	elapsed time.Duration
+	// stopReason is why the most recent search ended, one of the stop
+	// constants above. It is latched: the first reason to trip wins, because
+	// by the time anything notices, the clock and the node budget may both be
+	// past and only one of them ended the search.
+	stopReason string
 
 	// One analysis and one move buffer per ply: a node needs its own view of
 	// the position to survive the recursion into its children.
 	perPly []plyState
 	probe  analysis
+	// rootMoves holds the last finished iteration's root moves, copied out of
+	// the working buffer that the next iteration overwrites.
+	rootMoves []scoredMove
 
 	hist  [2][]int32
 	table []tableEntry
@@ -186,11 +259,50 @@ func (s *searcher) prepare(n int) {
 	clear(s.table)
 }
 
+// halt records why the search is stopping, first reason winning.
+func (s *searcher) halt(reason string) {
+	if s.stopReason == "" {
+		s.stopReason = reason
+	}
+}
+
+// abort stops the search in flight. Everything the running iteration has
+// computed is then discarded: part of it was searched and part of it was not,
+// so together they are not a search of anything.
+func (s *searcher) abort(reason string) {
+	s.halt(reason)
+	s.stopped = true
+}
+
+// expired checks cancellation and the clock at work boundaries. Node limits are
+// checked only before entering search: reaching the ceiling must not discard
+// an iteration whose remaining root moves finish without entering another node.
 func (s *searcher) expired() bool {
-	if s.ctx != nil && s.ctx.Err() != nil {
+	if s.ctx != nil {
+		if err := s.ctx.Err(); err != nil {
+			if errors.Is(err, context.Canceled) {
+				s.halt(stopCanceled)
+			} else {
+				s.halt(stopTime)
+			}
+			return true
+		}
+	}
+	if !s.deadline.IsZero() && time.Now().After(s.deadline) {
+		s.halt(stopTime)
 		return true
 	}
-	return time.Now().After(s.deadline)
+	return false
+}
+
+// analyse loads a position into an and counts it. Every analysis the search
+// performs goes through here, including the root's own and the probes that
+// confirm a defence, because analysing positions is what the search spends its
+// time on and a count that left some of them out would not be a measure of the
+// work done.
+func (s *searcher) analyse(an *analysis, g *game.Game) {
+	s.evaluations++
+	an.load(g)
 }
 
 // leaf is the static score of a position for the side to move.
@@ -203,12 +315,23 @@ func (s *searcher) leaf(an *analysis, me game.Player) int {
 }
 
 // search returns the value of the position for the side to move.
+//
+// One node is one entry into this function, which is what the node budget
+// counts. That budget is checked at every entry rather than every hundred and
+// twenty-eighth, so a search given a node budget walks exactly the same tree on
+// a fast machine and a slow one; the clock is checked periodically, because it
+// cannot be made repeatable anyway.
 func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
+	if s.stopped {
+		return alpha
+	}
+	if s.p.nodeLimit > 0 && s.nodes >= s.p.nodeLimit {
+		s.abort(stopNodes)
+		return alpha
+	}
 	s.nodes++
 	if s.nodes&127 == 0 && s.expired() {
 		s.stopped = true
-	}
-	if s.stopped || ply >= maxSearchPly {
 		return alpha
 	}
 
@@ -216,15 +339,23 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 	mine, theirs := sideIndex(me), sideIndex(me.Opponent())
 	st := s.at(ply)
 	an := &st.an
-	an.load(g)
+	s.analyse(an, g)
 
 	if an.need[mine] == 1 {
 		return winScore - ply
 	}
 	forced := an.need[theirs] == 1
 
-	if depth <= 0 {
-		if forced && ext > 0 {
+	// The recursion cap is a horizon like the depth ceiling, and it is
+	// evaluated like one. Returning alpha there instead would hand the parent
+	// a number that came from the window rather than from the position, and
+	// the parent is free to store that number as the line's value: a
+	// configuration whose depth and extension budget together reach the cap
+	// would be reading its own window back as a score, and a window can sit
+	// above the level at which a score is read as a win.
+	atCap := ply >= maxSearchPly
+	if depth <= 0 || atCap {
+		if forced && ext > 0 && !atCap {
 			depth, ext = 1, ext-1
 		} else {
 			return s.leaf(an, me)
@@ -237,7 +368,7 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 		e := &s.table[key&s.mask]
 		if e.key == key {
 			tableMove = e.best
-			if int(e.depth) >= depth {
+			if int(e.ext) == ext && int(e.depth) >= depth {
 				v := unpackScore(e.score, ply)
 				switch e.flag {
 				case flagExact:
@@ -256,6 +387,13 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 	}
 
 	moves := s.generate(g, an, me, ply, forced)
+	if s.stopped {
+		// Listing the defences was interrupted, so what came back is a prefix
+		// of the exact list. An empty prefix does not mean the threat is
+		// unanswerable and a short one does not mean the answers left out
+		// lose, so nothing here may be scored.
+		return alpha
+	}
 	if len(moves) == 0 {
 		if forced {
 			// Nothing answers the threat: the opponent connects next move.
@@ -278,7 +416,8 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 			continue
 		}
 		var v int
-		if res.Over() {
+		switch {
+		case res.Over():
 			switch res.Winner() {
 			case me:
 				v = winScore - ply - 1
@@ -287,12 +426,25 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 			default:
 				v = -(winScore - ply - 1)
 			}
-		} else {
+		case s.p.pvs && bestHole >= 0 && alpha+1 < beta:
+			// Principal variation search. The move that scored first is taken
+			// to be the best one, so the rest are searched with a window one
+			// point wide, which is cheap and usually confirms it. A move that
+			// beats that window has only been shown to be better than alpha,
+			// not measured, so it is searched again with the real window
+			// before its score is believed. The probe is skipped when the
+			// window is already one point wide, since it would then be the
+			// same search run twice.
+			v = -s.search(g, depth-1, ply+1, -(alpha + 1), -alpha, ext)
+			if !s.stopped && v > alpha && v < beta {
+				v = -s.search(g, depth-1, ply+1, -beta, -alpha, ext)
+			}
+		default:
 			v = -s.search(g, depth-1, ply+1, -beta, -alpha, ext)
 		}
 		if err := g.UndoLastMove(); err != nil {
-			s.stopped = true
-			return best
+			s.abort(stopError)
+			return alpha
 		}
 		if s.stopped {
 			if bestHole < 0 {
@@ -312,6 +464,9 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 		}
 	}
 
+	// Nothing is stored on the way out of an interrupted node: the returns
+	// above are the only way out once s.stopped is set, so a score that was
+	// never finished cannot be left behind for a later node to believe.
 	if s.table != nil && bestHole >= 0 {
 		flag := flagExact
 		switch {
@@ -321,12 +476,13 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 			flag = flagLower
 		}
 		e := &s.table[key&s.mask]
-		if e.key != key || int(e.depth) <= depth {
+		if e.key != key || int(e.ext) != ext || int(e.depth) <= depth {
 			*e = tableEntry{
 				key:   key,
 				score: packScore(best, ply),
 				best:  bestHole,
 				depth: int16(depth),
+				ext:   int16(ext),
 				flag:  flag,
 			}
 		}
@@ -530,6 +686,14 @@ func (s *searcher) defences(g *game.Game, an *analysis, me game.Player, ply int)
 	st := s.at(ply)
 	buf := st.moves[:0]
 	for _, hole := range s.cands {
+		if s.expired() {
+			// Confirming the candidates is the expensive half of this, and a
+			// cancelled search must not sit through the rest of it. What comes
+			// back is then a prefix of the exact list; every caller discards
+			// the move list of a stopped node rather than reading it as exact.
+			s.stopped = true
+			break
+		}
 		p := game.Point{Col: int(hole) % n, Row: int(hole) / n}
 		res, err := g.PlayPeg(p)
 		if err != nil {
@@ -537,13 +701,13 @@ func (s *searcher) defences(g *game.Game, an *analysis, me game.Player, ply int)
 		}
 		answered := res.Over()
 		if !answered {
-			s.probe.load(g)
+			s.analyse(&s.probe, g)
 			// Anything other than "one peg from finishing" answers the threat,
 			// including sealing the opponent out of a chain altogether.
 			answered = s.probe.need[theirs] != 1
 		}
 		if err := g.UndoLastMove(); err != nil {
-			s.stopped = true
+			s.abort(stopError)
 			break
 		}
 		if answered {
@@ -571,14 +735,17 @@ type rootResult struct {
 	// depth is the deepest iteration that finished, 0 when the budget did not
 	// allow even one and the cheap ordering chose the move.
 	depth int
-	// moves holds the searched root moves, best first.
+	// moves holds the searched root moves, best first. Only the scores marked
+	// exact are measurements; the rest are upper bounds, which is all that
+	// searching a move against the best found so far can establish.
 	moves []scoredMove
 	// immediate marks a position where the side to move simply had a winning
 	// hole, taken without searching.
 	immediate bool
 	// threatened marks an opponent one peg from a finished chain.
 	threatened bool
-	// defences counts the moves that answered that threat.
+	// defences counts the moves that answered that threat; -1 means listing
+	// was interrupted, so the usable prefix must not be read as an exact count.
 	defences int
 	// terms is the decomposition of the position before the move.
 	terms Terms
@@ -587,34 +754,49 @@ type rootResult struct {
 }
 
 // root searches the position and returns the move to play.
+//
+// Only a finished iteration is ever handed back. An iteration that is cut short
+// has scored some root moves at the new depth and the rest at the old one, and
+// that mixture is not a search of anything: it is dropped, and the deepest
+// iteration that finished is what the caller sees. The scores are read and not
+// merely ranked -- the beginner tier samples among them and the hint measures
+// how close the second move was -- so a mixture would show up in how the bot
+// plays, not only in what it reports.
 func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 	me := g.Turn()
 	n := g.Size()
 	s.prepare(n)
 	s.ctx = ctx
 	s.stopped = false
+	s.stopReason = ""
 	s.nodes = 0
+	s.evaluations = 0
 	s.lastDepth = 0
-	s.deadline = time.Now().Add(s.p.budget)
+	start := time.Now()
+	s.elapsed = 0
+	defer func() { s.elapsed = time.Since(start) }()
+	s.deadline = start.Add(s.p.budget)
 	if dl, ok := ctx.Deadline(); ok && dl.Before(s.deadline) {
 		s.deadline = dl
 	}
 
 	st := s.at(0)
 	an := &st.an
-	an.load(g)
+	s.analyse(an, g)
 	mine, theirs := sideIndex(me), sideIndex(me.Opponent())
 	out := rootResult{terms: an.terms(me), an: an}
 
 	if an.need[mine] == 1 {
 		hole, ok := an.winningHole(mine)
 		if !ok {
+			s.halt(stopNoMove)
 			return out, ErrNoMove
 		}
+		s.halt(stopImmediate)
 		out.best = hole
 		out.score = winScore
 		out.immediate = true
-		out.moves = []scoredMove{{at: hole, hole: int32(hole.Row*n + hole.Col), score: winScore}}
+		out.moves = []scoredMove{{at: hole, hole: int32(hole.Row*n + hole.Col), score: winScore, exact: true}}
 		return out, nil
 	}
 
@@ -623,20 +805,26 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 	if out.threatened {
 		moves = s.defences(g, an, me, 0)
 		out.defences = len(moves)
+		if s.stopped {
+			out.defences = -1
+		}
 	}
 	if len(moves) == 0 {
-		// Either there was no threat, or nothing answers it. Either way the
-		// bot still has to play, so fall back to the ordinary candidate list.
+		// Either there was no threat, or nothing answers it, or listing the
+		// answers was cut short. Either way the bot still has to play, so fall
+		// back to the ordinary candidate list, which is one cheap pass over the
+		// legal holes and cannot itself be interrupted.
 		moves = s.candidates(g, an, me, 0)
 	}
 	if len(moves) == 0 {
+		s.halt(stopNoMove)
 		return out, ErrNoMove
 	}
 	// Before any search has scored a move, the ordering heuristic is the
 	// answer: a cancelled context returns this rather than nothing.
 	out.best = moves[0].at
-	out.moves = moves
-	if s.expired() {
+	out.moves = s.keep(moves)
+	if s.stopped || s.expired() {
 		return out, nil
 	}
 
@@ -644,12 +832,24 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 		alpha := -infScore
 		finished := true
 		for i := range moves {
+			if s.expired() {
+				// Between two root moves is the cheapest place to notice, and
+				// the only place that catches a budget spent on root moves
+				// that are each too small to check the clock on their own.
+				finished = false
+				break
+			}
 			res, err := g.PlayPeg(moves[i].at)
 			if err != nil {
-				moves[i].score = -infScore
+				moves[i].score, moves[i].exact = -infScore, false
 				continue
 			}
 			var v int
+			// The first move to be scored is searched with the whole window
+			// and so is measured. After that the root asks each move only
+			// whether it beats alpha, and a move that says no comes back with
+			// a bound instead of a value.
+			exact := alpha == -infScore || s.p.temperature > 0
 			if res.Over() {
 				switch res.Winner() {
 				case me:
@@ -659,10 +859,21 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 				default:
 					v = -(winScore - 1)
 				}
+				// A finished game is worth what it is worth whatever window
+				// the move was searched with.
+				exact = true
 			} else {
-				v = -s.search(g, depth-1, 1, -infScore, -alpha, s.p.extend)
+				// Sampling needs values for every candidate, not upper bounds.
+				// Otherwise a losing move whose bound is close to the PV can
+				// receive the same probability as a genuinely close reply.
+				if s.p.temperature > 0 {
+					v = -s.search(g, depth-1, 1, -infScore, infScore, s.p.extend)
+				} else {
+					v = -s.search(g, depth-1, 1, -infScore, -alpha, s.p.extend)
+				}
 			}
 			if err := g.UndoLastMove(); err != nil {
+				s.abort(stopError)
 				return out, err
 			}
 			if s.stopped {
@@ -670,6 +881,7 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 				break
 			}
 			moves[i].score = v
+			moves[i].exact = exact || v > alpha
 			if v > alpha {
 				alpha = v
 			}
@@ -677,15 +889,32 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 		if !finished {
 			break
 		}
-		// Moves that score alike are separated by the ordering heuristic, not
-		// by their position on the board. This matters most in a lost
-		// position, where every reply scores as the same forced loss: without
-		// a positional tie-break the bot would stop playing sensibly the
-		// moment it saw the loss coming, and an opponent that has not seen it
-		// yet would still have to be given something to beat.
+		// Moves that score alike are separated first by whether the score is a
+		// measurement, and only then by the ordering heuristic.
+		//
+		// Exactness has to come first because of how the root searches. Every
+		// move after the first is searched with the window open only above
+		// alpha, so a move that comes back level with alpha has been shown not
+		// to beat it and may be far worse; only the move that set alpha was
+		// measured. Ranking on the number alone lets the positional tie-break
+		// promote a move that was never worth alpha over the one that was,
+		// which is a worse move played for a better-looking reason.
+		//
+		// Below that the ordering heuristic decides, rather than the hole's
+		// position on the board. That matters most in a lost position, where
+		// every reply scores as the same forced loss: without a positional
+		// tie-break the bot would stop playing sensibly the moment it saw the
+		// loss coming, and an opponent that has not seen it yet would still
+		// have to be given something to beat.
 		slices.SortFunc(moves, func(x, y scoredMove) int {
 			if x.score != y.score {
 				return y.score - x.score
+			}
+			if x.exact != y.exact {
+				if x.exact {
+					return -1
+				}
+				return 1
 			}
 			if x.order != y.order {
 				return int(y.order - x.order)
@@ -696,14 +925,29 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 		out.score = moves[0].score
 		out.depth = depth
 		s.lastDepth = depth
-		out.moves = moves
+		out.moves = s.keep(moves)
 		if out.score >= decidedScore {
-			// A win is proven; nothing deeper can improve on it.
+			// A forced win inside the moves the search looked at, and a forced
+			// win does not get better with depth, so deepening this same
+			// selective tree can only cost time. It is not a proof about the
+			// position: the width caps threw candidate moves away, and a
+			// defence thrown away is a defence never searched.
+			s.halt(stopDecided)
 			break
 		}
 		if s.expired() {
 			break
 		}
 	}
+	s.halt(stopDepth)
 	return out, nil
+}
+
+// keep copies a finished iteration's root moves out of the buffer the next
+// iteration overwrites. The copy is reused between searches on the same terms
+// as the per-ply buffers: it belongs to the searcher and stays valid until the
+// next call to root.
+func (s *searcher) keep(moves []scoredMove) []scoredMove {
+	s.rootMoves = append(s.rootMoves[:0], moves...)
+	return s.rootMoves
 }

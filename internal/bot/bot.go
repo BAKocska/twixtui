@@ -1,6 +1,19 @@
-// Package bot plays TwixT. One alpha-beta search backs three effort tiers and
-// the hint feature; the tiers differ in budget, depth, candidate width and how
-// much of the evaluation they are allowed to see.
+// Package bot plays TwixT. One alpha-beta search backs four effort tiers and
+// the hint feature; the tiers differ in the guards they search under — how long
+// they may think, how deep they may look, how many nodes they may visit — in
+// how many candidate moves they keep, and in how much of the evaluation they
+// are allowed to see.
+//
+// A tier names an effort ceiling, not an attained strength. What a search
+// actually reaches inside those guards depends on the position, the board size
+// and the machine, and more effort is not a promise of a better move in every
+// position. The search is also selective — it looks at a shortlist of holes per
+// node and places pegs with their links taken automatically — so nothing here
+// is a solver for the full game.
+//
+// Limits and NewWithLimits replace a tier's guards with the caller's own, which
+// is how a measurement asks for work rather than for wall-clock time, and
+// StatsOf reports what the last search actually spent.
 package bot
 
 import (
@@ -19,25 +32,47 @@ import (
 // ErrNoMove reports a position where the bot has nowhere to play.
 var ErrNoMove = errors.New("bot: no legal placement available")
 
+// ErrStagedTurn reports a position whose turn in progress carries uncommitted
+// edits: a peg placed but not committed, or a link added or withdrawn by hand.
+//
+// The search plays and takes back trial moves on the game it is given, and
+// taking a move back restores the position from before the turn, so a staged
+// edit handed to the engine would be searched as though it were part of the
+// position and then thrown away. The bot refuses instead of doing either: the
+// caller commits or aborts the turn first. This is checked once per request,
+// not per node.
+var ErrStagedTurn = errors.New("bot: the turn in progress has uncommitted edits: commit or abort it first")
+
+// staged reports whether the turn in progress has anything in it.
+func staged(g *game.Game) bool {
+	st := g.Staged()
+	return st.PegPlaced || len(st.Added) > 0 || len(st.Removed) > 0 ||
+		len(st.RemovedPegs) > 0 || len(st.PegLinks) > 0
+}
+
 // Tier names how much effort the bot spends on a move.
 type Tier int
 
-// The available tiers, weakest first.
+// The available tiers, in increasing order of the effort they may spend.
 const (
 	Beginner Tier = iota
 	Intermediate
 	Pro
+	Max
 )
 
-var tierNames = [...]string{"beginner", "intermediate", "pro"}
+var tierNames = [...]string{"beginner", "intermediate", "pro", "max"}
 
-// tierSummaries describe what each tier actually does. Only the pro tier spends
-// its whole budget thinking; the two weaker tiers are capped in depth and so
-// answer well inside theirs, which the wording must not overstate.
+// tierSummaries describe what each tier is allowed to do, which is not the same
+// as what it achieves. The two weaker tiers are capped in depth and answer well
+// inside their budgets; the two stronger ones can be stopped by the clock with
+// their depth ceilings still far away, so the wording names the guards and
+// leaves the depth reached to the position and the machine.
 var tierSummaries = [...]string{
 	"one move ahead, counting only how many pegs each side still needs, answered at once: takes a win and blocks one, but has no plan",
 	"three moves ahead with the full evaluation, still near-instant: punishes a loose chain",
-	"thinks for up to three seconds, five to seven moves ahead, extending forced lines: the strongest play on offer",
+	"up to three seconds under a sixteen-move ceiling it rarely reaches, extending forced lines and remembering positions it has already scored",
+	"the largest effort on offer: up to ten seconds, a twenty-four-move ceiling and a wider shortlist of candidates — more thinking, not a guarantee of a better move",
 }
 
 // String returns the tier's name.
@@ -59,7 +94,7 @@ func ParseTier(s string) (Tier, error) {
 	return 0, fmt.Errorf("bot: unknown tier %q, want one of %s", s, strings.Join(TierNames(), ", "))
 }
 
-// TierNames returns the tier names weakest first.
+// TierNames returns tier names in increasing configured effort order.
 func TierNames() []string {
 	return append([]string(nil), tierNames[:]...)
 }
@@ -100,25 +135,21 @@ type Bot interface {
 	// returns the best move it had reached, which is how a per-move budget is
 	// enforced; it is not an error, and even an already-cancelled context
 	// yields a legal move chosen by the ordering heuristic. An error means the
-	// position genuinely has no move: the game is over, or there is nowhere
-	// left to play.
+	// position cannot be searched: the game is over, there is nowhere left to
+	// play, or the turn in progress has uncommitted edits.
 	Move(ctx context.Context, g *game.Game) (game.Point, error)
 	// Hint explains the move the bot would consider best for the side to move.
-	// A hint is always computed with the strongest settings the package has,
-	// whatever tier is playing, so that a beginner-tier game does not also give
-	// beginner-tier advice.
+	// A hint is always computed with the highest-effort settings the package
+	// has, whatever tier is playing, so that a beginner-tier game does not also
+	// give beginner-tier advice.
 	Hint(ctx context.Context, g *game.Game) (Hint, error)
 }
 
 // tierParams returns the levers for a tier.
 //
-// The separation is by depth ceiling first and budget second, because that is
-// what the strength measurement showed actually works: each extra ply up to
-// about five is worth a large win-rate margin, whereas extra time on its own
-// buys only a fraction of a ply. Capping the weaker tiers means the ladder does
-// not depend on the machine happening to be fast or slow — a fast machine
-// cannot let the beginner catch up, and a slow one still leaves the beginner
-// playing on pegs alone with no sense of shape.
+// Depth, candidate width, evaluation and time distinguish effort, not guaranteed
+// playing strength. A node ceiling is optional: callers use Limits to compare
+// reproducible amounts of work while retaining a wall-clock safety guard.
 func tierParams(t Tier) params {
 	switch t {
 	case Intermediate:
@@ -138,6 +169,20 @@ func tierParams(t Tier) params {
 			fullEval:  true,
 			useTable:  true,
 			extend:    6,
+			pvs:       true,
+		}
+	case Max:
+		// A broader shortlist and larger search horizon for the highest-effort
+		// mode. More work is not a guarantee of better play in every position.
+		return params{
+			budget:    10 * time.Second,
+			maxDepth:  24,
+			width:     32,
+			rootWidth: 48,
+			fullEval:  true,
+			useTable:  true,
+			extend:    8,
+			pvs:       true,
 		}
 	default:
 		return params{
@@ -156,10 +201,14 @@ func tierParams(t Tier) params {
 
 // hintParams are the settings a hint is computed with. A hint is a one-off
 // request with no turn clock behind it, so it is always answered with the
-// strongest settings the package has regardless of which tier is playing:
-// a beginner-tier game giving beginner-tier advice would be useless.
+// highest-effort levers the package has regardless of which tier is playing: a
+// beginner-tier game giving beginner-tier advice would be useless.
+//
+// The one lever not taken from the highest-effort tier is its clock. Somebody
+// is waiting for the answer, so a hint keeps a two-second guard instead of ten
+// seconds. It uses the same policy but can finish at a shallower depth.
 func hintParams() params {
-	p := tierParams(Pro)
+	p := tierParams(Max)
 	p.budget = 2 * time.Second
 	p.temperature = 0
 	return p
@@ -173,20 +222,167 @@ type engine struct {
 	hint *searcher
 }
 
-// New returns a bot of the given tier. The seed fixes its choices where the
-// search is bounded by depth: the beginner and intermediate tiers always answer
-// the same way from the same seed and position. The pro tier is bounded by the
-// clock, so a loaded machine can stop its search earlier and answer
-// differently; its games are reproducible in practice rather than by guarantee.
+// New returns a bot of the given tier. A tier that does not exist gives the
+// beginner rather than an error, so a caller that has not validated its input
+// still plays; NewWithLimits refuses it instead.
+//
+// The seed decides the beginner tier's choice among near-best moves, and
+// nothing else: the other tiers play the best move their search found. That
+// move is a function of the seed and the position for as long as the search
+// runs to completion. The beginner and intermediate tiers stop at their depth
+// ceilings, which they reach well inside their budgets, so in practice they do
+// run to completion; the pro and max tiers carry ceilings their budgets need
+// not be long enough to reach, and any tier can be cut short by a deadline or
+// a cancellation on the caller's context. A search that was cut short answers
+// from the work it had finished, so reproducibility follows the completed work
+// rather than the tier — see Limits for how a caller asks for work it can
+// count on rather than for wall-clock time.
 func New(t Tier, seed int64) Bot {
-	if t < Beginner || t > Pro {
+	if t < Beginner || t > Max {
 		t = Beginner
 	}
 	p := tierParams(t)
 	return &engine{tier: t, seed: seed, p: p, play: newSearcher(p)}
 }
 
+// Limits replace the effort guards a tier searches under. A zero field keeps the
+// tier's own value, so a caller states only what it means to change. A negative
+// one is refused rather than ignored: it can only be a mistake, and silently
+// searching under the tier's own guard instead would make a measurement report
+// work it never bounded.
+//
+// Nodes and Depth bound work rather than time, and work is what a caller can
+// hold constant between machines. That only holds as far as the work bound is
+// the guard that actually binds: the search always carries a wall-clock guard
+// as well, a deadline or cancellation on the caller's context always cuts it
+// short, and whichever guard comes first is the one that ends the search. So a
+// caller after a search it can reproduce sets Nodes or Depth, lifts Time far
+// out of the way — Time: time.Hour — passes no deadline it expects to hit, and
+// checks StatsOf: a StopReason of "nodes" or "depth" says the work bound ended
+// the search and the answer is reproducible, while "time" or "canceled" says
+// it did not and the answer is whatever that machine had reached by then.
+type Limits struct {
+	// Nodes is the most nodes the search may visit across all its iterations.
+	// Zero keeps the tier's own ceiling, which for every tier is none.
+	Nodes int64
+	// Depth is the deepest iteration the search may run. Zero keeps the tier's
+	// own ceiling, and MaxDepth is the most the search can hold.
+	Depth int
+	// Time is a search-time guard, checked at work boundaries rather than a
+	// hard real-time deadline. Zero keeps the tier's own budget.
+	Time time.Duration
+}
+
+// MaxDepth is the deepest search Limits may ask for. The search keeps one
+// working position per ply and deepens forced lines past their nominal depth,
+// so the last ply it can hold is reserved for those extensions.
+const MaxDepth = maxSearchPly - 1
+
+// apply folds the limits into a tier's params, refusing what the search cannot
+// honour.
+func (l Limits) apply(p *params) error {
+	switch {
+	case l.Nodes < 0:
+		return fmt.Errorf("bot: node limit %d is negative", l.Nodes)
+	case l.Depth < 0:
+		return fmt.Errorf("bot: depth limit %d is negative", l.Depth)
+	case l.Time < 0:
+		return fmt.Errorf("bot: time limit %v is negative", l.Time)
+	case l.Depth > MaxDepth:
+		return fmt.Errorf("bot: depth limit %d is beyond the %d plies the search can hold", l.Depth, MaxDepth)
+	}
+	if l.Nodes > 0 {
+		p.nodeLimit = l.Nodes
+	}
+	if l.Depth > 0 {
+		p.maxDepth = l.Depth
+	}
+	if l.Time > 0 {
+		p.budget = l.Time
+	}
+	return nil
+}
+
+// NewWithLimits returns a bot of the given tier searching under the given
+// limits. Everything else about the tier — its candidate widths, its
+// evaluation, its table, its sampling — is untouched, so the bot is the tier
+// playing under a different guard rather than a different evaluation policy.
+//
+// Unlike New it refuses a tier that does not exist. A caller passing explicit
+// limits is configuring a measurement rather than starting a game, and would
+// rather hear about the mistake than quietly measure the beginner.
+func NewWithLimits(t Tier, seed int64, limits Limits) (Bot, error) {
+	if t < Beginner || t > Max {
+		return nil, fmt.Errorf("bot: unknown tier %d, want one of %s", int(t), strings.Join(TierNames(), ", "))
+	}
+	p := tierParams(t)
+	if err := limits.apply(&p); err != nil {
+		return nil, err
+	}
+	return &engine{tier: t, seed: seed, p: p, play: newSearcher(p)}, nil
+}
+
+// SearchStats is what a search actually spent. The search records it as it
+// goes, so reading it costs nothing and starts nothing: it describes a search
+// that has already happened, and is the zero value before the first one.
+type SearchStats struct {
+	// Nodes is how many positions the search visited below the root, summed
+	// over every iteration of its deepening loop.
+	Nodes int64
+	// Evaluations is how many positions it loaded and scored, root and threat
+	// probes included, so it is normally larger than Nodes.
+	Evaluations int64
+	// Depth is the deepest completed iteration. Zero includes immediate wins
+	// and searches interrupted before their first iteration completed.
+	Depth int
+	// Elapsed is how long the search took.
+	Elapsed time.Duration
+	// StopReason names what ended it: "immediate" for a winning hole taken
+	// without searching, "depth" for every allowed iteration finished,
+	// "decided" for a forced result inside the selective search tree (not a
+	// proof about every legal TwixT continuation), "time" for the budget or the
+	// caller's deadline, "nodes" for the node ceiling, "canceled" for a
+	// cancelled context, "no-move" for a position with nowhere to play, and
+	// "error" for a search that could not restore the position it was given.
+	// The first three mean the search ended on its own terms and Depth is what
+	// it reached; the rest mean it was cut short and Depth is the last
+	// iteration it had completed.
+	StopReason string
+}
+
+// StatsOf reports what a bot's last Move search spent, or the zero SearchStats
+// for a bot that does not keep the count.
+//
+// Keeping it is optional on purpose. Bot is the contract the screens and the
+// tests depend on, and a stub or a scripted opponent has no search to report;
+// an implementation that does report offers Stats() SearchStats, which is what
+// this asks for. It never runs a search itself, so a caller may read it after
+// every move without changing what the bot does or how long it takes.
+func StatsOf(b Bot) SearchStats {
+	if s, ok := b.(interface{ Stats() SearchStats }); ok {
+		return s.Stats()
+	}
+	return SearchStats{}
+}
+
 func (e *engine) Tier() Tier { return e.tier }
+
+// Stats reports what the last Move search spent, and the zero value before the
+// first one. The hint search is deliberately left out of it: a hint runs under
+// its own settings and at the player's request, so folding it in would answer
+// "what did the engine spend on its move" with somebody else's search.
+func (e *engine) Stats() SearchStats {
+	if e.play == nil {
+		return SearchStats{}
+	}
+	return SearchStats{
+		Nodes:       e.play.nodes,
+		Evaluations: e.play.evaluations,
+		Depth:       e.play.lastDepth,
+		Elapsed:     e.play.elapsed,
+		StopReason:  e.play.stopReason,
+	}
+}
 
 func (e *engine) Move(ctx context.Context, g *game.Game) (game.Point, error) {
 	if ctx == nil {
@@ -197,6 +393,9 @@ func (e *engine) Move(ctx context.Context, g *game.Game) (game.Point, error) {
 	}
 	if g.Result().Over() {
 		return game.Point{}, game.ErrGameOver
+	}
+	if staged(g) {
+		return game.Point{}, ErrStagedTurn
 	}
 	me := g.Turn()
 	if !g.HasLegalPlacement(me) {

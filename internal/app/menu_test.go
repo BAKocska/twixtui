@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -214,6 +215,24 @@ func mnFormTitle(want string) func(t *testing.T, m *Menu, cmd tea.Cmd) {
 	}
 }
 
+// mnChooserOffers fails unless the open form is a chooser offering exactly the
+// wanted options, in order. It identifies a question by what it asks about
+// rather than by its wording, which is what a navigation test is actually
+// asserting: the tier question is the one whose options are the tiers.
+func mnChooserOffers(want []string) func(t *testing.T, m *Menu, cmd tea.Cmd) {
+	return func(t *testing.T, m *Menu, _ tea.Cmd) {
+		t.Helper()
+		c := mnChooser(t, m)
+		got := make([]string, 0, len(c.opts))
+		for _, o := range c.opts {
+			got = append(got, o.label)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("opened a chooser offering %v, want %v (title %q)", got, want, c.title)
+		}
+	}
+}
+
 // mnTextFormTitle fails unless the open form is a text field titled want.
 func mnTextFormTitle(want string) func(t *testing.T, m *Menu, cmd tea.Cmd) {
 	return func(t *testing.T, m *Menu, _ tea.Cmd) {
@@ -252,7 +271,7 @@ func TestMenuEveryEntryIsReachable(t *testing.T) {
 		check func(t *testing.T, m *Menu, cmd tea.Cmd)
 	}{
 		{[]string{"Play"}, mnFormTitle("Who do you want to play?")},
-		{[]string{"Play", "the computer"}, mnFormTitle("How strong an opponent?")},
+		{[]string{"Play", "the computer"}, mnChooserOffers(bot.TierNames())},
 		{[]string{"Play", "someone at this keyboard"}, func(t *testing.T, m *Menu, _ tea.Cmd) {
 			if _, ok := m.form.(*pickerForm); !ok {
 				t.Errorf("opened %T, want the profile picker for the second player", m.form)
@@ -578,9 +597,8 @@ func TestMenuFormsWalkBackwards(t *testing.T) {
 		t.Fatalf("after the tier the form is %q", got)
 	}
 	shellSend(t, m, "esc")
-	if got := mnChooser(t, m).title; got != "How strong an opponent?" {
-		t.Fatalf("escape went to %q, want back to the tier question", got)
-	}
+	// The tier question is identified by the answer it kept rather than by its
+	// wording: the checks below are what "back to the tier question" means.
 	if got := m.pending.tier; got != bot.Pro {
 		t.Errorf("the answer was lost on the way back: tier is %v", got)
 	}
@@ -663,6 +681,37 @@ func TestMenuResumesASavedGame(t *testing.T) {
 	}
 	if cfg.Rules.Size != 12 {
 		t.Errorf("board size is %d, want the stored 12", cfg.Rules.Size)
+	}
+}
+
+// TestMenuResumesAGameAgainstEveryTier is the integration a tier ladder lives
+// or dies by. A saved game keeps its opponent as a stored name, and resuming it
+// has to turn that name back into a bot of the same tier: a tier the store can
+// write but the menu cannot read back would strand every game played against
+// it, and the failure would only show up on the resume, long after the games
+// were played. Every tier the package offers is checked, so adding one cannot
+// leave this behind.
+func TestMenuResumesAGameAgainstEveryTier(t *testing.T) {
+	for _, name := range bot.TierNames() {
+		t.Run(name, func(t *testing.T) {
+			want, err := bot.ParseTier(name)
+			if err != nil {
+				t.Fatalf("ParseTier(%q): %v", name, err)
+			}
+			d := shellTestDeps(t)
+			mnSaveGame(t, d, gamestore.VersusBot, "Balint", leaderboard.BotName(name))
+			m := mnMenu(t, d, 100, 30)
+			mnPick(t, m, "Continue a saved game")
+
+			cfg := mnStartedConfig(t, shellSend(t, m, "enter"))
+			opponent := cfg.Seats[game.Horizontal]
+			if opponent.Bot == nil || opponent.Bot.Tier() != want {
+				t.Fatalf("the resumed opponent is %+v, want the stored %s bot", opponent, name)
+			}
+			if !strings.Contains(opponent.Label, name) {
+				t.Errorf("the seat is labelled %q, which does not name the %s tier", opponent.Label, name)
+			}
+		})
 	}
 }
 

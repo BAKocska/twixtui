@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"testing"
@@ -10,8 +11,15 @@ import (
 	"github.com/BAKocska/twixtui/internal/game"
 )
 
-// testTiers is every tier, so that a property asserted once is asserted for all
-// three.
+// allTiers is every tier there is, so that a property asserted once is
+// asserted for all of them.
+var allTiers = []Tier{Beginner, Intermediate, Pro, Max}
+
+// testTiers is the beginner-to-pro ladder, which is what the tournament and
+// depth-ceiling measurements in strength_test.go and invariant_test.go are
+// calibrated against: their per-tier budget table is a [3]time.Duration indexed
+// by Tier, so Max cannot be added here without widening that table. Properties
+// that must hold of every tier use allTiers.
 var testTiers = []Tier{Beginner, Intermediate, Pro}
 
 // boundedEngine is an engine of the given tier whose search is bounded by depth
@@ -39,8 +47,8 @@ func fastEngine(t Tier, seed int64, budget time.Duration) *engine {
 
 func TestTierNamesRoundTrip(t *testing.T) {
 	names := TierNames()
-	if len(names) != 3 {
-		t.Fatalf("TierNames = %v, want three entries", names)
+	if len(names) != int(Max)+1 {
+		t.Fatalf("TierNames = %v, want one entry per tier", names)
 	}
 	for i, name := range names {
 		got, err := ParseTier(name)
@@ -76,7 +84,7 @@ func TestMoveIsAlwaysLegal(t *testing.T) {
 		if g.Result().Over() {
 			continue
 		}
-		for _, tier := range testTiers {
+		for _, tier := range allTiers {
 			b := fastEngine(tier, int64(round), 15*time.Millisecond)
 			p, err := b.Move(ctx, g)
 			if err != nil {
@@ -112,7 +120,7 @@ func TestMoveIsAlwaysLegal(t *testing.T) {
 func TestMoveIsDeterministic(t *testing.T) {
 	src := rand.New(rand.NewPCG(13, 14))
 	ctx := context.Background()
-	for _, tier := range testTiers {
+	for _, tier := range allTiers {
 		for round := range 6 {
 			g := randomGame(t, smallRules(8), 10+src.IntN(20), src)
 			if g.Result().Over() {
@@ -163,7 +171,7 @@ func TestSeedChangesBeginnerChoice(t *testing.T) {
 
 func TestMoveHonoursDeadline(t *testing.T) {
 	g := randomGame(t, smallRules(24), 30, rand.New(rand.NewPCG(17, 18)))
-	for _, tier := range testTiers {
+	for _, tier := range allTiers {
 		// The full tier budget, so that only the context can stop the search.
 		b := New(tier, 1).(*engine)
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -185,7 +193,7 @@ func TestMoveHonoursDeadline(t *testing.T) {
 
 func TestMoveHonoursCancellation(t *testing.T) {
 	g := randomGame(t, smallRules(24), 30, rand.New(rand.NewPCG(19, 20)))
-	for _, tier := range testTiers {
+	for _, tier := range allTiers {
 		b := New(tier, 1).(*engine)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -229,6 +237,17 @@ func playMoves(t testing.TB, g *game.Game, moves ...string) {
 	}
 }
 
+// mustPoint reads a hole from the notation a fixture is written in, so a test
+// names the same hole the moves above it named.
+func mustPoint(t testing.TB, s string) game.Point {
+	t.Helper()
+	p, err := game.ParsePoint(s)
+	if err != nil {
+		t.Fatalf("ParsePoint(%q): %v", s, err)
+	}
+	return p
+}
+
 // winThreat builds a position where Vertical is one peg from joining the top
 // and bottom rows of an 8x8 board, with Vertical to move.
 //
@@ -259,7 +278,7 @@ func TestProTakesImmediateWin(t *testing.T) {
 	if got := a.need[sideIndex(game.Vertical)]; got != 1 {
 		t.Fatalf("fixture is not a one-move win: Vertical needs %d pegs\n%s", got, g)
 	}
-	for _, tier := range testTiers {
+	for _, tier := range allTiers {
 		b := fastEngine(tier, 5, 200*time.Millisecond)
 		p, err := b.Move(context.Background(), g)
 		if err != nil {
@@ -290,7 +309,7 @@ func TestProBlocksImmediateWin(t *testing.T) {
 		t.Fatalf("fixture no longer threatens: Vertical needs %d pegs\n%s", got, g)
 	}
 
-	for _, tier := range testTiers {
+	for _, tier := range allTiers {
 		b := fastEngine(tier, 7, 300*time.Millisecond)
 		p, err := b.Move(context.Background(), g)
 		if err != nil {
@@ -315,6 +334,8 @@ func TestProBlocksImmediateWin(t *testing.T) {
 func TestDefencesAreExact(t *testing.T) {
 	src := rand.New(rand.NewPCG(21, 22))
 	s := newSearcher(tierParams(Pro))
+	s.ctx = context.Background()
+	s.deadline = time.Now().Add(time.Minute)
 	found := 0
 	for range 900 {
 		g := randomGame(t, smallRules(8), 45, src)
@@ -405,4 +426,330 @@ func TestSetupShapes(t *testing.T) {
 			t.Errorf("offset %v is listed as a setup but shares %d carriers", off, shared)
 		}
 	}
+}
+
+// --- effort limits and what a search spent -----------------------------------
+
+// TestNewWithLimitsRefusesWhatCannotBeSearched covers the validation a
+// measurement rests on. A limit that cannot be honoured has to come back as an
+// error: searching under the tier's own guard instead would have a benchmark
+// report work nobody bounded, and a tier that does not exist would quietly be
+// measured as the beginner.
+func TestNewWithLimitsRefusesWhatCannotBeSearched(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tier   Tier
+		limits Limits
+	}{
+		{"negative nodes", Pro, Limits{Nodes: -1}},
+		{"negative depth", Pro, Limits{Depth: -1}},
+		{"negative time", Pro, Limits{Time: -time.Second}},
+		{"deeper than the search can hold", Pro, Limits{Depth: MaxDepth + 1}},
+		{"tier below the ladder", Tier(-1), Limits{}},
+		{"tier above the ladder", Max + 1, Limits{}},
+	} {
+		b, err := NewWithLimits(tc.tier, 1, tc.limits)
+		if err == nil {
+			t.Errorf("%s: NewWithLimits(%v, %+v) was accepted", tc.name, tc.tier, tc.limits)
+		}
+		if b != nil {
+			t.Errorf("%s: NewWithLimits returned a bot alongside its error", tc.name)
+		}
+	}
+	// The boundary is inside the contract: MaxDepth is a search the recursion
+	// can hold, and every tier accepts limits that change nothing.
+	if _, err := NewWithLimits(Pro, 1, Limits{Depth: MaxDepth}); err != nil {
+		t.Errorf("NewWithLimits refused the deepest search it can hold: %v", err)
+	}
+	for _, tier := range allTiers {
+		if _, err := NewWithLimits(tier, 1, Limits{}); err != nil {
+			t.Errorf("NewWithLimits(%v) refused empty limits: %v", tier, err)
+		}
+	}
+}
+
+// TestEmptyLimitsPlayTheTierUnchanged checks that a zero field inherits the
+// tier's own guard rather than becoming a guard of zero. The two depth-capped
+// tiers answer the same way every time from the same seed and position, so
+// their move is the observable: a bot given a zero budget or a zero width would
+// answer from the ordering heuristic instead of from a search.
+func TestEmptyLimitsPlayTheTierUnchanged(t *testing.T) {
+	g := randomGame(t, smallRules(10), 12, rand.New(rand.NewPCG(41, 42)))
+	if g.Result().Over() {
+		t.Fatal("fixture finished before anybody had to move")
+	}
+	ctx := context.Background()
+	for _, tier := range []Tier{Beginner, Intermediate} {
+		want, err := New(tier, 7).Move(ctx, g)
+		if err != nil {
+			t.Fatalf("%v.Move: %v", tier, err)
+		}
+		limited, err := NewWithLimits(tier, 7, Limits{})
+		if err != nil {
+			t.Fatalf("NewWithLimits(%v): %v", tier, err)
+		}
+		got, err := limited.Move(ctx, g)
+		if err != nil {
+			t.Fatalf("%v.Move under empty limits: %v", tier, err)
+		}
+		if got != want {
+			t.Errorf("%v played %v under empty limits and %v without them", tier, got, want)
+		}
+	}
+}
+
+// TestNodeLimitBoundsTheWork is the guard a reproducible measurement rests on.
+// With the clock lifted far out of the way the node ceiling is what ends the
+// search, it is never exceeded, the same ceiling twice gives the same move, and
+// a higher ceiling buys more work — without which the ceiling would be a number
+// the search accepts and ignores.
+func TestNodeLimitBoundsTheWork(t *testing.T) {
+	g := randomGame(t, smallRules(24), 30, rand.New(rand.NewPCG(43, 44)))
+	if g.Result().Over() {
+		t.Fatal("fixture finished before anybody had to move")
+	}
+	var a analysis
+	a.load(g)
+	if a.need[sideIndex(game.Vertical)] <= 1 || a.need[sideIndex(game.Horizontal)] <= 1 {
+		t.Fatalf("fixture is a move from being decided, so no ceiling would ever bind\n%s", g)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	spent := map[int64]int64{}
+	for _, limit := range []int64{4_000, 40_000} {
+		b, err := NewWithLimits(Max, 5, Limits{Nodes: limit, Time: time.Hour})
+		if err != nil {
+			t.Fatalf("NewWithLimits: %v", err)
+		}
+		p, err := b.Move(ctx, g)
+		if err != nil {
+			t.Fatalf("Move under a %d-node ceiling: %v", limit, err)
+		}
+		if err := g.CanPlace(g.Turn(), p); err != nil {
+			t.Fatalf("%v under a %d-node ceiling is illegal: %v", p, limit, err)
+		}
+		st := StatsOf(b)
+		if st.Nodes > limit {
+			t.Errorf("a %d-node ceiling visited %d nodes", limit, st.Nodes)
+		}
+		if st.StopReason != "nodes" {
+			t.Errorf("a %d-node ceiling stopped for %q after %d nodes at depth %d in %v; the work bound was not what ended the search",
+				limit, st.StopReason, st.Nodes, st.Depth, st.Elapsed)
+		}
+		again, err := NewWithLimits(Max, 5, Limits{Nodes: limit, Time: time.Hour})
+		if err != nil {
+			t.Fatalf("NewWithLimits: %v", err)
+		}
+		q, err := again.Move(ctx, g)
+		if err != nil {
+			t.Fatalf("Move under a %d-node ceiling, second bot: %v", limit, err)
+		}
+		if q != p {
+			t.Errorf("a %d-node ceiling gave %v and then %v; work-bounded search is not reproducible", limit, p, q)
+		}
+		spent[limit] = st.Nodes
+	}
+	if spent[40_000] <= spent[4_000] {
+		t.Errorf("raising the ceiling tenfold bought no more work: %d nodes then %d", spent[4_000], spent[40_000])
+	}
+}
+
+// TestDepthLimitCapsTheSearch checks the other work bound. A max-tier bot given
+// a two-ply ceiling and an hour must answer in the time two plies take, which
+// is what says the ceiling replaced the tier's own rather than joining it.
+func TestDepthLimitCapsTheSearch(t *testing.T) {
+	g := randomGame(t, smallRules(16), 20, rand.New(rand.NewPCG(45, 46)))
+	if g.Result().Over() {
+		t.Fatal("fixture finished before anybody had to move")
+	}
+	b, err := NewWithLimits(Max, 3, Limits{Depth: 2, Time: time.Hour})
+	if err != nil {
+		t.Fatalf("NewWithLimits: %v", err)
+	}
+	// A safety net, so that a depth ceiling that never took hold fails the test
+	// instead of sitting here for the hour it was given.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	p, err := b.Move(ctx, g)
+	took := time.Since(start)
+	if err != nil {
+		t.Fatalf("Move under a two-ply ceiling: %v", err)
+	}
+	if err := g.CanPlace(g.Turn(), p); err != nil {
+		t.Fatalf("%v under a two-ply ceiling is illegal: %v", p, err)
+	}
+	st := StatsOf(b)
+	if st.Depth > 2 {
+		t.Errorf("a two-ply ceiling finished depth %d", st.Depth)
+	}
+	if st.Depth < 1 {
+		t.Errorf("a two-ply ceiling finished no iteration at all: %+v", st)
+	}
+	if st.StopReason != "depth" && st.StopReason != "decided" {
+		t.Errorf("a two-ply ceiling stopped for %q, want its own ceiling or a proven result", st.StopReason)
+	}
+	if took > 5*time.Second {
+		t.Errorf("two plies of a 16x16 position took %v; the ten-second budget looks to still be in charge", took)
+	}
+}
+
+// TestStatsOfReportsTheLastSearchOnly pins what a caller may conclude from
+// StatsOf: it describes the search that has just happened, it costs nothing to
+// read, reading it twice says the same thing, and a second move replaces the
+// count instead of adding to it — a running total would drift past the ceiling
+// it is supposed to be measuring.
+func TestStatsOfReportsTheLastSearchOnly(t *testing.T) {
+	const ceiling = 5_000
+	b, err := NewWithLimits(Pro, 9, Limits{Nodes: ceiling, Time: time.Hour})
+	if err != nil {
+		t.Fatalf("NewWithLimits: %v", err)
+	}
+	if got := StatsOf(b); got != (SearchStats{}) {
+		t.Errorf("a bot that has not searched reports %+v, want the zero value", got)
+	}
+	g := randomGame(t, smallRules(16), 16, rand.New(rand.NewPCG(47, 48)))
+	if g.Result().Over() {
+		t.Fatal("fixture finished before anybody had to move")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := b.Move(ctx, g); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+	first := StatsOf(b)
+	if first.Nodes <= 0 {
+		t.Errorf("the search reports %d nodes: %+v", first.Nodes, first)
+	}
+	if first.Evaluations <= 0 {
+		t.Errorf("the search reports %d evaluations: %+v", first.Evaluations, first)
+	}
+	if first.Depth < 1 {
+		t.Errorf("the search reports no finished iteration: %+v", first)
+	}
+	if first.Elapsed <= 0 {
+		t.Errorf("the search reports no elapsed time: %+v", first)
+	}
+	if first.StopReason == "" {
+		t.Errorf("the search reports no reason for stopping: %+v", first)
+	}
+	if second := StatsOf(b); second != first {
+		t.Errorf("reading the count twice gave %+v then %+v", first, second)
+	}
+	if _, err := b.Move(ctx, g); err != nil {
+		t.Fatalf("second Move: %v", err)
+	}
+	if got := StatsOf(b); got.Nodes > ceiling {
+		t.Errorf("after two searches the count is %d, beyond the %d-node ceiling one search may spend: %+v",
+			got.Nodes, ceiling, got)
+	}
+}
+
+// scriptedBot is a Bot with no search behind it, which is the case StatsOf has
+// to answer for: Bot is what the screens accept, and a stub opponent or a
+// scripted one has nothing to report.
+type scriptedBot struct{ at game.Point }
+
+func (scriptedBot) Tier() Tier { return Beginner }
+
+func (b scriptedBot) Move(context.Context, *game.Game) (game.Point, error) { return b.at, nil }
+
+func (scriptedBot) Hint(context.Context, *game.Game) (Hint, error) { return Hint{}, nil }
+
+func TestStatsOfIsZeroForABotThatKeepsNoCount(t *testing.T) {
+	if got := StatsOf(scriptedBot{}); got != (SearchStats{}) {
+		t.Errorf("a bot with no search reports %+v, want the zero value", got)
+	}
+}
+
+// TestEngineRefusesAStagedTurn covers the precondition the search cannot honour
+// any other way. The search plays and takes back trial moves on the game it is
+// given, and taking a move back restores the position from before the turn, so
+// a turn in progress would be searched as part of the position and then thrown
+// away. Both entry points refuse, and the refusal leaves the turn as it was.
+func TestEngineRefusesAStagedTurn(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a peg placed but not committed", func(t *testing.T) {
+		g := randomGame(t, smallRules(10), 8, rand.New(rand.NewPCG(49, 50)))
+		if g.Result().Over() {
+			t.Fatal("fixture finished before anybody had to move")
+		}
+		var spot game.Point
+		found := false
+		g.EachLegalPlacement(g.Turn(), func(p game.Point) bool {
+			spot, found = p, true
+			return false
+		})
+		if !found {
+			t.Fatal("fixture has nowhere to play")
+		}
+		if err := g.PlacePeg(spot); err != nil {
+			t.Fatalf("PlacePeg(%v): %v", spot, err)
+		}
+		ply := g.Ply()
+		b := New(Pro, 1)
+		if _, err := b.Move(ctx, g); !errors.Is(err, ErrStagedTurn) {
+			t.Errorf("Move on a staged turn returned %v, want ErrStagedTurn", err)
+		}
+		if _, err := b.Hint(ctx, g); !errors.Is(err, ErrStagedTurn) {
+			t.Errorf("Hint on a staged turn returned %v, want ErrStagedTurn", err)
+		}
+		if st := g.Staged(); !st.PegPlaced || st.Peg != spot {
+			t.Errorf("the refusal did not leave the staged peg alone: %+v", st)
+		}
+		if got := g.Ply(); got != ply {
+			t.Errorf("the refusal committed something: ply %d, want %d", got, ply)
+		}
+		// Committing the turn makes the position searchable again, which is
+		// what the error asks the caller to do.
+		if _, err := g.CommitTurn(); err != nil {
+			t.Fatalf("CommitTurn: %v", err)
+		}
+		if _, err := b.Move(ctx, g); err != nil {
+			t.Errorf("Move on the committed position: %v", err)
+		}
+	})
+
+	t.Run("a link withdrawn by hand", func(t *testing.T) {
+		// Deliberate linking, so that a link can be taken off by itself: the
+		// paper-and-pencil ruleset the other fixtures use links automatically
+		// and permanently, and has no staged link to test.
+		rs := game.Std
+		rs.Size, rs.Swap = 10, false
+		g := game.MustNew(rs)
+		playMoves(t, g, "B1", "G2", "C3", "G4")
+		from, to := mustPoint(t, "B1"), mustPoint(t, "C3")
+		l, ok := game.NewLink(from, to)
+		if !ok {
+			t.Fatalf("%v and %v are not a knight's move apart", from, to)
+		}
+		if !g.HasLink(l) {
+			t.Fatalf("fixture has no link to withdraw\n%s", g)
+		}
+		if err := g.RemoveLink(from, to); err != nil {
+			t.Fatalf("RemoveLink: %v", err)
+		}
+		b := New(Intermediate, 1)
+		if _, err := b.Move(ctx, g); !errors.Is(err, ErrStagedTurn) {
+			t.Errorf("Move with a link withdrawn returned %v, want ErrStagedTurn", err)
+		}
+		if _, err := b.Hint(ctx, g); !errors.Is(err, ErrStagedTurn) {
+			t.Errorf("Hint with a link withdrawn returned %v, want ErrStagedTurn", err)
+		}
+		if g.HasLink(l) {
+			t.Error("the refusal put the withdrawn link back")
+		}
+		if st := g.Staged(); len(st.Removed) != 1 || st.Removed[0] != l {
+			t.Errorf("the refusal did not leave the withdrawal alone: %+v", st)
+		}
+		// Aborting the turn restores the link and the position searches again.
+		g.AbortTurn()
+		if !g.HasLink(l) {
+			t.Fatal("aborting the turn did not restore the link")
+		}
+		if _, err := b.Move(ctx, g); err != nil {
+			t.Errorf("Move after the turn was aborted: %v", err)
+		}
+	})
 }

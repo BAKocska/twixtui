@@ -139,9 +139,12 @@ func newPlayBotCommand(opts *options) *cobra.Command {
 		Short: "Play against the built-in opponent",
 		Long: `Play against the built-in opponent.
 
-The three tiers are genuinely different opponents, not the same one slowed down.
-Ask for advice at any time on your turn with ? and the reason will be explained
-in the terms the search actually measured.`,
+The four tiers are genuinely different opponents, not the same one slowed down:
+each is allowed a different depth, a different budget and a different amount of
+the evaluation. A tier names the effort it may spend, not the depth it reaches
+or the move it finds; max is the largest effort on offer rather than a promise
+of the best play. Before staging a move, ask for advice on your turn with ?;
+the reason is explained in the terms the search actually measured.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rs, err := f.rules()
@@ -197,7 +200,7 @@ in the terms the search actually measured.`,
 	cmd.Flags().StringVar(&f.tier, "tier", "intermediate",
 		"how hard the opponent plays: "+strings.Join(bot.TierNames(), ", "))
 	cmd.Flags().Int64Var(&f.seed, "seed", 0,
-		"fix the opponent's randomness so a game can be replayed exactly")
+		"fix random choices; clock-limited searches can still stop at different depths")
 	cmd.Flags().BoolVar(&f.hints, "hints", true,
 		"allow ? to ask for advice on your turn")
 	registerFlagCompletion(cmd, "tier", tierCompletions)

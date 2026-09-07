@@ -59,6 +59,8 @@ var botRatings = map[string]int{
 	"beginner":     1000,
 	"intermediate": 1400,
 	"pro":          1800,
+	// Max shares pro's nominal anchor until a separate rating is calibrated.
+	"max": 1800,
 }
 
 // BotName returns the opponent name to record for a bot of the given tier.

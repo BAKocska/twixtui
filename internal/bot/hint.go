@@ -54,7 +54,7 @@ type deltas struct {
 	// Threatened records that the opponent was one peg from a finished chain
 	// before the move.
 	Threatened bool
-	// Defences counts how many legal moves answered that threat.
+	// Defences counts legal replies, or -1 when enumeration was interrupted.
 	Defences int
 	// Close records that the second-best move scored within a peg of the best,
 	// which softens the wording: the move is strong, not the only way.
@@ -294,9 +294,12 @@ func describe(r reason, d deltas, me game.Player, move game.Point) (headline, de
 			fmt.Sprintf("%s is one peg from joining %s, and this is the single reply that stops it. Afterwards they need %s.",
 				titled(opp), borderNames(opp), pegsPhrase(d.After.OppDist))
 	case reasonDefence:
-		return lead + " to stop " + opp.String() + " finishing.",
-			fmt.Sprintf("%s was one peg from joining %s; this pushes them back to %s. One of %d replies does that.",
-				titled(opp), borderNames(opp), pegsPhrase(d.After.OppDist), d.Defences)
+		detail := fmt.Sprintf("%s was one peg from joining %s; this pushes them back to %s.",
+			titled(opp), borderNames(opp), pegsPhrase(d.After.OppDist))
+		if d.Defences >= 0 {
+			detail += fmt.Sprintf(" One of %d replies does that.", d.Defences)
+		}
+		return lead + " to stop " + opp.String() + " finishing.", detail
 	case reasonBlock:
 		return lead + " to cut " + opp.String() + "'s cheapest route.",
 			fmt.Sprintf("It lengthens their remaining chain from %s to %s, while yours still needs %s.",
@@ -539,6 +542,12 @@ func (e *engine) Hint(ctx context.Context, g *game.Game) (Hint, error) {
 	if g.Result().Over() {
 		return Hint{}, game.ErrGameOver
 	}
+	if staged(g) {
+		// Advice about a position the player is halfway through editing would
+		// be advice about a position that does not exist yet, and the search
+		// would take the staged edits back on its first trial move.
+		return Hint{}, ErrStagedTurn
+	}
 	if !g.HasLegalPlacement(g.Turn()) {
 		return Hint{}, ErrNoMove
 	}
@@ -570,7 +579,7 @@ func (e *engine) explain(ctx context.Context, g *game.Game) (Hint, reason, delta
 		After:      after.terms(me),
 		Threatened: res.threatened,
 		Defences:   res.defences,
-		Close:      len(res.moves) > 1 && res.moves[0].score-res.moves[1].score < distWeight,
+		Close:      len(res.moves) > 1 && res.moves[0].exact && res.moves[1].exact && res.moves[0].score-res.moves[1].score < distWeight,
 	}
 	if partner, carriers, gap, ok := findSetup(&after, me, res.best); ok {
 		d.Partner, d.Carriers, d.Gap, d.HasSetup = partner, carriers, gap, true
