@@ -235,6 +235,15 @@ type analysis struct {
 	// ownBlocks records whether a side's own links block each other, which the
 	// paper-and-pencil ruleset switches off.
 	ownBlocks bool
+	// templates admits the proved edge templates into the bottleneck count: a
+	// step of a cheapest chain that a matching template shows to be
+	// unstoppable is not a hole the plan can be cut at, whatever the count of
+	// alternatives at that step says. It is a field of the analysis rather
+	// than of the caller because it changes a number the analysis computes;
+	// the search sets it from its own lever at every node, and it is off in
+	// the zero value so that an analysis built by hand counts bottlenecks the
+	// way this file always did.
+	templates bool
 
 	pegs []game.Player
 	link []uint8
@@ -272,8 +281,13 @@ type analysis struct {
 	hash uint64
 
 	// levels counts, per prefix cost, how many holes a cheapest chain could use
-	// at that step. It is scratch for the bottleneck count.
-	levels []int32
+	// at that step, and levelHole remembers which hole that was for the steps
+	// where there is only one of them. Both are scratch for the bottleneck
+	// count; the second exists because a step with one hole is only a
+	// bottleneck if that particular hole can actually be taken away, which is
+	// a question about that hole and not about the count.
+	levels    []int32
+	levelHole []int32
 
 	qa, qb []int32
 }
@@ -297,6 +311,7 @@ func (a *analysis) resize(n int) {
 		}
 	}
 	a.levels = make([]int32, cells+2)
+	a.levelHole = make([]int32, cells+2)
 	a.qa = make([]int32, 0, cells)
 	a.qb = make([]int32, 0, cells)
 }
@@ -501,6 +516,16 @@ func (a *analysis) sweep(s, b int, dst []int32) {
 // L are the empty on-chain holes whose distance from the first border is L, and
 // a step with only one such hole is a hole every cheapest chain must use: one
 // opposing peg there makes the whole plan more expensive.
+//
+// That last inference is the one edge templates correct. It reads "only one
+// hole here" as "the opponent can take that hole", and near a border that is
+// sometimes simply false: the hole may sit inside a carrier the opponent
+// provably cannot break, either because they may not play on the border row at
+// all or because every intrusion has an answer that still finishes on time. A
+// step like that is not a place the plan can be cut, so it is not counted,
+// while the count of pegs the plan costs is left exactly as it was — the
+// template promises the connection within the same number of placements, which
+// is why Dist need not move.
 func (a *analysis) summarise(s int) {
 	from, to := a.dist[s][0], a.dist[s][1]
 	span, cost := a.span[s], a.cost[s]
@@ -536,13 +561,18 @@ func (a *analysis) summarise(s int) {
 		}
 		if step := from[i]; step >= 1 && step <= best {
 			levels[step]++
+			a.levelHole[step] = int32(i)
 		}
 	}
 	forced := 0
-	for _, count := range levels[1:] {
-		if count == 1 {
-			forced++
+	for step, count := range levels[1:] {
+		if count != 1 {
+			continue
 		}
+		if a.templates && a.templateFrees(s, int(a.levelHole[step+1]), best) {
+			continue
+		}
+		forced++
 	}
 	a.bottlenecks[s] = forced
 }

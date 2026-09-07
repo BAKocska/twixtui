@@ -43,8 +43,13 @@ func TestHintReasonMatchesDecomposition(t *testing.T) {
 		}
 
 		// Recompute the two decompositions straight from the engine, without
-		// going through the search, and check the hint's own numbers.
+		// going through the search, and check the hint's own numbers. A hint
+		// is answered with the highest-effort levers, so the reference
+		// analyses have to read bottlenecks with the same lever the hint's
+		// search used.
 		var before, after analysis
+		before.templates = hintParams().templates
+		after.templates = before.templates
 		before.load(g)
 		next := g.Clone()
 		if _, err := next.PlayPeg(h.Move); err != nil {

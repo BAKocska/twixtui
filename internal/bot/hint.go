@@ -571,7 +571,11 @@ func (e *engine) explain(ctx context.Context, g *game.Game) (Hint, reason, delta
 	if _, err := next.PlayPeg(res.best); err != nil {
 		return Hint{}, reasonBalanced, deltas{}, fmt.Errorf("bot: hint move %v is not playable: %w", res.best, err)
 	}
+	// The decomposition after the move has to be read the same way the search
+	// read the one before it, or the hint would compare two different
+	// evaluations and report the difference as the move's doing.
 	var after analysis
+	after.templates = e.hint.p.templates
 	after.load(next)
 
 	d := deltas{

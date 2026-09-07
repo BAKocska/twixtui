@@ -109,6 +109,12 @@ type params struct {
 	// feed the history heuristic that decides which moves survive the width
 	// cap, so a narrow search can still end up choosing differently.
 	pvs bool
+	// templates lets the evaluation discount a step of a cheapest chain that a
+	// proved edge template shows the opponent cannot take away. See
+	// templates.go for what is proved and templates_prove_test.go for the
+	// proofs; the lever exists so that a measurement can run the same search
+	// with the corpus out of the evaluation.
+	templates bool
 }
 
 // scoredMove is one candidate placement: its ordering score before the search
@@ -302,6 +308,7 @@ func (s *searcher) expired() bool {
 // work done.
 func (s *searcher) analyse(an *analysis, g *game.Game) {
 	s.evaluations++
+	an.templates = s.p.templates
 	an.load(g)
 }
 

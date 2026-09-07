@@ -7,6 +7,32 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A corpus of proved edge templates for the bot's evaluation, together with the
+  exhaustive prover that certifies it. A template says that a peg two, three or
+  four rows from its own border reaches that border in a fixed number of
+  placements whatever the opponent does, provided a named set of holes — the
+  cells it may use and the guard holes that close it under the crossing rule —
+  is empty. Nothing is called a template until the prover has demonstrated it on
+  the real engine with the opponent free to play anywhere on the board, and the
+  proofs run in the ordinary test suite, so a claim added without one fails the
+  build. The evaluation can use a matching template to stop counting a step of a
+  cheapest chain as a bottleneck, which is behind a lever; the peg counts are
+  untouched either way.
+- An effort-experiment pair, `pvs-templates` and `pvs-notemplates`, which is the
+  same search with the corpus in and out of the evaluation.
+
+### Changed
+
+- No bot tier switches the edge templates on. A paired match of the two
+  candidates above — 12 openings from both sides, 30,000 nodes a move, `std`
+  rules — changed no move at all on 16×16 and changed the result of one opening
+  in twelve on 10×10, against the corpus; both board sizes are inconclusive
+  under the conservative paired bound. The corpus, the prover and the lever stay
+  in the tree to be measured again when the corpus covers more; the shipped
+  evaluation is unchanged.
+
 ## [0.3.0] - 2026-09-07
 
 ### Added

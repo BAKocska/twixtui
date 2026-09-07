@@ -183,7 +183,15 @@ type ebCandidateSpec struct {
 // ebCandidates is the whole roster the experiment can run. The four preset
 // candidates measure the shipped tiers; plain and pvs are the same tier with
 // the principal-variation lever off and on, which is the pair a
-// semantics-preserving claim is made from; mcts is the different architecture.
+// semantics-preserving claim is made from; pvs-templates and pvs-notemplates
+// are the same tier with the proved edge-template corpus in and out of the
+// evaluation, which is the pair a strength claim about the corpus is made from;
+// mcts is the different architecture.
+//
+// Both sides of the templates pair set the lever rather than one of them
+// leaning on the tier's own value. No tier ships it on, so a candidate that
+// took the tier's value would silently make the pair two copies of the same
+// contender, and the match would report a dead heat as a result.
 func ebCandidates() []ebCandidateSpec {
 	return []ebCandidateSpec{
 		{name: "beginner", tier: Beginner, kind: ebKindPreset},
@@ -192,6 +200,8 @@ func ebCandidates() []ebCandidateSpec {
 		{name: "max", tier: Max, kind: ebKindPreset},
 		{name: "plain", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs = false }},
 		{name: "pvs", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs = true }},
+		{name: "pvs-templates", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.templates = true, true }},
+		{name: "pvs-notemplates", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.templates = true, false }},
 		{name: "mcts", tier: Pro, kind: ebKindMCTS},
 	}
 }
@@ -798,6 +808,7 @@ type ebParamsReport struct {
 	Temperature float64 `json:"temperature"`
 	NodeLimit   int64   `json:"node_limit"`
 	PVS         bool    `json:"pvs"`
+	Templates   bool    `json:"templates"`
 }
 
 func ebReportParams(p params) ebParamsReport {
@@ -813,6 +824,7 @@ func ebReportParams(p params) ebParamsReport {
 		Temperature: p.temperature,
 		NodeLimit:   p.nodeLimit,
 		PVS:         p.pvs,
+		Templates:   p.templates,
 	}
 }
 

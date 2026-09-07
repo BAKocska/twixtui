@@ -351,6 +351,25 @@ scores and one chosen move differed: history-dependent shortlist selection
 means this is not a claim of identical selective trees. Full-width minimax
 regressions establish pruning correctness separately.
 
+The tree also carries a small corpus of **edge templates**, which no tier plays
+with. What is proved of each of them is this: with the opponent to move and a
+named set of holes empty, a peg two, three or four rows from its own border
+reaches that border within a fixed number of placements — one, two and two
+respectively — whatever the opponent plays anywhere on the board. Each claim is
+established by exhaustive search over the real engine, on 10×10 and 12×12 boards
+and under both `std` and `pp`, in all four orientations and against both side
+walls, and the searches run in the ordinary test suite alongside three false
+claims the same prover has to reject. What was measured is separate and less
+happy: the evaluation can use a matching template to stop calling a step of a
+cheapest chain a bottleneck, and a paired match of that lever on against off — 12
+openings per size, both colour assignments, 30,000 nodes a move under `std` —
+changed no move at all on 16×16 and changed one opening's result on 10×10,
+against the lever, for tallies of 11–13–0 and 11–11–2 that are inconclusive under
+the same conservative paired bound used above. So the corpus is proved and
+unused: it is kept, with its prover and its `pvs-templates` benchmark candidate,
+because a proof does not expire, and it is switched off because a proof is not a
+strength result.
+
 The evaluator caches immutable board geometry instead of recomputing knight
 neighbours and border scans at every node. Against revision `312d9ce`, five
 single-CPU warm-load benchmark samples had these medians:

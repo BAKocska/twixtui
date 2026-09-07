@@ -150,6 +150,17 @@ type Bot interface {
 // Depth, candidate width, evaluation and time distinguish effort, not guaranteed
 // playing strength. A node ceiling is optional: callers use Limits to compare
 // reproducible amounts of work while retaining a wall-clock safety guard.
+//
+// No tier switches the edge templates on. The corpus is proved and the lever
+// works, but it is not shipped in the playing evaluation: a paired match of the
+// same search with the corpus in and out, 12 openings from both sides at 30,000
+// nodes a move, changed no move at all on 16x16 and changed the result of one
+// opening in twelve on 10x10 — against the corpus. That is no evidence of a
+// gain, and an evaluation term that is not measurably paying for itself does
+// not go into a game the tier names as an effort ceiling. The lever stays
+// wired, and the effort experiment's pvs-templates candidate is how it is
+// measured again after the corpus grows; see docs/MANUAL.md and
+// .work/bot-slices/edge-templates.md.
 func tierParams(t Tier) params {
 	switch t {
 	case Intermediate:
