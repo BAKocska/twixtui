@@ -151,14 +151,19 @@ type Bot interface {
 // playing strength. A node ceiling is optional: callers use Limits to compare
 // reproducible amounts of work while retaining a wall-clock safety guard.
 //
-// Two ordering levers exist that no tier turns on: killers and aspiration. Both
-// are implemented, tested and switchable from the effort benchmark, and both
-// were measured at the shipped shortlists and found not to save work there:
-// killers saved nodes only at full width, where the bot never runs, and at
-// pro's width changed a fifth of the scores without a consistent saving;
-// aspiration cost nodes at every depth tried. The numbers are in the manual.
-// A lever measured not to help is left off rather than shipped on the strength
-// of the idea, so what the tiers play is what the tournament measured.
+// Three levers exist that no tier turns on: killers, aspiration and templates.
+// All are implemented, tested and switchable from the effort benchmark, and all
+// were measured at the shipped shortlists and found not to pay there. Killers
+// saved nodes only at full width, where the bot never runs, and at pro's width
+// changed a fifth of the scores without a consistent saving. Aspiration cost
+// nodes at every depth tried. The proved edge-template corpus, in and out of
+// the evaluation at 30,000 nodes a move over twelve openings from both sides,
+// changed no move at all on 16x16 and changed the result of one opening in
+// twelve on 10x10, against the corpus. A lever measured not to help is left
+// off rather than shipped on the strength of the idea, so what the tiers play
+// is what the tournament measured. The numbers are in docs/MANUAL.md; the
+// pvs-killers, pvs-aspiration and pvs-templates candidates are how each is
+// measured again.
 func tierParams(t Tier) params {
 	switch t {
 	case Intermediate:

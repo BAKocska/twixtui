@@ -56,7 +56,7 @@ package bot
 //
 //	# one ordering lever, at a fixed depth and then at an equal node budget
 //	TWIXT_BOT_EFFORT=1 TWIXT_BOT_EFFORT_MODE=positions \
-//	  TWIXT_BOT_EFFORT_CANDIDATES=pvs,pvs-nokiller TWIXT_BOT_EFFORT_SIZES=10,16 \
+//	  TWIXT_BOT_EFFORT_CANDIDATES=pvs,pvs-killers TWIXT_BOT_EFFORT_SIZES=10,16 \
 //	  TWIXT_BOT_EFFORT_MIDGAME_PLIES=10,16 \
 //	  TWIXT_BOT_EFFORT_SEED_START=1 TWIXT_BOT_EFFORT_SEED_COUNT=12 \
 //	  TWIXT_BOT_EFFORT_DEPTH=5 TWIXT_BOT_EFFORT_TIME='*=1h' \
@@ -192,25 +192,30 @@ type ebCandidateSpec struct {
 // ebCandidates is the whole roster the experiment can run. The four preset
 // candidates measure the shipped tiers; plain and pvs are the same tier with
 // the principal-variation lever off and on, pvs-killers is pvs with the
-// killer-move lever on, and pvs-aspiration is pvs with the root's aspiration
-// band on; those are the pairs a semantics- and work-preserving claim is made
-// from. mcts is the different architecture.
+// killer-move lever on, pvs-aspiration is pvs with the root's aspiration band
+// on, and pvs-templates is pvs with the proved edge-template corpus in the
+// evaluation; the first three pairs are what a semantics- and work-preserving
+// claim is made from, the last is what a strength claim about the corpus is
+// made from. mcts is the different architecture.
 //
 // Each tuned candidate sets every lever of its pair explicitly, so that the
 // pair keeps meaning what its name says if a tier is ever retuned underneath
-// it. The ordering pairs are the way round they are because both levers are
-// off in every tier: the deviation from what ships is the candidate that turns
-// one on.
+// it. The pairs are the way round they are because every one of these levers
+// is off in every tier: the deviation from what ships is the candidate that
+// turns one on, and a candidate that took the tier's own value would silently
+// make a pair two copies of the same contender and report a dead heat as a
+// result.
 func ebCandidates() []ebCandidateSpec {
 	return []ebCandidateSpec{
 		{name: "beginner", tier: Beginner, kind: ebKindPreset},
 		{name: "intermediate", tier: Intermediate, kind: ebKindPreset},
 		{name: "pro", tier: Pro, kind: ebKindPreset},
 		{name: "max", tier: Max, kind: ebKindPreset},
-		{name: "plain", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration = false, false, false }},
-		{name: "pvs", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration = true, false, false }},
-		{name: "pvs-killers", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration = true, true, false }},
-		{name: "pvs-aspiration", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration = true, false, true }},
+		{name: "plain", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration, p.templates = false, false, false, false }},
+		{name: "pvs", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration, p.templates = true, false, false, false }},
+		{name: "pvs-killers", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration, p.templates = true, true, false, false }},
+		{name: "pvs-aspiration", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration, p.templates = true, false, true, false }},
+		{name: "pvs-templates", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers, p.aspiration, p.templates = true, false, false, true }},
 		{name: "mcts", tier: Pro, kind: ebKindMCTS},
 	}
 }
@@ -819,6 +824,7 @@ type ebParamsReport struct {
 	PVS         bool    `json:"pvs"`
 	Killers     bool    `json:"killers"`
 	Aspiration  bool    `json:"aspiration"`
+	Templates   bool    `json:"templates"`
 }
 
 func ebReportParams(p params) ebParamsReport {
@@ -836,6 +842,7 @@ func ebReportParams(p params) ebParamsReport {
 		PVS:         p.pvs,
 		Killers:     p.killers,
 		Aspiration:  p.aspiration,
+		Templates:   p.templates,
 	}
 }
 
