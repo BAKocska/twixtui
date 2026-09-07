@@ -259,6 +259,12 @@ func (tm *Terminal) Alive() bool {
 // the caller keeps polling, and the answer it gets is the program's own. A
 // program ended by a signal has no exit status; tmux reports the signal
 // instead, and that is returned the way a shell would, as 128 plus the number.
+//
+// tmux built with utempter, which is how Debian and Ubuntu package it, can
+// leave the pane's process a zombie without ever reaping it (tmux issue 4559).
+// The program has exited then, and the only place its status still exists is
+// the kernel's record of the zombie, which Linux exposes in /proc. That is read
+// as a last resort; where /proc does not exist the situation has not been seen.
 func (tm *Terminal) ExitStatus() (int, bool) {
 	tm.t.Helper()
 	dead, status, signal, ok := tm.deathReport()
@@ -271,7 +277,41 @@ func (tm *Terminal) ExitStatus() (int, bool) {
 	if sig, err := strconv.Atoi(signal); err == nil {
 		return 128 + sig, true
 	}
+	if pid, err := tm.tmux("display-message", "-p", "-t", "main", "#{pane_pid}"); err == nil {
+		if code, ok := zombieStatus(strings.TrimSpace(pid)); ok {
+			return code, true
+		}
+	}
 	return 0, false
+}
+
+// zombieStatus reads the wait status of an exited but unreaped process from
+// /proc/<pid>/stat, whose last field is the exit code in waitpid form. It
+// reports false unless the process is a zombie: a running process has no exit
+// code yet, and a reaped one has no /proc entry.
+func zombieStatus(pid string) (int, bool) {
+	raw, err := os.ReadFile("/proc/" + pid + "/stat")
+	if err != nil {
+		return 0, false
+	}
+	// The command name is in parentheses and may contain spaces, so the
+	// fields are read from after the closing parenthesis.
+	rest := string(raw)
+	if i := strings.LastIndexByte(rest, ')'); i >= 0 {
+		rest = rest[i+1:]
+	}
+	fields := strings.Fields(rest)
+	if len(fields) < 2 || fields[0] != "Z" {
+		return 0, false
+	}
+	wait, err := strconv.Atoi(fields[len(fields)-1])
+	if err != nil {
+		return 0, false
+	}
+	if sig := wait & 0x7f; sig != 0 {
+		return 128 + sig, true
+	}
+	return (wait >> 8) & 0xff, true
 }
 
 // deathReport reads what tmux knows about the pane's process: whether the pane
