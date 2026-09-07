@@ -351,6 +351,25 @@ scores and one chosen move differed: history-dependent shortlist selection
 means this is not a claim of identical selective trees. Full-width minimax
 regressions establish pruning correctness separately.
 
+An aspiration window at the search root was implemented, measured and left off.
+It searches the root's first move inside a two-peg band around the previous
+iteration's score, widening the failing side to the whole scale so that a root
+score is always a measurement and never a bound. On the 40 frozen positions of
+10×10 and 16×16, seeds 1–12, every one reaching depth six on both sides, the
+band spent **3.4% more** nodes than the whole window rather than fewer
+(+0.8%, −0.8%, +6.0% and +1.8% across the four board-and-setup cells), and
+13.0% more at depth eight on 10×10; no band between one and forty-eight pegs
+saved any. The reason is measurable rather than guessed: the root score moves
+by more than two pegs from one iteration to the next on a third of them, so a
+third of iterations pay to re-search the root's largest subtree. Twenty-four
+games a side at 8,000 nodes were 11–11–2 on both 10×10 and 16×16 with all
+twelve opening pairs level, a conservative bound of 0.11–0.89, and no strength
+difference established in either direction — and 11 of 12 pairs on 10×10 played
+an identical game whichever side held the band, so the match had little to
+distinguish. The chosen move agreed on all 40 positions; two reported scores
+differed, which is the same history- and table-dependent selective tree noted
+above for principal-variation search and not a bound escaping the window.
+
 The evaluator caches immutable board geometry instead of recomputing knight
 neighbours and border scans at every node. Against revision `312d9ce`, five
 single-CPU warm-load benchmark samples had these medians:

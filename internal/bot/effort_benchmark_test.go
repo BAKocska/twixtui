@@ -182,8 +182,12 @@ type ebCandidateSpec struct {
 
 // ebCandidates is the whole roster the experiment can run. The four preset
 // candidates measure the shipped tiers; plain and pvs are the same tier with
-// the principal-variation lever off and on, which is the pair a
-// semantics-preserving claim is made from; mcts is the different architecture.
+// the principal-variation lever off and on, and pvs-aspiration is pvs with the
+// root's aspiration band switched on, which are the pairs a semantics- and
+// work-preserving claim is made from; mcts is the different architecture.
+//
+// The aspiration pair is the way round it is because the band is off in every
+// tier: the deviation from what ships is the candidate that turns it on.
 func ebCandidates() []ebCandidateSpec {
 	return []ebCandidateSpec{
 		{name: "beginner", tier: Beginner, kind: ebKindPreset},
@@ -192,6 +196,9 @@ func ebCandidates() []ebCandidateSpec {
 		{name: "max", tier: Max, kind: ebKindPreset},
 		{name: "plain", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs = false }},
 		{name: "pvs", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs = true }},
+		{name: "pvs-aspiration", tier: Pro, kind: ebKindTuned, tune: func(p *params) {
+			p.pvs, p.aspiration = true, true
+		}},
 		{name: "mcts", tier: Pro, kind: ebKindMCTS},
 	}
 }
@@ -798,6 +805,7 @@ type ebParamsReport struct {
 	Temperature float64 `json:"temperature"`
 	NodeLimit   int64   `json:"node_limit"`
 	PVS         bool    `json:"pvs"`
+	Aspiration  bool    `json:"aspiration"`
 }
 
 func ebReportParams(p params) ebParamsReport {
@@ -813,6 +821,7 @@ func ebReportParams(p params) ebParamsReport {
 		Temperature: p.temperature,
 		NodeLimit:   p.nodeLimit,
 		PVS:         p.pvs,
+		Aspiration:  p.aspiration,
 	}
 }
 
