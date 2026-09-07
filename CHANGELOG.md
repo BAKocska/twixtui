@@ -7,6 +7,29 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A killer-move ordering lever in the bot search, off in every tier. Each ply
+  remembers the last two holes that produced a beta cutoff there and tries them
+  first at the next node it reaches at that ply; a remembered hole the node
+  cannot play is ignored rather than added, so the moves searched stay the
+  node's own. The effort benchmark gains a `pvs-nokiller` contender so the lever
+  can be measured against its absence, and the artifact records the lever.
+
+  It ships off because the measurement did not support turning it on. At full
+  width, where the move set is fixed, the search returns identical values and
+  enters 29.8% fewer nodes with neither principal-variation search nor the
+  transposition table and 12.0% fewer with both, over twelve frozen midgames
+  at depth four — but no tier searches at full width. At pro's shipped width
+  the picture is depth-dependent and the values are not identical: over 40
+  positions on 10×10 and 16×16 with opening seeds 1–12, total nodes were 6.8%
+  worse at depth five, 2.9% better at depth six and 6.8% better at depth
+  seven, the median position was unchanged at all three, and six to eight
+  positions per depth returned a different score. At an equal 8,000-node
+  budget the paired match was 12–11–1 on 10×10 and 9–13–2 on 16×16 for the
+  killer side, both inconclusive under the conservative bound. What the tiers
+  play is therefore unchanged from 0.3.0.
+
 ## [0.3.0] - 2026-09-07
 
 ### Added
