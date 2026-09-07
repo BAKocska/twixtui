@@ -38,7 +38,7 @@ they are repeating and which parts are only illustration, because a picture
 that quietly stops agreeing with the program is worse than no picture. That is
 what each note below is for.
 
-## banner-light.svg, banner-dark.svg
+## banner-light.svg, banner-dark.svg, banner-compact-light.svg, banner-compact-dark.svg
 
 The supplied 1280×320 front-page artwork places a cream-framed illustration of
 the 1962 box lid beside a shell prompt. The card holds the stencil wordmark,
@@ -48,8 +48,8 @@ The type beside it names the project and shows
 
 This is an illustration, not a screenshot or a playable board position. Its
 perspective and peg placement serve the composition; board.svg below is the
-documentary rendering of an actual position. The supplied visible artwork is
-unchanged; non-rendering export metadata has been omitted.
+documentary rendering of an actual position. The supplied illustration is
+preserved; non-rendering export metadata has been omitted.
 
 The palette draws on internal/cover/homage.go, with local shades for the
 highlights, clouds, holes and frame. The project name uses the `classic`
@@ -57,11 +57,35 @@ scheme's red and blue from internal/theme/theme.go, and the cursor uses its
 yellow. `A GAME OF BARRIERS FOR TWO` is the project's `homageTagline`, not a
 quotation from the original lid.
 
-README.md selects the two variants with `<picture>` and
-`prefers-color-scheme`. They have the same composition and a transparent
-canvas; the type and illustration colours change to suit the page background.
-The block cursor is a rectangle at a fixed position, so changing the command
-may also require moving it.
+README.md picks one of the four with `<picture>`. The first two `<source>`
+elements carry `(max-width: 480px)` and hand a narrow viewport the compact
+pair; the third carries `prefers-color-scheme: dark` on its own, and the
+`<img>` fallback is the light wide file. First match wins, so a wide dark page
+takes banner-dark.svg and a phone in dark mode takes banner-compact-dark.svg.
+All four have the same composition elements and a transparent canvas; the type
+and illustration colours change to suit the page background.
+
+The compact pair exists because the wide arrangement does not survive being
+scaled to a phone. At a 390-pixel viewport the 1280-wide file draws the
+command line at about five pixels, which is texture and not type.
+banner-compact-*.svg is 500×470: the same card — the wide file's artwork
+group verbatim, drawn at 0.9 — stacked above the same four lines of type
+instead of set beside them, which puts the command near twelve pixels and the
+subtitle near nineteen on that same surface. The length of
+`$ twixtui play bot --tier pro --side vertical` is what sets the ceiling: it
+is forty-six monospace cells that must cross the column unbroken, and the file
+already spends 92% of its width on them. Above the breakpoint the wide files
+are used with their original layout and a text-flow cursor. The compact files
+keep the same illustration and wording while making the type readable in a
+narrow column.
+
+Neither pair uses a script, a foreignObject or a webfont: they are static
+shapes and text in system font stacks.
+
+The block cursor is the last glyph of the command's own text run rather than a
+rectangle at a measured position. It therefore follows the end of the line
+whatever width the reader's monospace font resolves to, and editing the
+command does not need a second edit to move it.
 
 TwixT is Alex Randolph's game. The historical lid artwork is © 1962 Minnesota
 Mining and Manufacturing Company (3M); the project's cover-reference history
@@ -109,9 +133,10 @@ dark one to stand in for it.
 
 twixtui-demo.mp4 is the 68.3-second animated feature tour used by the README.
 It is an authored recreation of the terminal screens, not a screen recording.
-The sequence, camera movements and artwork come from the supplied design;
-the relay example uses a complete sample pairing code, and the hint panel is
-labelled illustrative rather than claiming measured search results.
+The sequence and artwork come from the supplied design. The relay camera
+shows each command at close range before the two-window overview, and its
+example uses a complete sample pairing code. The hint panel is labelled
+illustrative rather than claiming measured search results.
 
 The movie is H.264, 1280×720, 30 frames per second, without audio. Its MP4 header
 is at the front of the file for progressive playback. demo-poster.png is the

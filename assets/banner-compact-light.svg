@@ -1,17 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="twixtui — TwixT in the terminal"><title>twixtui — TwixT in the terminal</title>
-<desc>The 1962 TwixT box lid, redrawn flat: stencil TWIXT lettering over a mauve sky, tall red pegs flanking a receding chain of linked black pegs on a golden board of holes. Beside it, a shell prompt that runs twixtui.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="470" viewBox="0 0 500 470" role="img" aria-label="twixtui — TwixT in the terminal"><title>twixtui — TwixT in the terminal</title>
+<desc>The narrow-screen arrangement of the front-page artwork: the same 1962 TwixT box lid, redrawn flat — stencil TWIXT lettering over a mauve sky, tall red pegs flanking a receding chain of linked black pegs on a golden board of holes — stacked above the shell prompt that runs twixtui, at type sizes a phone can read.</desc>
 <defs>
 <symbol id="peg" overflow="visible"><g fill="currentColor"><rect x="-7" y="0" width="14" height="18" rx="2"></rect><rect x="-13" y="16" width="26" height="10" rx="3"></rect><path d="M -14,26 C -9,62 -6,92 -5,122 C -6,157 -10,187 -17,210 L 17,210 C 10,187 6,157 5,122 C 6,92 9,62 14,26 Z"></path><rect x="-19" y="208" width="38" height="8" rx="3"></rect></g></symbol>
 <symbol id="pegHi" overflow="visible"><path d="M -11,28 C -7,62 -4.5,92 -3.5,122 C -4.5,157 -8,187 -13,208 L -6,208 C -2,187 0,157 0.5,122 C 0,92 -2,62 -5,28 Z" fill="currentColor" opacity="0.9"></path></symbol>
 <clipPath id="pic"><rect x="10" y="10" width="500" height="280"></rect></clipPath>
 <filter id="smudge" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="9"></feGaussianBlur></filter>
 </defs>
-<g transform="translate(24,10)">
-<rect x="0" y="0" width="520" height="300" rx="3" fill="#eae0c9"></rect>
-<rect x="3" y="3" width="514" height="294" rx="2" fill="none" stroke="#d6cbae" stroke-width="1"></rect>
+<g transform="translate(16,16) scale(0.9)">
+<rect x="0" y="0" width="520" height="300" rx="3" fill="#f5eed4"></rect>
+<rect x="3" y="3" width="514" height="294" rx="2" fill="none" stroke="#e3d9bd" stroke-width="1"></rect>
 <g clip-path="url(#pic)">
-<rect x="10" y="10" width="500" height="280" fill="#9d8ba8"></rect>
-<g filter="url(#smudge)" fill="#b6a5bc">
+<rect x="10" y="10" width="500" height="280" fill="#a897b2"></rect>
+<g filter="url(#smudge)" fill="#c3b4c8">
 <ellipse cx="120" cy="60" rx="90" ry="26"></ellipse><ellipse cx="330" cy="150" rx="120" ry="30"></ellipse><ellipse cx="80" cy="170" rx="70" ry="24"></ellipse><ellipse cx="430" cy="70" rx="60" ry="20"></ellipse>
 </g>
 <g filter="url(#smudge)" fill="#a185a3" opacity="0.8"><ellipse cx="250" cy="190" rx="200" ry="26"></ellipse></g>
@@ -53,12 +53,12 @@
 <ellipse cx="420" cy="262" rx="8" ry="3.2" fill="#5a4320"></ellipse>
 <ellipse cx="476" cy="262" rx="8" ry="3.2" fill="#5a4320"></ellipse>
 <g transform="translate(112,22) scale(0.94)">
-<path d="M0 0H60V16H38V100H22V16H0Z" fill="#eae0c9" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></path>
-<path d="M70 0H86L94 70L106 20H114L126 70L134 0H150L136 100H120L110 50L100 100H84Z" fill="#eae0c9" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></path>
-<rect x="160" y="38" width="16" height="62" fill="#eae0c9" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></rect>
-<circle cx="168" cy="14" r="9" fill="#eae0c9" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></circle>
-<path d="M186 0H204L218 36L232 0H250L228 50L250 100H232L218 64L204 100H186L208 50Z" fill="#eae0c9" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></path>
-<path d="M260 0H320V16H298V100H282V16H260Z" fill="#eae0c9" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></path>
+<path d="M0 0H60V16H38V100H22V16H0Z" fill="#f5eed4" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></path>
+<path d="M70 0H86L94 70L106 20H114L126 70L134 0H150L136 100H120L110 50L100 100H84Z" fill="#f5eed4" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></path>
+<rect x="160" y="38" width="16" height="62" fill="#f5eed4" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></rect>
+<circle cx="168" cy="14" r="9" fill="#f5eed4" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></circle>
+<path d="M186 0H204L218 36L232 0H250L228 50L250 100H232L218 64L204 100H186L208 50Z" fill="#f5eed4" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></path>
+<path d="M260 0H320V16H298V100H282V16H260Z" fill="#f5eed4" stroke="#221b26" stroke-width="6" stroke-linejoin="round"></path>
 </g>
 <text x="262" y="140" text-anchor="middle" font-family="'Helvetica Neue Condensed Bold','Arial Narrow','Roboto Condensed','Liberation Sans Narrow',Impact,sans-serif" font-weight="700" font-size="15" letter-spacing="1.2" fill="#221b26">A GAME OF BARRIERS FOR TWO</text>
 <line x1="153" y1="176" x2="209" y2="176" stroke="#221b26" stroke-width="3" stroke-linecap="round"></line>
@@ -77,8 +77,9 @@
 <g transform="translate(468,86) scale(0.9537)"><use href="#peg" color="#aa2d28"></use><use href="#pegHi" color="#c9503e"></use></g>
 </g>
 </g>
-<text x="600" y="112" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="46" font-weight="bold" letter-spacing="-1"><tspan fill="#8a8a95" font-weight="normal">$ </tspan><tspan fill="#e05252">twixt</tspan><tspan fill="#7d8cc4">ui</tspan></text>
-<text x="600" y="160" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="26" fill="#e0e0e6">TwixT in the terminal</text>
-<text x="600" y="192" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="17" fill="#9a9aa5">Alex Randolph’s connection game, out of a single binary</text>
-<text x="600" y="262" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="17" fill="#c9c9d1"><tspan fill="#8a8a95">$ </tspan>twixtui play bot --tier pro --side vertical<tspan fill="#f0c040">█</tspan></text>
+<text x="16" y="338" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="46" font-weight="bold" letter-spacing="-1"><tspan fill="#8a8a95" font-weight="normal">$ </tspan><tspan fill="#e05252">twixt</tspan><tspan fill="#7d8cc4">ui</tspan></text>
+<text x="16" y="376" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="26" fill="#221b26">TwixT in the terminal</text>
+<text x="16" y="404" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="16" fill="#561d25">Alex Randolph’s connection game,</text>
+<text x="16" y="424" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="16" fill="#561d25">out of a single binary</text>
+<text x="16" y="456" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="16" fill="#3a3a44"><tspan fill="#8a8a95">$ </tspan>twixtui play bot --tier pro --side vertical<tspan fill="#f0c040">█</tspan></text>
 </svg>

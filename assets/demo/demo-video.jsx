@@ -338,12 +338,14 @@ function screenT2(T, C) {
   return { rows: gameFrame(empty, panel), status: 'space place · enter commit · x links · a abort · q leave · d draw · r resign', reveal: MOTION.reveal(T, C.Remote + 3.4, 0.5) };
 }
 function screenT3(T, C) {
-  const s = C.Remote + 1.6;
-  // The guest's line carries the whole code, so it arrives at paste speed
-  // rather than at the host's typing speed. That keeps both beats inside the
-  // same window this shot always had: the command, then the guest's own
-  // waiting copy, before the two terminals cut to the game at C.Remote + 3.4.
-  if (T < s + 1.05) return { prompt: MOTION.typed(T, JOIN_CMD, s, 64), cursor: blink(T), reveal: 1 };
+  const s = C.Remote + 2.35;
+  // The guest's line is typed once the camera is on the guest — the shot
+  // arrives at C.Remote + 2.35 and the line starts there, so the whole
+  // pairing code is entered on camera instead of off it. It arrives at paste
+  // speed, because a code is pasted rather than typed out, and that is what
+  // leaves room for the guest's own waiting copy before the two terminals
+  // cut to the game at C.Remote + 3.4.
+  if (T < s + 0.72) return { prompt: MOTION.typed(T, JOIN_CMD, s, 96), cursor: blink(T), reveal: 1 };
   if (T < C.Remote + 3.4) {
     // internal/cli/play.go, the --relay branch of `play join`: the code is
     // echoed back because a mistyped one is the ordinary reason for a wait
@@ -355,7 +357,7 @@ function screenT3(T, C) {
       [],
       [S('Waiting for the host. Press ctrl+c to give up.', ST.label)],
     ];
-    return { rows, status: '', reveal: MOTION.reveal(T, s + 1.05, 0.25) };
+    return { rows, status: '', reveal: MOTION.reveal(T, s + 0.72, 0.18) };
   }
   const empty = renderBoard(24, [], [], { cursor: [11, 11] });
   const panel = gamePanel({ headline: [S('● ', ST.pegV), S('vertical to move: Bálint', ST.text)], vName: 'Bálint (remote)', hName: 'Sára', turn: 'V', move: 1, last: '', kind: 'remote', rules: 'std rules · 24x24' });
@@ -400,8 +402,23 @@ function camAt(T, C) {
     [C.Hint + 3.6, cx(0) + 60, 180, 2.2], [C.Hint + 4.4, cx(0) - 340, 290, 2.0],
     [C.Hint + 5.2, cx(0) - 340, 290, 2.0], [C.Topic2 - 0.6, cx(0), 326, 1],
     [C.Topic2 - 0.4, cx(0), 326, 1], [C.Topic2 + 0.4, cx(1), 326, 1],
-    [C.Remote + 1.2, cx(1), 326, 1], [C.Remote + 2.0, cx(1) + PITCH / 2, 326, 0.47],
-    [C.Topic3 - 0.7, cx(1) + PITCH / 2, 326, 0.47], [C.Topic3 + 0.2, cx(3), 326, 1],
+    // The relay beat is the one place where the words are the content: the
+    // pairing code, and the line the other player runs. One frame holding
+    // both windows means 0.47 scale, which is where that text stops being
+    // readable, and a tighter two-window frame would crop the 84-column
+    // "Your opponent runs:" line. So the beat is staged as two shots — in on
+    // the host while the code and its wait are up, then over to the guest
+    // before its join line is typed, so the code is read once as the host
+    // prints it and again as the guest enters it. The crossing pulls back to
+    // 0.9 on the way so it reads as leaving one machine for the other rather
+    // than as a whip. The old wide framing survives as the closer: once both
+    // boards are up at C.Remote + 3.4 there is nothing left to read, and the
+    // pull-back can carry the payoff — two terminals in one game.
+    [C.Remote + 0.8, cx(1), 326, 1], [C.Remote + 1.2, cx(1) - 200, 215, 1.6],
+    [C.Remote + 1.85, cx(1) - 200, 215, 1.6], [C.Remote + 2.1, cx(1) + PITCH / 2, 260, 0.9],
+    [C.Remote + 2.35, cx(2) - 200, 215, 1.6], [C.Remote + 3.4, cx(2) - 200, 215, 1.6],
+    [C.Remote + 3.9, cx(1) + PITCH / 2, 326, 0.47],
+    [C.Topic3 - 0.2, cx(1) + PITCH / 2, 326, 0.47], [C.Topic3 + 0.2, cx(3), 326, 1],
     [C.Standings + 1.8, cx(3), 326, 1], [C.Standings + 2.6, cx(3) - 420, 160, 1.9],
     [C.Themes - 0.9, cx(3) - 420, 160, 1.9], [C.Themes - 0.1, cx(4), 326, 1],
     [C.Themes + 1.2, cx(4), 326, 1], [C.Themes + 2.0, cx(4) - 400, 210, 1.8],

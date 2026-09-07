@@ -26,7 +26,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   measured strength figure moved across unchanged. The one sentence that did not
   move verbatim is the beginner tier's, which said the tier works from peg counts
   alone; it counts how many pegs each side still needs, which is a different
-  thing, and it now says so. A hero SVG serves the front page, while the coloured
+  thing, and it now says so. A banner SVG serves the front page, while the coloured
   board-position SVG illustrates the manual. Both live under assets/, with their
   provenance and the code they repeat recorded in assets/README.md.
 

@@ -80,6 +80,5 @@
 <text x="600" y="112" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="46" font-weight="bold" letter-spacing="-1"><tspan fill="#8a8a95" font-weight="normal">$ </tspan><tspan fill="#e05252">twixt</tspan><tspan fill="#7d8cc4">ui</tspan></text>
 <text x="600" y="160" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="26" fill="#221b26">TwixT in the terminal</text>
 <text x="600" y="192" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="17" fill="#561d25">Alex Randolph’s connection game, out of a single binary</text>
-<text x="600" y="262" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="17" fill="#3a3a44"><tspan fill="#8a8a95">$ </tspan>twixtui play bot --tier pro --side vertical</text>
-<rect x="1061" y="248" width="10" height="18" fill="#f0c040"></rect>
+<text x="600" y="262" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="17" fill="#3a3a44"><tspan fill="#8a8a95">$ </tspan>twixtui play bot --tier pro --side vertical<tspan fill="#f0c040">█</tspan></text>
 </svg>

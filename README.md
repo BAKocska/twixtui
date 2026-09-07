@@ -1,5 +1,7 @@
 <p align="center">
   <picture>
+    <source media="(prefers-color-scheme: dark) and (max-width: 480px)" srcset="assets/banner-compact-dark.svg">
+    <source media="(max-width: 480px)" srcset="assets/banner-compact-light.svg">
     <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
     <img src="assets/banner-light.svg" alt="twixtui — TwixT in the terminal" width="100%">
   </picture>
@@ -13,7 +15,7 @@ your shell.
 
 ## A quick introduction
 
-https://github.com/user-attachments/assets/6b92e867-651e-4c28-b115-049f5a55a63b
+https://github.com/user-attachments/assets/79156074-db7b-4ff5-8eea-bd15964c176f
 
 An animated tour of the menu, three bot tiers, a 24×24 board, hints, remote play,
 standings and four colour schemes. About a minute, with illustrative screens.
