@@ -183,7 +183,8 @@ func TestCorrespondenceCodeRejectsMissingGameID(t *testing.T) {
 
 func TestCorrespondenceCodeRejectsHugePasteBeforeDecoding(t *testing.T) {
 	g := game.MustNew(testRules())
-	huge := movePrefix + strings.Repeat("A", maxCodeTextLen+1)
+	// Fixed input: changing the production bound must not allocate its new size.
+	huge := movePrefix + strings.Repeat("A", 769)
 	_, err := DecodeMove(g, "GAME", huge)
 	if !errors.Is(err, ErrBadCode) || !strings.Contains(err.Error(), "character limit") {
 		t.Fatalf("DecodeMove returned %v", err)
@@ -436,7 +437,8 @@ func TestInviteRejectsUnknownRuleFlags(t *testing.T) {
 
 func TestCorrespondenceTranscriptRejectsHugeBlock(t *testing.T) {
 	g := game.MustNew(testRules())
-	block := strings.Repeat("\n", maxTranscriptBytes+1)
+	// Fixed input: changing the production bound must not allocate its new size.
+	block := strings.Repeat("\n", (1<<20)+1)
 	_, err := ApplyTranscript(g, "GAME", block)
 	if !errors.Is(err, ErrBadCode) || !strings.Contains(err.Error(), "transcript") {
 		t.Fatalf("ApplyTranscript returned %v", err)
