@@ -194,9 +194,12 @@ type ebCandidateSpec struct {
 // the principal-variation lever off and on, pvs-killers is pvs with the
 // killer-move lever on, pvs-aspiration is pvs with the root's aspiration band
 // on, and pvs-templates is pvs with the proved edge-template corpus in the
-// evaluation; the first three pairs are what a semantics- and work-preserving
-// claim is made from, the last is what a strength claim about the corpus is
-// made from. mcts is the different architecture.
+// evaluation. Each pair isolates one lever. The first three are ordering and
+// windowing levers, which preserve a full-window value at full width but at a
+// shipped shortlist can change which moves are searched, so their claims are
+// about work and are checked against values and moves rather than assumed to
+// leave them alone; the last is an evaluation lever, and its claim is about
+// strength. mcts is the different architecture.
 //
 // Each tuned candidate sets every lever of its pair explicitly, so that the
 // pair keeps meaning what its name says if a tier is ever retuned underneath

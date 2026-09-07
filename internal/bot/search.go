@@ -140,11 +140,12 @@ type params struct {
 	// between one iteration and the next on a third of them. The band
 	// therefore fails often, and every failure re-searches the root's largest
 	// subtree. At a fixed depth of six on the effort harness's frozen
-	// positions the band spent 3.4% more nodes than the whole window, and 13%
-	// more at depth eight on 10x10; no band width between one and forty-eight
-	// pegs saved any. The lever is kept, off, so that the measurement can be
-	// repeated -- docs/MANUAL.md records it -- and not because it is worth
-	// turning on.
+	// positions the band spent 3.4% more nodes than the whole window, and 13.6%
+	// more at depth eight on 10x10 with the two-peg band; of twenty band
+	// settings between one and forty-eight pegs the best saved 0.02%, which is
+	// noise, and every other cost nodes. The lever is kept, off, so that the
+	// measurement can be repeated -- docs/MANUAL.md records it -- and not
+	// because it is worth turning on.
 	aspiration bool
 	// templates lets the evaluation discount a step of a cheapest chain that a
 	// proved edge template shows the opponent cannot take away. See

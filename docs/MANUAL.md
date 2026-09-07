@@ -361,7 +361,7 @@ table, 12.0% fewer with both. No tier searches at full width. At pro's shipped
 shortlist the result is depth-dependent and the values are not identical: over
 40 measured positions on 10×10 and 16×16 with opening seeds 1–12, total nodes
 were 6.8% worse at depth five, 2.9% better at depth six and 6.8% better at
-depth seven, while the median position was unchanged at every depth and six
+depth seven, while the median position was within a tenth of a percent at every depth and six
 to eight positions per depth returned a different score — shortlist selection
 depends on search history, so this is an ordering change that can change what
 is searched. A paired match at an equal 8,000-node budget over opening seeds
@@ -377,26 +377,33 @@ score is always a measurement and never a bound. On the 40 frozen positions of
 10×10 and 16×16, seeds 1–12, every one reaching depth six on both sides, the
 band spent **3.4% more** nodes than the whole window rather than fewer
 (+0.8%, −0.8%, +6.0% and +1.8% across the four board-and-setup cells), and
-13.0% more at depth eight on 10×10; no band between one and forty-eight pegs
-saved any. The reason is measurable rather than guessed: the root score moves
-by more than two pegs from one iteration to the next on a third of them, so a
-third of iterations pay to re-search the root's largest subtree. Twenty-four
-games a side at 8,000 nodes were 11–11–2 on both 10×10 and 16×16 with all
+13.6% more at depth eight on 10×10 with the shipped two-peg band (13.0% at four
+and eight pegs); of twenty band settings between one and forty-eight pegs the
+best saved 0.02%, which is noise, and every other cost nodes. The reason is
+measurable rather than guessed: the root score moves by more than two pegs
+from one iteration to the next on a third of them, so a third of iterations
+pay to re-search the root's largest subtree. Twenty-four games per board at
+8,000 nodes were 11–11–2 on both 10×10 and 16×16 with all
 twelve opening pairs level, a conservative bound of 0.11–0.89, and no strength
 difference established in either direction — and 11 of 12 pairs on 10×10 played
 an identical game whichever side held the band, so the match had little to
 distinguish. The chosen move agreed on all 40 positions; two reported scores
 differed, which is the same history- and table-dependent selective tree noted
 above for principal-variation search and not a bound escaping the window.
+
 The tree also carries a small corpus of **edge templates**, which no tier plays
 with. What is proved of each of them is this: with the opponent to move and a
 named set of holes empty, a peg two, three or four rows from its own border
 reaches that border within a fixed number of placements — one, two and two
-respectively — whatever the opponent plays anywhere on the board. Each claim is
-established by exhaustive search over the real engine, on 10×10 and 12×12 boards
-and under both `std` and `pp`, in all four orientations and against both side
-walls, and the searches run in the ordinary test suite alongside three false
-claims the same prover has to reject. What was measured is separate and less
+respectively — whatever peg the opponent places anywhere on the board, or none.
+The prover plays placements with every offered link taken, which is what the
+bot plays; an opponent who declines or removes links under `std`, or takes the
+swap on the first move, is outside the claim. Each claim is established by
+exhaustive search over the real engine on 10×10 and 12×12 boards under both
+`std` and `pp`, anchored mid-board in all four orientations; the four
+orientations against a side wall are proved on 10×10 under `std`. The searches
+run in the ordinary test suite alongside three false claims the same prover has
+to reject. What was measured is separate and less
 happy: the evaluation can use a matching template to stop calling a step of a
 cheapest chain a bottleneck, and a paired match of that lever on against off — 12
 openings per size, both colour assignments, 30,000 nodes a move under `std` —

@@ -24,7 +24,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the picture is depth-dependent and the values are not identical: over 40
   positions on 10×10 and 16×16 with opening seeds 1–12, total nodes were 6.8%
   worse at depth five, 2.9% better at depth six and 6.8% better at depth
-  seven, the median position was unchanged at all three, and six to eight
+  seven, the median position was within a tenth of a percent at all three, and six to eight
   positions per depth returned a different score. At an equal 8,000-node
   budget the paired match was 12–11–1 on 10×10 and 9–13–2 on 16×16 for the
   killer side, both inconclusive under the conservative bound. What the tiers
@@ -35,25 +35,30 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a root score is never a bound. It is off in every tier because the harness
   says it costs work rather than saving it: at a fixed depth of six over the
   40 frozen positions of 10×10 and 16×16 seeds 1–12 it spent 3.4% more nodes
-  than the whole window, and 13.0% more at depth eight on 10×10, with no band
-  width between one and forty-eight pegs saving any. Twenty-four games a side
-  at 8,000 nodes on each board were 11–11–2 with every opening pair level,
-  which establishes no strength difference in either direction. The effort
+  than the whole window, and 13.6% more at depth eight on 10×10 with the
+  shipped two-peg band (13.0% at four and eight pegs); of twenty band
+  settings between one and forty-eight pegs, the best saved 0.02%, which is
+  noise, and every other cost nodes. Twenty-four games per board at 8,000
+  nodes were 11–11–2 on each, with every opening pair level, which
+  establishes no strength difference in either direction. The effort
   benchmark gains a `pvs-aspiration` candidate and records the lever in every
   artifact so the measurement can be repeated.
 - A corpus of proved edge templates for the bot's evaluation, together with the
   exhaustive prover that certifies it. A template says that a peg two, three or
   four rows from its own border reaches that border in a fixed number of
-  placements whatever the opponent does, provided a named set of holes — the
-  cells it may use and the guard holes that close it under the crossing rule —
-  is empty. Nothing is called a template until the prover has demonstrated it on
-  the real engine with the opponent free to play anywhere on the board, and the
-  proofs run in the ordinary test suite, so a claim added without one fails the
-  build. The evaluation can use a matching template to stop counting a step of a
-  cheapest chain as a bottleneck, which is behind a lever; the peg counts are
-  untouched either way.
-- An effort-experiment pair, `pvs-templates` and `pvs-notemplates`, which is the
-  same search with the corpus in and out of the evaluation.
+  placements whatever peg the opponent places, or none, provided a named set
+  of holes — the cells it may use and the guard holes that close it under the
+  crossing rule — is empty. The opponent's replies are peg placements with
+  every offered link taken, which is what the bot plays; declining or removing
+  links under `std`, and the first-move swap, are outside the claim. Nothing is
+  called a template until the prover has demonstrated it on the real engine
+  with the opponent free to place anywhere on the board, and the proofs run in
+  the ordinary test suite, so a claim added without one fails the build. The
+  evaluation can use a matching template to stop counting a step of a cheapest
+  chain as a bottleneck, which is behind a lever; the peg counts are untouched
+  either way.
+- An effort-experiment pair, `pvs` and `pvs-templates`, which is the same
+  search with the corpus out of and in the evaluation.
 
 ### Changed
 

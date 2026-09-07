@@ -153,17 +153,20 @@ type Bot interface {
 //
 // Three levers exist that no tier turns on: killers, aspiration and templates.
 // All are implemented, tested and switchable from the effort benchmark, and all
-// were measured at the shipped shortlists and found not to pay there. Killers
-// saved nodes only at full width, where the bot never runs, and at pro's width
-// changed a fifth of the scores without a consistent saving. Aspiration cost
-// nodes at every depth tried. The proved edge-template corpus, in and out of
-// the evaluation at 30,000 nodes a move over twelve openings from both sides,
-// changed no move at all on 16x16 and changed the result of one opening in
-// twelve on 10x10, against the corpus. A lever measured not to help is left
-// off rather than shipped on the strength of the idea, so what the tiers play
-// is what the tournament measured. The numbers are in docs/MANUAL.md; the
-// pvs-killers, pvs-aspiration and pvs-templates candidates are how each is
-// measured again.
+// were measured on the pro tier at its shipped shortlist and found not to pay
+// there. Killers returned identical values with fewer nodes only at full
+// width, where the bot never runs; at pro's width the saving was inconsistent
+// across depths (worse at five, better at six and seven) and a fifth of the
+// scores changed. Aspiration with its two-peg band cost nodes at both depths
+// tried, six and eight, and no band setting saved more than noise. The proved
+// edge-template corpus, in and out of the evaluation at 30,000 nodes a move
+// over twelve openings from both sides, changed no move at all on 16x16 and
+// changed the result of one opening in twelve on 10x10, against the corpus. A
+// lever measured not to help is left off rather than shipped on the strength
+// of the idea, so what the tiers play is what the tournament measured. The
+// numbers are in docs/MANUAL.md; the pvs-killers, pvs-aspiration and
+// pvs-templates candidates are how each is measured again. The other tiers
+// were not measured with these levers and inherit the same default.
 func tierParams(t Tier) params {
 	switch t {
 	case Intermediate:

@@ -23,24 +23,36 @@ import (
 // in. If every cell is on the board, usable by Vertical and empty, and every
 // guard hole that is on the board is empty, then with the OPPONENT TO MOVE
 // Vertical can place need pegs, all of them in cells, and end with the anchor
-// linked to row 0, whatever the opponent does in between.
+// linked to row 0, whatever peg the opponent places in between, or none.
 //
-// Two details of that sentence carry the weight.
+// Three details of that sentence carry the weight.
 //
-// The first is "whatever the opponent does", which has to mean anywhere on the
-// board and not merely anywhere in the carrier. It does, and the guard set is
-// why. A peg that is not in the carrier cannot occupy a cell, so the only way
-// it could interfere is by being one end of a link that crosses a link the
-// connection needs. The guard is computed as exactly that: every hole that
-// could be an endpoint of a link crossing any link the connection might make,
-// with the holes beyond the border row — which no peg can ever occupy —
-// dropped, since a link with a phantom endpoint can never exist. Both endpoints
-// of such a crossing link are therefore in the carrier, so a crossing link
-// needs two carrier holes, and an empty carrier has none. Play outside the
-// carrier is then provably irrelevant, which is what lets the prover restrict
-// the opponent to the carrier and still search exhaustively.
+// The first is what the opponent may do. The prover lets the opponent place a
+// peg on any legal hole of the whole board, or pass, with every offered link
+// taken — which is what this bot itself plays. It does not enumerate the
+// actions the printed rules allow beyond that: declining an offered link,
+// adding a link between two standing pegs, removing one, or the first-move
+// swap. Removing a link is not harmless to the claim — taking a blocking link
+// away can make room for a different link that crosses the connection — so
+// under std a human opponent has replies the proof does not cover, and the
+// swap can take the anchor itself away on the first move. The corpus is proved
+// for placement-only play; a template added for a deeper claim, or one that
+// wants to cover std's link actions, needs the prover extended first.
 //
-// The second is need. The plain claim — the connection can be completed
+// The second is the guard, which is what makes searching the whole board
+// sufficient rather than merely exhaustive. A peg that is not in the carrier
+// cannot occupy a cell, so the only way it could interfere is by being one end
+// of a link that crosses a link the connection needs. The guard is computed as
+// exactly that: every hole that could be an endpoint of a link crossing any
+// link the connection might make, with the holes beyond the border row — which
+// no peg can ever occupy — dropped, since a link with a phantom endpoint can
+// never exist. Both endpoints of such a crossing link are therefore in the
+// carrier, so a crossing link needs two carrier holes, and an empty carrier has
+// none. The prover does not rely on that argument to shrink its search, but it
+// is why a match on a cluttered board, with pegs everywhere outside the
+// carrier, is still covered by a proof made on an otherwise empty one.
+//
+// The third is need. The plain claim — the connection can be completed
 // eventually — would not justify what eval.go does with it. Eval counts a
 // bottleneck when every cheapest chain has to run through one particular hole,
 // on the grounds that an opposing peg there sets the plan back a peg; a
