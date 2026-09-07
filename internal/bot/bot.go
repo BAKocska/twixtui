@@ -150,6 +150,15 @@ type Bot interface {
 // Depth, candidate width, evaluation and time distinguish effort, not guaranteed
 // playing strength. A node ceiling is optional: callers use Limits to compare
 // reproducible amounts of work while retaining a wall-clock safety guard.
+//
+// Two ordering levers exist that no tier turns on: killers and aspiration. Both
+// are implemented, tested and switchable from the effort benchmark, and both
+// were measured at the shipped shortlists and found not to save work there:
+// killers saved nodes only at full width, where the bot never runs, and at
+// pro's width changed a fifth of the scores without a consistent saving;
+// aspiration cost nodes at every depth tried. The numbers are in the manual.
+// A lever measured not to help is left off rather than shipped on the strength
+// of the idea, so what the tiers play is what the tournament measured.
 func tierParams(t Tier) params {
 	switch t {
 	case Intermediate:

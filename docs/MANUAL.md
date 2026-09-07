@@ -351,6 +351,25 @@ scores and one chosen move differed: history-dependent shortlist selection
 means this is not a claim of identical selective trees. Full-width minimax
 regressions establish pruning correctness separately.
 
+A killer-move ordering lever exists in the search and is off in every tier,
+because measuring it against a contender identical but for that lever did not
+support turning it on. At full width, where the candidate list is the
+position's own and ordering cannot change a value, twelve frozen midgames at
+depth four returned identical values in both configurations measured: 29.8%
+fewer nodes with neither principal-variation search nor the transposition
+table, 12.0% fewer with both. No tier searches at full width. At pro's shipped
+shortlist the result is depth-dependent and the values are not identical: over
+40 measured positions on 10×10 and 16×16 with opening seeds 1–12, total nodes
+were 6.8% worse at depth five, 2.9% better at depth six and 6.8% better at
+depth seven, while the median position was unchanged at every depth and six
+to eight positions per depth returned a different score — shortlist selection
+depends on search history, so this is an ordering change that can change what
+is searched. A paired match at an equal 8,000-node budget over opening seeds
+1–12, both colours, was 12–11–1 on 10×10 and 9–13–2 on 16×16 for the killer
+side; the conservative bound spans 0.5 in both cases, so neither establishes a
+strength difference in either direction. The lever stays available to the
+effort benchmark as the `pvs-nokiller` pair.
+
 The evaluator caches immutable board geometry instead of recomputing knight
 neighbours and border scans at every node. Against revision `312d9ce`, five
 single-CPU warm-load benchmark samples had these medians:

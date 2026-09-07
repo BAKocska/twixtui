@@ -109,6 +109,23 @@ type params struct {
 	// feed the history heuristic that decides which moves survive the width
 	// cap, so a narrow search can still end up choosing differently.
 	pvs bool
+	// killers enables the killer-move heuristic: each ply remembers the last
+	// two holes that produced a beta cutoff there, and tries them first at the
+	// next node it reaches at the same ply. Siblings of a node tend to be
+	// refuted by the same reply, so the refutation found once is worth trying
+	// before anything else -- and the earlier a cutoff comes, the fewer
+	// children the node has to search.
+	//
+	// It only ever reorders the candidate list a node already has: a
+	// remembered hole that is not among this node's candidates is skipped
+	// rather than added, so the moves searched are the same set in a different
+	// order. That is not the same as leaving the search unchanged. Which
+	// cutoffs happen decides what the history heuristic learns, the history
+	// feeds the ordering score, and the ordering score decides which moves
+	// survive the width cap at later nodes, so a narrow search can end up
+	// looking at a different candidate set further down. At full width the
+	// move set is the position's own and only the cost may differ.
+	killers bool
 }
 
 // scoredMove is one candidate placement: its ordering score before the search
@@ -209,6 +226,21 @@ type searcher struct {
 	table []tableEntry
 	mask  uint64
 
+	// killers holds, per ply, the last two holes that produced a beta cutoff
+	// there, most recent first, with -1 for a slot no cutoff has filled. They
+	// are kept per ply rather than per node because that is what makes them
+	// worth remembering: two nodes at the same ply are sibling positions a
+	// move apart, and a reply that refuted one usually refutes the next, while
+	// a hole from another ply answers a different position and would be noise.
+	//
+	// This is a fixed array rather than a field of plyState because it is
+	// written after the recursion returns: the per-ply slice can grow while a
+	// child is searched, and a pointer into it taken before the child ran
+	// would then address the array it grew out of. The index is safe because
+	// a node at or past the recursion cap returns before it generates a move,
+	// so no ply from maxSearchPly up ever reaches the code below.
+	killers [maxSearchPly][2]int32
+
 	// stamp deduplicates candidate holes without clearing an array per call.
 	stamp    []int32
 	stampGen int32
@@ -223,12 +255,22 @@ type plyState struct {
 
 func newSearcher(p params) *searcher {
 	s := &searcher{p: p}
+	s.forgetKillers()
 	if p.useTable {
 		const bits = 16
 		s.table = make([]tableEntry, 1<<bits)
 		s.mask = 1<<bits - 1
 	}
 	return s
+}
+
+// forgetKillers empties every ply's killer slots. Zero cannot stand for empty:
+// it is the top-left hole, and a searcher that had never recorded a cutoff
+// would be trying that hole first at every ply.
+func (s *searcher) forgetKillers() {
+	for i := range s.killers {
+		s.killers[i] = [2]int32{-1, -1}
+	}
 }
 
 func (s *searcher) at(ply int) *plyState {
@@ -252,6 +294,10 @@ func (s *searcher) prepare(n int) {
 		s.stamp = make([]int32, cells)
 		s.stampGen = 0
 	}
+	// The killers belong to the search that recorded them: they are holes that
+	// refuted a sibling of some node in the tree just searched, and in the next
+	// position that tree no longer exists.
+	s.forgetKillers()
 	// The table is emptied between moves on purpose: carrying entries over
 	// would make a move depend on which positions happened to be searched
 	// earlier, and the bot is meant to be a function of the seed and the
@@ -405,6 +451,18 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 	if tableMove >= 0 {
 		promote(moves, tableMove)
 	}
+	if s.p.killers {
+		// Second killer first, so the more recent one ends up ahead of it.
+		// promote only reorders a hole the list already holds: a killer that
+		// is not a candidate here -- because the hole is taken, or because the
+		// width cap dropped it, or because this node is answering a threat and
+		// its list is the exact defences -- leaves the list untouched.
+		for i := len(s.killers[ply]) - 1; i >= 0; i-- {
+			if k := s.killers[ply][i]; k >= 0 {
+				promote(moves, k)
+			}
+		}
+	}
 
 	openAlpha := alpha
 	best := -infScore
@@ -460,6 +518,16 @@ func (s *searcher) search(g *game.Game, depth, ply, alpha, beta, ext int) int {
 		}
 		if alpha >= beta {
 			s.hist[mine][mv.hole] += int32(depth * depth)
+			if s.p.killers {
+				k := &s.killers[ply]
+				if k[0] != mv.hole {
+					// A hole already in the first slot stays where it is:
+					// moving it would push the other killer out for a
+					// refutation the ply has already got.
+					k[1] = k[0]
+					k[0] = mv.hole
+				}
+			}
 			break
 		}
 	}

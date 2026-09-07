@@ -54,6 +54,15 @@ package bot
 //	  TWIXT_BOT_EFFORT_OUT=.work/effort-dev-positions.json \
 //	  go test ./internal/bot -run TestBotEffortExperiment -count=1 -timeout 6h
 //
+//	# one ordering lever, at a fixed depth and then at an equal node budget
+//	TWIXT_BOT_EFFORT=1 TWIXT_BOT_EFFORT_MODE=positions \
+//	  TWIXT_BOT_EFFORT_CANDIDATES=pvs,pvs-nokiller TWIXT_BOT_EFFORT_SIZES=10,16 \
+//	  TWIXT_BOT_EFFORT_MIDGAME_PLIES=10,16 \
+//	  TWIXT_BOT_EFFORT_SEED_START=1 TWIXT_BOT_EFFORT_SEED_COUNT=12 \
+//	  TWIXT_BOT_EFFORT_DEPTH=5 TWIXT_BOT_EFFORT_TIME='*=1h' \
+//	  TWIXT_BOT_EFFORT_OUT=.work/killers-positions-d5.json \
+//	  go test ./internal/bot -run TestBotEffortExperiment -count=1 -timeout 6h
+//
 //	# development match, work-bounded, per-side horizons need not be equal
 //	TWIXT_BOT_EFFORT=1 TWIXT_BOT_EFFORT_MODE=match \
 //	  TWIXT_BOT_EFFORT_CANDIDATES=pro,max TWIXT_BOT_EFFORT_SIZES=10,16,24 \
@@ -182,16 +191,22 @@ type ebCandidateSpec struct {
 
 // ebCandidates is the whole roster the experiment can run. The four preset
 // candidates measure the shipped tiers; plain and pvs are the same tier with
-// the principal-variation lever off and on, which is the pair a
-// semantics-preserving claim is made from; mcts is the different architecture.
+// the principal-variation lever off and on, and pvs-nokiller is pvs with the
+// killer-move lever off, which are the pairs a semantics-preserving claim is
+// made from; mcts is the different architecture.
+//
+// Each tuned candidate sets both levers of its pair explicitly, so that the
+// pair keeps meaning what its name says if a tier is ever retuned underneath
+// it.
 func ebCandidates() []ebCandidateSpec {
 	return []ebCandidateSpec{
 		{name: "beginner", tier: Beginner, kind: ebKindPreset},
 		{name: "intermediate", tier: Intermediate, kind: ebKindPreset},
 		{name: "pro", tier: Pro, kind: ebKindPreset},
 		{name: "max", tier: Max, kind: ebKindPreset},
-		{name: "plain", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs = false }},
-		{name: "pvs", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs = true }},
+		{name: "plain", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers = false, true }},
+		{name: "pvs", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers = true, true }},
+		{name: "pvs-nokiller", tier: Pro, kind: ebKindTuned, tune: func(p *params) { p.pvs, p.killers = true, false }},
 		{name: "mcts", tier: Pro, kind: ebKindMCTS},
 	}
 }
@@ -798,6 +813,7 @@ type ebParamsReport struct {
 	Temperature float64 `json:"temperature"`
 	NodeLimit   int64   `json:"node_limit"`
 	PVS         bool    `json:"pvs"`
+	Killers     bool    `json:"killers"`
 }
 
 func ebReportParams(p params) ebParamsReport {
@@ -813,6 +829,7 @@ func ebReportParams(p params) ebParamsReport {
 		Temperature: p.temperature,
 		NodeLimit:   p.nodeLimit,
 		PVS:         p.pvs,
+		Killers:     p.killers,
 	}
 }
 
