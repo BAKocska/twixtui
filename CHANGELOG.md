@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-08
+
 ### Added
 
 - A killer-move ordering lever in the bot search, off in every tier. Each ply
@@ -69,6 +71,29 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   under the conservative paired bound. The corpus, the prover and the lever stay
   in the tree to be measured again when the corpus covers more; the shipped
   evaluation is unchanged.
+
+### Fixed
+
+- A relayed game could refuse a valid opponent. Each relay handler wrote the
+  greeting to its own client after the pair was made and then pumped its
+  client's bytes to the other; a client sends its first frame the moment it
+  reads the greeting, so the second arrival's frame could reach the waiting
+  client before that client's own greeting had been written, and it read a
+  protocol frame where a greeting line should have been. The handler that
+  completes a pair now greets both clients before either pump exists. Seen on
+  loaded machines; never on a fast one.
+- A host's winning session could be closed under it. The handshake's
+  cancellation watcher was told to stand down without waiting for it to hear,
+  so a cancellation arriving in the same instant — which is exactly when a host
+  stops listening because its opponent has just connected — could close the
+  connection the session had already been built on. Standing the watcher down
+  now waits for it, and a watcher that has been stood down never closes.
+- Tests: oversize record fixtures are sized by fixed literals rather than by
+  the bound they test, so a raised bound fails the test instead of allocating
+  the new size; the terminal harness reads a program's exit status only once
+  tmux has published it, reports a signal death as a shell would, and reads a
+  zombie's status from the kernel when the Ubuntu runner's tmux never reaps
+  the pane's process.
 
 ## [0.3.0] - 2026-09-07
 
@@ -522,7 +547,8 @@ First release.
   succeeding silently, and the tutorial's prose is set to a readable measure on a wide
   terminal.
 
-[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/BAKocska/twixtui/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BAKocska/twixtui/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/BAKocska/twixtui/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/BAKocska/twixtui/compare/v0.1.1...v0.2.0
