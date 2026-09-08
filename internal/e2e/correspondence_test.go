@@ -135,6 +135,12 @@ func TestTwoTerminalsPlayByCode(t *testing.T) {
 	opening := corrMoveOnScreen(t, screen)
 	host.AssertFits()
 	host.SendKeys("Escape")
+	// Wait for Escape to become a board transition, not the prefix of the next
+	// key. In a terminal, Escape followed quickly by q can arrive as Alt-q.
+	host.MustWaitFor("last "+opening, 20*time.Second)
+	if !host.Alive() {
+		t.Fatal("closing the host exchange unexpectedly ended the program")
+	}
 
 	// The guest pastes it in and applies it.
 	corrPasteInto(t, guest, code)
@@ -155,6 +161,10 @@ func TestTwoTerminalsPlayByCode(t *testing.T) {
 	}
 	guest.AssertFits()
 	guest.SendKeys("Escape")
+	guest.MustWaitFor("last "+answer, 20*time.Second)
+	if !guest.Alive() {
+		t.Fatal("closing the guest exchange unexpectedly ended the program")
+	}
 
 	corrPasteInto(t, host, reply)
 	host.MustWaitFor("TWX-", 20*time.Second)
@@ -187,12 +197,8 @@ func TestTwoTerminalsPlayByCode(t *testing.T) {
 // waitForExit gives the program time to save and go.
 func waitForExit(t *testing.T, tm *Terminal) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if !tm.Alive() {
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
+	code, exited := tm.WaitExit(20 * time.Second)
+	if !exited || code != 0 {
+		t.Fatalf("the program did not exit cleanly: exited=%v code=%d\n--- screen ---\n%s", exited, code, tm.Capture())
 	}
-	t.Fatalf("the program did not exit\n--- screen ---\n%s", tm.Capture())
 }
