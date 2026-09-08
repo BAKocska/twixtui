@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -434,5 +435,66 @@ func TestCtrlCEndsTheProgramCleanly(t *testing.T) {
 	tm.SendKeys("C-c")
 	if _, exited := tm.WaitExit(20 * time.Second); !exited {
 		t.Fatalf("the program ignored ctrl+c\n%s", tm.Capture())
+	}
+}
+
+// Finished boards still support inspection and leaving, but must not advertise
+// turn edits. Drive the compiled program so a correct helper that is not wired
+// into the rendered screen cannot satisfy this regression.
+func TestFinishedBoardHelpAndInspectionSurviveResize(t *testing.T) {
+	t.Parallel()
+	tm := session(t, "play local --size 12 --side vertical", 140, 44)
+	tm.MustWaitFor("vertical to move", 20*time.Second)
+	before := tm.WaitSettled(10 * time.Second)
+	mutationKeys := regexp.MustCompile(`(?m)(?:^| {2,})(?:space|x|a|d|r|\?)\s+\S`)
+	if !mutationKeys.MatchString(before) || !tm.Alive() {
+		t.Fatalf("no live turn-editing controls before resignation:\n%s", before)
+	}
+
+	tm.SendKeys("r")
+	tm.MustWaitFor("y/n", 10*time.Second)
+	tm.SendKeys("y")
+	tm.MustWaitFor("game over", 10*time.Second)
+	finished := tm.WaitSettled(10 * time.Second)
+	if mutationKeys.MatchString(finished) {
+		t.Fatalf("finished board still advertises turn edits:\n%s", finished)
+	}
+	tm.AssertFits()
+	cursorCell := func(screen string) (int, int) {
+		t.Helper()
+		for row, line := range strings.Split(screen, "\n") {
+			if at := strings.Index(line, "[·]"); at >= 0 {
+				return visibleWidth(line[:at]), row
+			}
+		}
+		t.Fatalf("empty-board inspection cursor is missing:\n%s", screen)
+		return 0, 0
+	}
+	oldX, oldY := cursorCell(finished)
+
+	tm.SendKeys("l")
+	moved := tm.WaitChanged(finished, 10*time.Second)
+	newX, newY := cursorCell(moved)
+	if newX != oldX+4 || newY != oldY {
+		t.Fatalf("right key moved the detailed-board cursor from (%d,%d) to (%d,%d), want (%d,%d)",
+			oldX, oldY, newX, newY, oldX+4, oldY)
+	}
+	small := tm.ResizeAndWait(40, 14, 10*time.Second)
+	if boardColumnLabels(small) == boardColumnLabels(moved) {
+		t.Fatal("shrink did not change board scale or viewport")
+	}
+	tm.AssertFits()
+	restored := tm.ResizeAndWait(140, 44, 10*time.Second)
+	if restored != moved {
+		t.Fatalf("finished position or help changed after resize\nbefore:\n%s\nafter:\n%s", moved, restored)
+	}
+	if !tm.Alive() || mutationKeys.MatchString(restored) {
+		t.Fatalf("finished board lost its inspection state:\n%s", restored)
+	}
+
+	tm.SendKeys("Enter")
+	code, exited := tm.WaitExit(20 * time.Second)
+	if !exited || code != 0 {
+		t.Fatalf("Enter did not leave the finished game cleanly: exit=%v code=%d\n%s", exited, code, tm.Capture())
 	}
 }

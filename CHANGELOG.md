@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Finished and disconnected game boards now show the actions available in that
+  state instead of advertising turn edits or advice. Inspection and Enter-to-leave
+  remain available; finished bot/hotseat games offer rematches, and correspondence
+  keeps its final exchange accessible. A peer's result or disconnection also
+  dismisses any pending local confirmation.
+
 ## [0.3.1] - 2026-09-08
 
 ### Added

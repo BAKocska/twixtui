@@ -478,6 +478,8 @@ func TestHotseatGamePlayedToAWin(t *testing.T) {
 		t.Errorf("the stored game replays to %v, want %v", replayed.Result(), res)
 	}
 
+	gsAssertPostPlayActions(t, h, true, false)
+
 	// Leaving a finished game must not add a second row.
 	h.press("q")
 	if rows := d.Board.History("ada", 0); len(rows) != 1 {
@@ -1185,12 +1187,39 @@ func TestSwapIsOfferedExactlyWhenItIsAvailable(t *testing.T) {
 func TestResignEndsTheGameAndRecordsOneRow(t *testing.T) {
 	engine := &stubBot{tier: bot.Beginner, moves: []game.Point{{Col: 5, Row: 1}}}
 	d := gsTestDeps(t)
-	h := newGSHarness(t, d, gsVersusBot(6, engine), 80, 24)
+	cfg := gsVersusBot(6, engine)
+	cfg.Hints, cfg.HintFor = true, engine
+	cfg.Rules.PegRemoval = true
+	h := newGSHarness(t, d, cfg, 80, 24)
 
 	// A confirmation stands between the player and an irreversible key.
 	h.press("r")
 	if h.s.confirm != gaResign {
 		t.Fatal("r resigned without asking")
+	}
+	labels := map[string]bool{}
+	for _, e := range h.s.helpEntries() {
+		labels[e.Label] = true
+	}
+	if len(labels) != 2 || !labels["y"] || !labels["n"] {
+		t.Errorf("confirmation help advertises actions other than yes/no: %v", labels)
+	}
+	before, err := h.s.g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"space", "enter", "q", "?", "p", "d", "R"} {
+		h.press(key)
+	}
+	after, err := h.s.g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("keys outside confirmation changed the record:\nbefore %+v\nafter  %+v", before, after)
+	}
+	if h.s.confirm != gaResign {
+		t.Fatal("a key outside confirmation dismissed the pending resignation")
 	}
 	h.press("n")
 	if h.s.g.Result().Over() {
@@ -1214,6 +1243,10 @@ func TestResignEndsTheGameAndRecordsOneRow(t *testing.T) {
 	}
 	if want := leaderboard.BotName(bot.Beginner.String()); rows[0].Opponent != want {
 		t.Errorf("opponent is %q, want %q", rows[0].Opponent, want)
+	}
+	gsAssertPostPlayActions(t, h, true, false)
+	if _, hints := engine.counts(); hints != 0 {
+		t.Errorf("finished-game advice reached the engine %d times", hints)
 	}
 }
 
@@ -1258,6 +1291,7 @@ func TestDrawOfferSurvivesTheMoveAndIsAccepted(t *testing.T) {
 	if other := d.Board.History("linus", 0); len(other) != 1 {
 		t.Fatalf("%d rows for linus, want 1", len(other))
 	}
+	gsAssertPostPlayActions(t, h, true, false)
 }
 
 // --- the rematch ------------------------------------------------------------
@@ -1277,6 +1311,111 @@ func gsPlayOutAWin(h *gsHarness) {
 func gsStatusLine(h *gsHarness) string {
 	h.t.Helper()
 	return ansi.Strip(h.s.statusLine(ui.Arrange(h.width, h.height, h.s.g.Size())))
+}
+
+// gsAssertPostPlayActions exercises the board left behind after play can no
+// longer continue. Help and status must advertise every useful action the test
+// performs, while keys that could change or advise on the game stay hidden and
+// leave the canonical record byte-for-byte equivalent.
+func gsAssertPostPlayActions(t *testing.T, h *gsHarness, wantRematch, wantCode bool) {
+	t.Helper()
+	if !h.s.g.Result().Over() && !h.s.stopped {
+		t.Fatal("the availability check was given a game that can still be played")
+	}
+
+	labels := make(map[string]bool)
+	for _, e := range h.s.helpEntries() {
+		labels[e.Label] = true
+	}
+	for _, want := range []string{"h/←", "H", "g", "0", "enter", "q"} {
+		if !labels[want] {
+			t.Errorf("post-play help does not advertise %q: %v", want, labels)
+		}
+	}
+	for _, hidden := range []string{"space", "x", "1-8", "a", "?", "s", "d", "r", "p"} {
+		if labels[hidden] {
+			t.Errorf("post-play help still advertises %q: %v", hidden, labels)
+		}
+	}
+	if labels["R"] != wantRematch {
+		t.Errorf("post-play rematch help is %v, want %v: %v", labels["R"], wantRematch, labels)
+	}
+	if labels["c"] != wantCode {
+		t.Errorf("post-play correspondence help is %v, want %v: %v", labels["c"], wantCode, labels)
+	}
+
+	footer := gsStatusLine(h)
+	hasStatusKey := func(key string) bool {
+		for _, field := range strings.Fields(footer) {
+			if strings.Trim(field, ",") == key {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []string{"enter", "q"} {
+		if !hasStatusKey(want) {
+			t.Errorf("post-play status does not advertise %q: %q", want, footer)
+		}
+	}
+	if hasStatusKey("R") != wantRematch {
+		t.Errorf("post-play rematch status is %v, want %v: %q", hasStatusKey("R"), wantRematch, footer)
+	}
+	if wantCode && len(h.s.corr.pending) > 0 && !hasStatusKey("c") {
+		t.Errorf("post-play status does not advertise the final code: %q", footer)
+	}
+
+	before, err := h.s.g.Record()
+	if err != nil {
+		t.Fatalf("recording the post-play game: %v", err)
+	}
+	beforeDone := len(h.done)
+	h.goTo(game.Point{Col: 3, Row: 3})
+	h.press("H")
+	if got := h.s.board.Cursor; got != (game.Point{Col: 0, Row: 3}) {
+		t.Errorf("the advertised jump left moved to %v, want A4", got)
+	}
+	h.press("$")
+	if got := h.s.board.Cursor; got != (game.Point{Col: 5, Row: 3}) {
+		t.Errorf("the advertised edge navigation moved to %v, want F4", got)
+	}
+	_ = h.frame()
+	// Use an empty interior hole so a broken stopped-game guard would actually
+	// be able to stage a peg. F4 above is a forbidden border for Vertical.
+	found := false
+	for row := 1; row < h.s.g.Size()-1 && !found; row++ {
+		for col := 1; col < h.s.g.Size()-1; col++ {
+			p := game.Point{Col: col, Row: row}
+			if h.s.g.At(p) == game.NoPlayer {
+				h.goTo(p)
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Fatal("post-play fixture has no empty interior hole for the refusal probe")
+	}
+
+	for _, key := range []string{"space", "x", "a", "?", "s", "d", "r", "p"} {
+		h.press(key)
+		if h.s.message == "" {
+			t.Errorf("%s was refused without an explanation", key)
+		}
+		after, err := h.s.g.Record()
+		if err != nil {
+			t.Fatalf("recording the game after %s: %v", key, err)
+		}
+		if after != before {
+			t.Fatalf("%s changed the canonical record:\nbefore %+v\nafter  %+v", key, before, after)
+		}
+		if h.s.confirm != gaNone || h.s.linkMode || h.s.hint.active() {
+			t.Fatalf("%s opened a confirmation, link editor or advice panel after play stopped:\n%s", key, h.frame())
+		}
+		if len(h.done) != beforeDone {
+			t.Fatalf("%s left the screen: %d departures, want %d", key, len(h.done), beforeDone)
+		}
+	}
 }
 
 // gsRematchScreen presses the rematch key and returns the game the screen hands
@@ -1985,6 +2124,12 @@ func TestRemoteDisconnectionIsReported(t *testing.T) {
 
 	d := gsTestDeps(t)
 	h := newGSHarness(t, d, gsRemoteConfig(6, host, game.Vertical), 80, 24)
+	// A network event may arrive while a local confirmation owns the keys.
+	// Losing the peer must release that prompt as well as stop the board.
+	h.press("r")
+	if h.s.confirm != gaResign {
+		t.Fatal("the disconnect fixture did not open a local resignation prompt")
+	}
 
 	if err := guest.Close(); err != nil {
 		t.Fatalf("closing the opponent's end: %v", err)
@@ -1995,13 +2140,17 @@ func TestRemoteDisconnectionIsReported(t *testing.T) {
 	}
 	h.mustContain("disconnection notice", "resumed")
 
-	// The screen still answers keys, and refuses to play on.
-	h.goTo(game.Point{Col: 3, Row: 3})
-	h.press("space")
-	if h.s.g.Staged().PegPlaced {
-		t.Error("a peg was staged after the connection dropped")
+	if h.s.g.Result().Over() {
+		t.Fatal("a dropped connection was turned into a finished-game result")
 	}
+	gsAssertPostPlayActions(t, h, false, false)
 	gsCheckFrame(t, "after disconnection", h.frame(), h.width, h.height)
+
+	before := len(h.done)
+	h.press("enter")
+	if len(h.done) != before+1 {
+		t.Errorf("enter produced %d departures from the stopped game, want 1", len(h.done)-before)
+	}
 }
 
 // gsFakeSession is a session under the test's control, for the two cases a real
@@ -2099,6 +2248,10 @@ func TestRemoteResignationEndsTheGame(t *testing.T) {
 	session := newGSFakeSession(game.Vertical, gsRules(6))
 	d := gsTestDeps(t)
 	h := newGSHarness(t, d, gsRemoteConfig(6, session, game.Vertical), 80, 24)
+	h.press("r")
+	if h.s.confirm != gaResign {
+		t.Fatal("the remote-result fixture did not open a local resignation prompt")
+	}
 
 	session.events <- netplay.Event{Kind: netplay.EventResign}
 	h.waitFor("the resignation to end the game", func() bool { return h.s.g.Result().Over() })
@@ -2116,6 +2269,12 @@ func TestRemoteResignationEndsTheGame(t *testing.T) {
 	}
 	if want := leaderboard.RemoteName("linus"); rows[0].Opponent != want {
 		t.Errorf("opponent is %q, want %q", rows[0].Opponent, want)
+	}
+	gsAssertPostPlayActions(t, h, false, false)
+	before := len(h.done)
+	h.press("enter")
+	if len(h.done) != before+1 {
+		t.Errorf("enter produced %d departures from the finished remote game, want 1", len(h.done)-before)
 	}
 }
 
@@ -2172,12 +2331,13 @@ func TestNewGameScreenRefusesImpossibleConfigurations(t *testing.T) {
 
 // TestGameKeysDoNotShadowTheBoardKeymap keeps the two tables disjoint where it
 // matters. A confirmation intercepts the keyboard before the board keymap is
-// consulted, so its keys may repeat a board key; a play-phase key that did so
-// would silently take a board action away.
+// consulted, so its keys may repeat a board key; a key live on a board in any
+// other phase would silently take a board action away.
 func TestGameKeysDoNotShadowTheBoardKeymap(t *testing.T) {
 	km := ui.DefaultKeymap()
+	boardPhases := phasePlay | phaseFinished | phaseStopped
 	for _, b := range gameBindings {
-		if b.phases&phasePlay == 0 {
+		if b.phases&boardPhases == 0 {
 			continue
 		}
 		for _, key := range b.keys {
@@ -2299,6 +2459,35 @@ func TestTheTwoQuitKeysAreDescribedApartWhenTheyDiffer(t *testing.T) {
 	}
 	if !shellRun(t, shell, gsKeyMsg(t, "ctrl+c")) {
 		t.Error("ctrl+c did not end the program from a game opened over another screen")
+	}
+}
+
+func TestFinishedGameLeaveKeysKeepTheirShellScope(t *testing.T) {
+	for _, key := range []string{"enter", "q", "ctrl+c"} {
+		t.Run(key, func(t *testing.T) {
+			d := shellTestDeps(t)
+			screen, err := NewGameScreen(d, gsHotseat(12))
+			if err != nil {
+				t.Fatal(err)
+			}
+			shell := NewShell(d, plainScreen{})
+			shell.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+			if cmd := shell.Push(screen); cmd != nil {
+				cmd()
+			}
+			shellRun(t, shell, gsKeyMsg(t, "r"))
+			shellRun(t, shell, gsKeyMsg(t, "y"))
+			if !screen.(*gameScreen).g.Result().Over() {
+				t.Fatal("the nested game did not finish before the leave key")
+			}
+			quit := shellRun(t, shell, gsKeyMsg(t, key))
+			if quit != (key == "ctrl+c") {
+				t.Fatalf("%s whole-program quit=%v", key, quit)
+			}
+			if !quit && len(shell.stack) != 1 {
+				t.Fatalf("%s left %d screens, want the underlying menu only", key, len(shell.stack))
+			}
+		})
 	}
 }
 

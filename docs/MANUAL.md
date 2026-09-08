@@ -273,6 +273,15 @@ turn those on and off: the eight knight's-move directions around the cursor are
 numbered, and the digit keys toggle them. Nothing is final until you commit the turn,
 so a link you regret is one keystroke away from being undone.
 
+After the game ends, or a live connection drops, the board remains open for
+inspection: movement, jumps and edge keys still work, and `enter` or `q` leaves
+the game. Help no longer offers peg/link edits, draw, resign or advice. A
+finished bot or hotseat game offers `R` for a rematch with the sides swapped;
+a disconnected live game remains resumable and does not offer a rematch.
+Correspondence keeps `c` available to retrieve the final code, including after
+reopening the saved game. `ctrl+c` still ends the whole program, even when
+`enter` or `q` would return to the menu.
+
 ## Playing a bot
 
 ```

@@ -259,16 +259,46 @@ func (tb *corrTable) assertAgree() {
 func TestTwoPlayersPlayAWholeGameByCode(t *testing.T) {
 	tb := newCorrTable(t, 6)
 
-	for _, at := range gsWinScript {
+	for _, at := range gsWinScript[:len(gsWinScript)-1] {
 		tb.play(at)
+	}
+	finalCode := tb.host.move(gsWinScript[len(gsWinScript)-1])
+	if tb.guest.h.s.g.Result().Over() {
+		t.Fatal("the recipient finished before receiving the winning code")
 	}
 
 	res := tb.host.h.s.g.Result()
 	if res.Outcome != game.VerticalWins || res.Reason != game.Connection {
 		t.Fatalf("the host's game ended %v/%v, want VerticalWins by Connection", res.Outcome, res.Reason)
 	}
+	// Close and reopen the sender's final exchange before delivering it. A
+	// syntactically valid older code is not enough: this is the recipient's
+	// only path to the result.
+	gsAssertPostPlayActions(t, tb.host.h, false, true)
+	tb.host.h.press("c")
+	reopened := tb.host.codeOnScreen()
+	if reopened != finalCode {
+		t.Fatalf("reopened exchange lost the winning code: got %q, want %q", reopened, finalCode)
+	}
+	tb.host.h.press("esc")
+	tb.host.close()
+	tb.host.open()
+	tb.host.h.press("c")
+	recovered := tb.host.codeOnScreen()
+	if recovered != finalCode {
+		t.Fatalf("saved-game recovery lost the winning code: got %q, want %q", recovered, finalCode)
+	}
+	tb.guest.applyCode(recovered)
+	tb.exchange++
+	tb.assertAgree()
 	if got := tb.guest.h.s.g.Result(); got != res {
-		t.Fatalf("the guest's game ended %v, the host's %v", got, res)
+		t.Fatalf("the recipient's game ended %v after the reopened code, want %v", got, res)
+	}
+	tb.host.h.press("esc")
+	before := len(tb.host.h.done)
+	tb.host.h.press("enter")
+	if len(tb.host.h.done) != before+1 {
+		t.Errorf("enter produced %d departures after the final exchange, want 1", len(tb.host.h.done)-before)
 	}
 	for _, p := range []*corrPlayer{tb.host, tb.guest} {
 		saved := p.saved()

@@ -55,18 +55,21 @@ const (
 	gaNo
 )
 
-// gamePhase is when a game key applies. A pending confirmation takes the
-// keyboard over, so the two phases are disjoint.
+// gamePhase is the screen state a key applies in. A finished game and a game
+// that stopped without a result are deliberately separate: the former may
+// offer a rematch, while the latter is the same resumable game.
 type gamePhase uint8
 
 const (
 	phasePlay gamePhase = 1 << iota
 	phaseConfirm
+	phaseFinished
+	phaseStopped
 )
 
 // gameBinding is one game key. Dispatch, the panel's help rows and the status
-// hints all read this table, so a key can never be documented as something it
-// does not do.
+// hints all read this table and actionAvailable, so a key can never be
+// documented as something it does not do.
 type gameBinding struct {
 	action gameAction
 	keys   []string
@@ -75,30 +78,27 @@ type gameBinding struct {
 	help   string
 }
 
-// gameBindings are the keys the game adds to the board keymap. None of them may
-// collide with ui.DefaultKeymap; TestGameKeysDoNotShadowTheBoardKeymap holds
-// that line.
+// gameBindings are the keys the game adds to the board keymap. Keys used while
+// a board is active may not collide with ui.DefaultKeymap;
+// TestGameKeysDoNotShadowTheBoardKeymap holds that line.
 var gameBindings = []gameBinding{
 	{gaHint, []string{"?"}, phasePlay, "?", "hint: what to play and why"},
 	{gaSwap, []string{"s"}, phasePlay, "s", "take the swap option"},
 	{gaDraw, []string{"d"}, phasePlay, "d", "offer or accept a draw"},
 	{gaResign, []string{"r"}, phasePlay, "r", "resign"},
 	{gaLiftPeg, []string{"p"}, phasePlay, "p", "lift one of your pegs"},
-	{gaCode, []string{"c"}, phasePlay, "c", "the exchange: your code and theirs"},
+	{gaCode, []string{"c"}, phasePlay | phaseFinished | phaseStopped, "c", "the exchange: your code and theirs"},
 	// Upper case, because the obvious mnemonic is taken by resign and the two
 	// would be one slip apart on a screen where resign is refused anyway. The
 	// board already uses the shifted letters for its own second family of
 	// keys, so a capital is a key players here have met before.
-	{gaRematch, []string{"R"}, phasePlay, "R", "rematch: another game, sides swapped"},
+	{gaRematch, []string{"R"}, phaseFinished, "R", "rematch: another game, sides swapped"},
 	{gaYes, []string{"y"}, phaseConfirm, "y", "yes"},
 	{gaNo, []string{"n", "esc"}, phaseConfirm, "n", "no, carry on"},
 }
 
-func gameKeyLookup(phase gamePhase, key string) (gameBinding, bool) {
+func gameKeyLookup(key string) (gameBinding, bool) {
 	for _, b := range gameBindings {
-		if b.phases&phase == 0 {
-			continue
-		}
 		for _, k := range b.keys {
 			if k == key {
 				return b, true
@@ -106,6 +106,70 @@ func gameKeyLookup(phase gamePhase, key string) (gameBinding, bool) {
 		}
 	}
 	return gameBinding{}, false
+}
+
+// keyPhase names the mutually exclusive state whose actions are live. A result
+// wins over stopped because finish deliberately stops further play too; keeping
+// those cases distinct is what prevents a dropped connection from acquiring
+// finished-game actions such as a rematch.
+func (s *gameScreen) keyPhase() gamePhase {
+	switch {
+	case s.g.Result().Over():
+		return phaseFinished
+	case s.stopped:
+		return phaseStopped
+	case s.confirm != gaNone:
+		return phaseConfirm
+	default:
+		return phasePlay
+	}
+}
+
+// actionAvailable is the one availability rule for both action namespaces.
+// Exactly one of ga and board is non-zero. The bindings remain the source of
+// truth for keys and labels; this rule only says which of their actions apply
+// to the screen state.
+func (s *gameScreen) actionAvailable(phase gamePhase, ga gameAction, board ui.Action) bool {
+	if ga != gaNone {
+		var phases gamePhase
+		for _, b := range gameBindings {
+			if b.action == ga {
+				phases = b.phases
+				break
+			}
+		}
+		if phases&phase == 0 {
+			return false
+		}
+		switch ga {
+		case gaHint:
+			return s.cfg.Hints && s.cfg.HintFor != nil
+		case gaSwap:
+			return s.swapOffered()
+		case gaLiftPeg:
+			return s.g.Rules().PegRemoval
+		case gaCode:
+			return s.corr != nil
+		case gaRematch:
+			return s.rematchOffered()
+		default:
+			return true
+		}
+	}
+
+	switch phase {
+	case phasePlay:
+		return board != ui.ActNone
+	case phaseFinished, phaseStopped:
+		switch board {
+		case ui.ActMoveLeft, ui.ActMoveRight, ui.ActMoveUp, ui.ActMoveDown,
+			ui.ActJumpLeft, ui.ActJumpRight, ui.ActJumpUp, ui.ActJumpDown,
+			ui.ActEdgeTop, ui.ActEdgeBottom, ui.ActEdgeLeft, ui.ActEdgeRight,
+			ui.ActConfirm, ui.ActQuit:
+			return true
+		}
+	}
+	return false
 }
 
 // botMoveMsg is a move the opponent engine chose. gen names the search it
@@ -477,15 +541,37 @@ func (s *gameScreen) handleKey(m tea.KeyPressMsg) tea.Cmd {
 	if s.corr != nil && s.corr.open {
 		return s.exchangeKey(m)
 	}
-	if s.confirm != gaNone {
+	phase := s.keyPhase()
+	if phase == phaseConfirm {
 		return s.handleConfirm(key)
 	}
 	s.message = ""
-	if b, ok := gameKeyLookup(phasePlay, key); ok {
+	if b, ok := gameKeyLookup(key); ok &&
+		(b.phases&phase != 0 || b.action == gaRematch ||
+			((phase == phaseFinished || phase == phaseStopped) && b.phases&phasePlay != 0)) {
+		if !s.actionAvailable(phase, b.action, ui.ActNone) {
+			// Conditional play actions keep their specific refusal. Rematch
+			// and exchange do too, since those tell a remote player how to
+			// arrange another game and a non-correspondence player why there
+			// is no exchange. Finished/stopped mutation and advice actions
+			// stop here, before they reach a mutator or engine. Confirmation
+			// keys do not claim a board key outside confirmation.
+			if phase == phasePlay || b.action == gaRematch || b.action == gaCode {
+				return s.handleGameAction(b.action)
+			}
+			s.message = s.notice
+			return nil
+		}
 		return s.handleGameAction(b.action)
 	}
 	b, ok := s.keymap.Lookup(ctx, key)
 	if !ok {
+		return nil
+	}
+	if !s.actionAvailable(phase, gaNone, b.Action) {
+		if phase == phaseFinished || phase == phaseStopped {
+			s.message = s.notice
+		}
 		return nil
 	}
 	switch b.Action {
@@ -555,8 +641,8 @@ func (s *gameScreen) confirmKey() tea.Cmd {
 }
 
 func (s *gameScreen) handleConfirm(key string) tea.Cmd {
-	b, ok := gameKeyLookup(phaseConfirm, key)
-	if !ok {
+	b, ok := gameKeyLookup(key)
+	if !ok || !s.actionAvailable(phaseConfirm, b.action, ui.ActNone) {
 		return nil
 	}
 	pending := s.confirm
@@ -1260,6 +1346,7 @@ func (s *gameScreen) stop(reason string) {
 	s.message = ""
 	s.netNote = ""
 	s.linkMode = false
+	s.confirm = gaNone
 	s.hint.clear()
 	s.cancelBot()
 	s.botThinking = false
@@ -1275,6 +1362,7 @@ func (s *gameScreen) finish() tea.Cmd {
 	s.stopped = true
 	s.linkMode = false
 	s.handover = false
+	s.confirm = gaNone
 	s.hint.clear()
 	s.cancelBot()
 	s.botThinking = false
@@ -1762,41 +1850,29 @@ func (s *gameScreen) panelLines(arr ui.Arrangement) []string {
 	return lines
 }
 
-// helpEntries is the contextual key help: the board keys for the context in
-// force, then the game keys that apply now. Both come from their tables, so the
-// help cannot describe a key the screen does not have.
+// helpEntries is the contextual key help: the available board keys for the
+// context in force, then the available game keys. Keys and labels still come
+// from their two maps; actionAvailable supplies the shared state filter.
 func (s *gameScreen) helpEntries() []ui.HelpEntry {
-	if s.confirm != gaNone {
-		var out []ui.HelpEntry
-		for _, b := range gameBindings {
-			if b.phases&phaseConfirm != 0 {
-				out = append(out, ui.HelpEntry{Label: b.label, Help: b.help})
-			}
-		}
-		return out
-	}
+	phase := s.keyPhase()
 	ctx := ui.CtxBoard
 	if s.linkMode {
 		ctx = ui.CtxLink
 	}
-	out := s.splitQuitHelp(ctx, s.keymap.HelpEntries(ctx))
+	out := make([]ui.HelpEntry, 0, len(s.keymap)+len(gameBindings))
+	for _, b := range s.keymap {
+		if b.Contexts&ctx == 0 || !s.actionAvailable(phase, gaNone, b.Action) {
+			continue
+		}
+		help := b.Help
+		if b.Action == ui.ActConfirm && (phase == phaseFinished || phase == phaseStopped) {
+			help = "leave the game"
+		}
+		out = append(out, ui.HelpEntry{Label: b.Label, Help: help})
+	}
+	out = s.splitQuitHelp(ctx, out)
 	for _, b := range gameBindings {
-		if b.phases&phasePlay == 0 {
-			continue
-		}
-		if b.action == gaHint && (!s.cfg.Hints || s.cfg.HintFor == nil) {
-			continue
-		}
-		if b.action == gaSwap && !s.swapOffered() {
-			continue
-		}
-		if b.action == gaLiftPeg && !s.g.Rules().PegRemoval {
-			continue
-		}
-		if b.action == gaCode && s.corr == nil {
-			continue
-		}
-		if b.action == gaRematch && !s.rematchOffered() {
+		if !s.actionAvailable(phase, b.action, ui.ActNone) {
 			continue
 		}
 		out = append(out, ui.HelpEntry{Label: b.label, Help: b.help})
@@ -2106,6 +2182,7 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 	if s.message != "" {
 		return s.style(s.styles.Status, gsTruncate(s.message, arr.Width))
 	}
+	phase := s.keyPhase()
 	var parts []string
 	if arr.Panel == ui.PanelNone {
 		if s.notice != "" {
@@ -2117,21 +2194,28 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 		}
 	}
 	switch {
-	case s.confirm != gaNone:
-		parts = append(parts, "y yes · n no")
-	case s.g.Result().Over() || s.stopped:
-		if s.corr != nil && len(s.corr.pending) > 0 {
+	case phase == phaseConfirm:
+		if s.actionAvailable(phase, gaYes, ui.ActNone) && s.actionAvailable(phase, gaNo, ui.ActNone) {
+			parts = append(parts, s.gameKeyLabel(gaYes)+" yes · "+s.gameKeyLabel(gaNo)+" no")
+		}
+	case phase == phaseFinished || phase == phaseStopped:
+		if s.actionAvailable(phase, gaCode, ui.ActNone) && len(s.corr.pending) > 0 {
 			// The last code still has to reach the opponent, or their copy of
 			// the game never ends.
 			parts = append(parts, s.gameKeyLabel(gaCode)+" the code to send")
 		}
-		if s.rematchOffered() {
+		if s.actionAvailable(phase, gaRematch, ui.ActNone) {
 			// The swap is named here and not only in the help panel: it is the
 			// one part of a rematch a player would not predict, and a footer
 			// that says only "rematch" would spring it on them.
 			parts = append(parts, s.gameKeyLabel(gaRematch)+" rematch, sides swapped")
 		}
-		parts = append(parts, s.keyLabel(ui.ActQuit)+" leave")
+		if s.actionAvailable(phase, gaNone, ui.ActConfirm) {
+			parts = append(parts, s.keyLabel(ui.ActConfirm)+" leave")
+		}
+		if s.actionAvailable(phase, gaNone, ui.ActQuit) {
+			parts = append(parts, s.quitHint())
+		}
 	case s.handover:
 		parts = append(parts, s.keyLabel(ui.ActConfirm)+" ready")
 	case s.linkMode:
@@ -2139,16 +2223,16 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 	default:
 		parts = append(parts, s.keymap.HintLine(ui.CtxBoard,
 			ui.ActPlacePeg, ui.ActConfirm, ui.ActLinkMode, ui.ActAbortTurn), s.quitHint())
-		if s.corr != nil {
+		if s.actionAvailable(phase, gaCode, ui.ActNone) {
 			parts = append(parts, s.gameKeyLabel(gaCode)+" exchange")
 		}
-		if s.swapOffered() {
+		if s.actionAvailable(phase, gaSwap, ui.ActNone) {
 			parts = append(parts, s.gameKeyLabel(gaSwap)+" swap")
 		}
-		if s.cfg.Hints && s.cfg.HintFor != nil {
+		if s.actionAvailable(phase, gaHint, ui.ActNone) {
 			parts = append(parts, s.gameKeyLabel(gaHint)+" hint")
 		}
-		if s.g.Rules().PegRemoval {
+		if s.actionAvailable(phase, gaLiftPeg, ui.ActNone) {
 			parts = append(parts, s.gameKeyLabel(gaLiftPeg)+" lift peg")
 		}
 		parts = append(parts, s.gameKeyLabel(gaDraw)+" draw", s.gameKeyLabel(gaResign)+" resign")
