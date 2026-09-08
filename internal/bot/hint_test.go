@@ -689,10 +689,10 @@ func TestHintDoesNotDenyAnActualDraw(t *testing.T) {
 
 func TestPPDefenceAdviceDoesNotOfferForbiddenLinkEdits(t *testing.T) {
 	g := game.MustNew(smallRules(8))
-	playMoves(t, g, "B1", "G2", "B5", "G3", "C7", "G4", "E8", "G5", "F1")
-	if err := g.AddLink(hintPoint(t, "G2"), hintPoint(t, "E3")); err == nil {
-		t.Fatal("the PP fixture unexpectedly permits deliberate links")
+	if rs := g.Rules(); rs.DeliberateLinking || rs.LinkRemoval {
+		t.Fatal("the PP advice fixture permits deliberate link edits")
 	}
+	playMoves(t, g, "B1", "G2", "B5", "G3", "C7", "G4", "E8", "G5", "F1")
 	h, r, _, err := New(Max, 1).(*engine).explain(context.Background(), g)
 	if err != nil {
 		t.Fatal(err)
