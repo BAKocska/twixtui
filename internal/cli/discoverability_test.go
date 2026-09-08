@@ -116,6 +116,21 @@ func TestGroupCommandTakesItsSubcommandOptionally(t *testing.T) {
 	}
 }
 
+// The public identifiers are an independent oracle: deriving the expected text
+// from the same formatter used by help would accept an empty policy string.
+func TestPlayBotHelpNamesTheAnalysisPolicy(t *testing.T) {
+	dir := t.TempDir()
+	out, err := run(t, dir, "play", "bot", "--help")
+	if err != nil {
+		t.Fatalf("play bot --help: %v\n%s", err, out)
+	}
+	for _, token := range []string{"placement-only", "offered-links-kept", "no-swap"} {
+		if !strings.Contains(out, token) {
+			t.Errorf("play bot --help omits policy identifier %q:\n%s", token, out)
+		}
+	}
+}
+
 // TestMissingArgumentsAreNamedWithTheUsage is F18's third half. Cobra answers a
 // missing argument with "accepts 1 arg(s), received 0", which names neither
 // what is missing nor what to type, and usage is silenced for every other

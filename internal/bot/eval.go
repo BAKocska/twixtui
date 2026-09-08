@@ -607,12 +607,30 @@ func (a *analysis) hasNeighbourPeg(i int) bool {
 // graph this file builds: an opposing peg or an opposing link seals every walk.
 // It is a distinct value rather than a large number so that a caller cannot
 // mistake it for a peg count.
+//
+// It is a reading of this graph and not a verdict on the game. The graph
+// refuses to travel between two occupied holes with no link between them,
+// because no placement can join them — but a turn under the printed rules may
+// join them by hand, so a side reading NoChain here can still have a legal
+// winning turn. TestHintDoesNotCallAPlacementDeadlockADraw holds a committed
+// position where both sides read NoChain and one of them wins at once by
+// placing a peg and joining a pair of its own. Nothing built on this value may
+// say the game is decided; see AnalysisPolicy.
 const NoChain = -1
 
 // Terms is the decomposition of a static evaluation, in the units the hint
 // feature talks about. Every score the search produces at a leaf is a function
 // of these numbers and nothing else, which is what makes a derived explanation
 // checkable.
+//
+// The whole decomposition is placement-only, which is the restriction
+// AnalysisPolicy states: every count here reads the board as it stands and
+// assumes each side plays one peg a turn and keeps the links that peg offers.
+// None of these numbers is a bound on legal play in either direction — the
+// opponent moves in between, and a turn may also join or withdraw a link — so
+// they are a steer and not a proof. The weights below are what the tournament
+// measured and are not changed by that: what changes is only what may be
+// claimed about them.
 type Terms struct {
 	// Dist is the cost of the side's cheapest chain still open to it: the pegs
 	// it would place along that chain if nothing interfered. Zero means the

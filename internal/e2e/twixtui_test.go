@@ -9,6 +9,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/BAKocska/twixtui/internal/game"
+	"github.com/BAKocska/twixtui/internal/gamestore"
 )
 
 // These tests drive the compiled binary in a real terminal. They are the
@@ -496,5 +499,88 @@ func TestFinishedBoardHelpAndInspectionSurviveResize(t *testing.T) {
 	code, exited := tm.WaitExit(20 * time.Second)
 	if !exited || code != 0 {
 		t.Fatalf("Enter did not leave the finished game cleanly: exit=%v code=%d\n%s", exited, code, tm.Capture())
+	}
+}
+
+func TestHintScopesNoRouteClaimsOnWideAndNarrowBoards(t *testing.T) {
+	t.Parallel()
+	// This is a legal committed std position, not a manually assembled board.
+	// Both placement proxies see no route, but E2 plus the absent C3-B5 link wins.
+	const record = `twixtui-record 1
+ruleset size=6;deliberate=true;removal=true;pegremoval=false;owncross=false;swap=true
+result ongoing not-over
+position fc88569b91a76ea3
+entries 30
+moves B1; A2; C1; A3; D1; A4; E1; A5; B6; F2; C6; F3; D6; F4; E6; F5; B2 ~B2:D1; D3 ~D3:F2 ~D3:F4; C2 ~C2:E1; B4 ~B4:D3 ~A2:B4; D2 ~B1:D2; D4 ~D4:F3 ~D4:F5; B3 ~B3:C1 ~B3:D2; E4 ~E4:F2; C3 ~C3:D1 ~B1:C3; C5 ~C5:D3 ~C5:E4 ~A4:C5; C4 ~C4:D2 ~C4:D6 ~B6:C4 ~B2:C4; D5 ~D5:F4 ~B4:D5; B5 ~B5:C3 +B1:C3; E5 ~E5:F3 ~D3:E5
+digest 58bd5b8fa99be99f
+`
+	g, rec, err := game.LoadRecord(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Result().Over() {
+		t.Fatal("counterexample is already terminal")
+	}
+	proof := g.Clone()
+	if err := proof.PlayNotation("E2 +B5:C3"); err != nil {
+		t.Fatal(err)
+	}
+	if proof.Result().Winner() != game.Vertical {
+		t.Fatal("the legal deliberate-link turn no longer refutes a draw")
+	}
+
+	cfg := t.TempDir()
+	store, err := gamestore.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := gamestore.NewID()
+	if err := store.Put(gamestore.Saved{
+		ID: id, Kind: gamestore.VersusBot, Player: "Tester",
+		Side: "vertical", Opponent: "bot:max", Record: rec.Encode(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tm := sessionIn(t, cfg, "", 120, 36)
+	tm.MustWaitFor("introduction", 20*time.Second)
+	tm.SendKeys("q")
+	tm.MustWaitFor("Continue a saved game", 10*time.Second)
+	tm.SendKeys("j", "Enter")
+	tm.MustWaitFor("Tester vs max bot", 10*time.Second)
+	tm.SendKeys("Enter")
+	tm.MustWaitFor("move 31", 10*time.Second)
+	tm.SendKeys("?")
+	tm.MustWaitFor("placement-only", 15*time.Second)
+	wide := tm.WaitSettled(10 * time.Second)
+	recommendation := regexp.MustCompile(`\bE[23]\b`)
+	check := func(screen string) {
+		t.Helper()
+		if !tm.Alive() || !strings.Contains(screen, "placement-only") || !recommendation.MatchString(screen) {
+			t.Fatalf("hint lost its move or limited-policy label:\n%s", screen)
+		}
+		for _, claim := range []string{"already drawn", "no further play can win", "out for good"} {
+			if strings.Contains(screen, claim) {
+				t.Fatalf("heuristic advice makes the false terminal claim %q:\n%s", claim, screen)
+			}
+		}
+		tm.AssertFits()
+	}
+	check(wide)
+	check(tm.ResizeAndWait(40, 14, 10*time.Second))
+	check(tm.ResizeAndWait(40, 17, 10*time.Second)) // short bottom panel
+	check(tm.ResizeAndWait(80, 8, 10*time.Second))  // short side panel
+	check(tm.ResizeAndWait(20, 14, 10*time.Second)) // minimum supported width
+	check(tm.ResizeAndWait(120, 36, 10*time.Second))
+	tm.SendKeys("C-c")
+	code, exited := tm.WaitExit(20 * time.Second)
+	if !exited || code != 0 {
+		t.Fatalf("leaving analysis failed: exited=%v code=%d", exited, code)
+	}
+	saved, err := store.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Record != rec.Encode() || saved.Finished {
+		t.Fatal("asking for advice changed or finished the saved game")
 	}
 }

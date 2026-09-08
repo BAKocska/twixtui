@@ -7,6 +7,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Hints now state their placement-only search policy: offered links are kept,
+  and swaps and deliberate link edits are not searched. A missing route in the
+  evaluation is no longer presented as a drawn game or an exhaustive result;
+  winning-move claims require the rules engine's actual result.
+- The recommended coordinate and policy remain readable in short side/bottom
+  panels and at the supported 20-column minimum, including during the swap
+  offer. Interrupted defence enumeration does not publish a partial count.
+- The manual now correctly describes saved-network reconnection and the
+  CLI-only player-history view. The README, website and rules text explain
+  hint limits; the older illustrative tour is identified as historical.
+- Release archives include the full manual and its board illustration, plus
+  the README's SVG banners.
+
 ## [0.3.2] - 2026-09-08
 
 ### Fixed

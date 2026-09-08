@@ -150,14 +150,23 @@ func newPlayBotCommand(opts *options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bot",
 		Short: "Play against the built-in opponent",
-		Long: `Play against the built-in opponent.
+		Long: fmt.Sprintf(`Play against the built-in opponent.
 
 The four tiers are genuinely different opponents, not the same one slowed down:
 each is allowed a different depth, a different budget and a different amount of
 the evaluation. A tier names the effort it may spend, not the depth it reaches
 or the move it finds; max is the largest effort on offer rather than a promise
 of the best play. Before staging a move, ask for advice on your turn with ?;
-the reason is explained in the terms the search actually measured.`,
+the reason is explained in the terms the search actually measured.
+
+Both the opponent and that advice search under one restriction, and it is the
+restriction the advice names on screen: %s. The
+search places one peg a turn and keeps the links that placement offers; it
+never joins two pegs already down, takes one of its own links back or takes the
+swap, and it looks at a shortlist of holes rather than at every continuation.
+So "no route left" or "the only answer" is what that reading found, not an
+exhaustive result. Where the rules allow link edits (std and classic), an
+unsearched turn may change those routes.`, bot.PlacementOnlyPolicy()),
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rs, err := f.rules()

@@ -40,8 +40,11 @@ archives:
       - README.md
       - CHANGELOG.md
       - LICENSE
+      - docs/MANUAL.md
       - docs/rules.md
       - docs/RULES-PROVENANCE.md
+      - assets/board.svg
+      - assets/banner-*.svg
 
 checksum:
   name_template: checksums.txt

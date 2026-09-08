@@ -10,6 +10,7 @@ import (
 
 	"github.com/BAKocska/twixtui/internal/bot"
 	"github.com/BAKocska/twixtui/internal/game"
+	"github.com/BAKocska/twixtui/internal/ui"
 )
 
 // gsHintFixture is the advice the stub engine gives: short enough to fit a panel
@@ -20,6 +21,7 @@ var gsHintFixture = bot.Hint{
 	Headline:  "play D4",
 	Detail:    "it shortens your route.",
 	Highlight: []game.Point{{Col: 4, Row: 1}, {Col: 0, Row: 4}},
+	Policy:    bot.PlacementOnlyPolicy(),
 }
 
 func gsHintConfig(engine bot.Bot) GameConfig {
@@ -28,10 +30,9 @@ func gsHintConfig(engine bot.Bot) GameConfig {
 	return cfg
 }
 
-// TestHintIsShownOnTheBoardAndExplainedVerbatim covers all three halves of the
-// requirement: the move is marked on the board, the explanation is there, and it
-// is the engine's own words with nothing added.
-func TestHintIsShownOnTheBoardAndExplainedVerbatim(t *testing.T) {
+// TestHintMarksBoardAndCanBeDismissed exercises the board overlay and the
+// second keypress that dismisses advice without starting another search.
+func TestHintMarksBoardAndCanBeDismissed(t *testing.T) {
 	engine := &stubBot{tier: bot.Pro, moves: []game.Point{{Col: 5, Row: 1}}, hint: gsHintFixture}
 	h := newGSHarness(t, gsTestDeps(t), gsHintConfig(engine), 80, 24)
 
@@ -63,35 +64,6 @@ func TestHintIsShownOnTheBoardAndExplainedVerbatim(t *testing.T) {
 	if n := strings.Count(frame, "(·)"); n != len(want) {
 		t.Errorf("%d holes are marked on the board, want %d\n%s", n, len(want), frame)
 	}
-
-	// In words: the engine's own, and only the engine's own, plus a legend that
-	// says what the marks are. The engine's sentences are compared for equality
-	// where they sit, and every remaining line must be the legend, so a sentence
-	// of the interface's own invention about the position would fail here rather
-	// than hide between the engine's lines.
-	lines := h.s.hint.lines(40)
-	expect := []string{hintLabel, gsHintFixture.Headline, gsHintFixture.Detail}
-	if len(lines) < len(expect) {
-		t.Fatalf("the advice block is %q, want at least %q", lines, expect)
-	}
-	for i := range expect {
-		if lines[i] != expect[i] {
-			t.Fatalf("the advice block is %q, want it to begin %q", lines, expect)
-		}
-	}
-	// Whatever follows the engine's own text is the legend and nothing else. It
-	// is checked against the panel's own legend string rather than a copy, so
-	// rewording the legend does not need this test edited, but adding a second
-	// line of the interface's own does.
-	tail := strings.Join(lines[len(expect):], " ")
-	if tail != strings.Join(gsWrap(h.s.hint.legend(), 40), " ") {
-		t.Errorf("the advice block says %q after the engine's own text, which the engine did not write", tail)
-	}
-	if !strings.Contains(tail, gsHintFixture.Move.String()) {
-		t.Errorf("the legend does not name the recommended move: %q", tail)
-	}
-	h.mustContain("headline", gsHintFixture.Headline)
-	h.mustContain("detail", gsHintFixture.Detail)
 
 	// Asking again puts the advice away rather than starting another search.
 	h.press("?")
@@ -138,6 +110,84 @@ func TestHintSaysWhenThereIsNoAdvice(t *testing.T) {
 			t.Error("an explanation with no text in it was shown as advice")
 		}
 	})
+}
+
+// Each row hits a distinct layout or policy case; a formatter-only assertion
+// would miss Compose dropping the badge from a short panel.
+func TestHintSaysWhatItsAdviceCovers(t *testing.T) {
+	cases := []struct {
+		name                string
+		size, width, height int
+		panel               ui.PanelPlacement
+		unstated            bool
+	}{
+		{"side", 6, 100, 36, ui.PanelSide, false},
+		{"short side", 6, 80, 8, ui.PanelSide, false},
+		{"short bottom", 6, 40, 17, ui.PanelBottom, false},
+		{"minimum-width bottom", 6, 20, 12, ui.PanelBottom, false},
+		{"minimum width, two-letter coordinate", 48, 20, 14, ui.PanelNone, false},
+		{"unstated at minimum width", 48, 20, 14, ui.PanelNone, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			move := game.Point{Col: 4, Row: 1}
+			if tc.size == 48 {
+				move = game.Point{Col: 26, Row: 47}
+			}
+			fixture := bot.Hint{
+				Move:     move,
+				Headline: "A recommendation with a deliberately long explanation.",
+				Detail:   strings.Repeat("The position has several possible routes. ", 20),
+				Policy:   bot.PlacementOnlyPolicy(),
+			}
+			badge := "placement-only"
+			if tc.unstated {
+				fixture.Policy = bot.AnalysisPolicy{}
+				badge = "unstated"
+			}
+			arr := ui.Arrange(tc.width, tc.height, tc.size)
+			if arr.Panel != tc.panel {
+				t.Fatalf("fixture has panel %v, want %v", arr.Panel, tc.panel)
+			}
+			engine := &stubBot{tier: bot.Pro, hint: fixture}
+			cfg := gsVersusBot(tc.size, engine)
+			cfg.Hints, cfg.HintFor = true, engine
+			h := newGSHarness(t, gsTestDeps(t), cfg, tc.width, tc.height)
+			h.press("?")
+			h.waitFor("the hint", func() bool { return h.s.hint.shown })
+			frame := h.frame()
+			if !strings.Contains(frame, move.String()) || !strings.Contains(frame, badge) {
+				t.Fatalf("composed advice lost its coordinate or policy:\n%s", frame)
+			}
+			if tc.unstated && strings.Contains(frame, "placement-only") {
+				t.Fatalf("the UI invented a policy for an unstated result:\n%s", frame)
+			}
+		})
+	}
+}
+
+func TestShortSwapPanelKeepsTheHintPolicyVisible(t *testing.T) {
+	engine := &stubBot{
+		tier: bot.Pro, moves: []game.Point{{Col: 1, Row: 0}},
+		hint: gsHintFixture,
+	}
+	cfg := gsVersusBot(6, engine)
+	cfg.Seats[game.Vertical], cfg.Seats[game.Horizontal] = cfg.Seats[game.Horizontal], cfg.Seats[game.Vertical]
+	cfg.Hints, cfg.HintFor = true, engine
+	h := newGSHarness(t, gsTestDeps(t), cfg, 40, 17)
+	h.waitFor("the opening peg", func() bool { return h.s.g.CanSwap() })
+	if arr := ui.Arrange(40, 17, 6); arr.Panel != ui.PanelBottom || arr.PanelH != 4 {
+		t.Fatalf("fixture does not have the short bottom panel: %+v", arr)
+	}
+	h.press("?")
+	h.waitFor("the hint", func() bool { return h.s.hint.shown })
+	frame := h.frame()
+	if !strings.Contains(frame, "placement-only") || !strings.Contains(frame, gsHintFixture.Move.String()) {
+		t.Fatalf("swap notice displaced the hint's coordinate or policy:\n%s", frame)
+	}
+	if !h.s.g.CanSwap() {
+		t.Fatal("advice consumed the one-turn swap opportunity")
+	}
 }
 
 // TestAskingTwiceStartsOneSearch holds the engine inside Hint and presses the

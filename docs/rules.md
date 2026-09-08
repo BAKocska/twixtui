@@ -272,3 +272,10 @@ match the vocabulary players actually use:
 
 A hint from `twixtui`'s bot always names the concrete move and holes it's
 recommending, and where relevant explains itself using this same vocabulary.
+
+The advice is labelled **placement-only, offered-links-kept, no-swap**: the bot
+searches peg placements with their offered links kept, not deliberate link edits
+or swaps, and it considers a shortlist of continuations. Its route counts are
+heuristics; “no route” does not establish a draw or an impossible win. A hint
+claims an immediate win only after the rules engine verifies the proposed move.
+These limits describe the bot, not extra restrictions on a human player's turn.

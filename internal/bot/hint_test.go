@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,12 @@ func TestHintReasonMatchesDecomposition(t *testing.T) {
 		if len(h.Highlight) == 0 || h.Highlight[0] != h.Move {
 			t.Fatalf("highlight %v does not start at the recommended move %v", h.Highlight, h.Move)
 		}
+		// Every hint the package hands out states the restriction it was
+		// produced under. An unstated policy on a real hint would let the
+		// prose read as a claim about legal play.
+		if h.Policy != PlacementOnlyPolicy() {
+			t.Fatalf("hint for %v states policy %s, want %s", h.Move, h.Policy, PlacementOnlyPolicy())
+		}
 	}
 	if len(seen) < 3 {
 		t.Fatalf("only %d distinct reasons fired across the sample: %v", len(seen), seen)
@@ -103,9 +110,17 @@ func TestVerifyReasonRejectsWrongClaims(t *testing.T) {
 		d    deltas
 	}{
 		{
+			// Won is set, so the distance is the only thing left to reject:
+			// without it this case would be turned away for having no result
+			// behind it and would stop exercising the arithmetic.
 			name: "win claimed with the chain unfinished",
 			r:    reasonWin,
-			d:    deltas{Before: Terms{Dist: 3}, After: Terms{Dist: 2}},
+			d:    deltas{Before: Terms{Dist: 3}, After: Terms{Dist: 2}, Won: true},
+		},
+		{
+			name: "win claimed with a finished chain but no result to show for it",
+			r:    reasonWin,
+			d:    deltas{Before: Terms{Dist: 1, OppDist: 4}, After: Terms{Dist: 0, OppDist: 4}},
 		},
 		{
 			name: "only defence claimed with no threat",
@@ -159,7 +174,7 @@ func TestVerifyReasonRejectsWrongClaims(t *testing.T) {
 		{
 			name: "win claimed where no route is left at all",
 			r:    reasonWin,
-			d:    deltas{Before: Terms{Dist: 4, OppDist: 4}, After: Terms{Dist: NoChain, OppDist: 3}},
+			d:    deltas{Before: Terms{Dist: 4, OppDist: 4}, After: Terms{Dist: NoChain, OppDist: 3}, Won: true},
 		},
 		{
 			name: "opponent claimed shut out while they still have a route",
@@ -214,6 +229,7 @@ func TestChooseReasonAlwaysVerifies(t *testing.T) {
 			},
 			Threatened: src.IntN(2) == 0,
 			Defences:   src.IntN(4),
+			Won:        src.IntN(2) == 0,
 		}
 		r := chooseReason(d)
 		if err := verifyReason(r, d); err != nil {
@@ -246,6 +262,18 @@ func TestHintOnAWinCallsItAWin(t *testing.T) {
 	}
 	if !strings.Contains(h.Detail, "chain") {
 		t.Errorf("detail %q does not describe the completed chain", h.Detail)
+	}
+	if !d.Won {
+		t.Error("the win was claimed with no result from replaying the move behind it")
+	}
+	// The result the claim rests on, read independently of the deltas.
+	next := g.Clone()
+	res, err := next.PlayPeg(h.Move)
+	if err != nil {
+		t.Fatalf("replaying %v: %v", h.Move, err)
+	}
+	if res.Winner() != g.Turn() {
+		t.Errorf("the recommended move ends the game as %+v, which is not a win for %s", res, g.Turn())
 	}
 	t.Logf("headline: %s", h.Headline)
 	t.Logf("detail:   %s", h.Detail)
@@ -342,17 +370,6 @@ func TestHintHonoursDeadline(t *testing.T) {
 	}
 }
 
-func TestPegsPhraseNeverPrintsTheSentinel(t *testing.T) {
-	if got := pegsPhrase(NoChain); got != "no route at all" {
-		t.Errorf("pegsPhrase(NoChain) = %q", got)
-	}
-	for _, d := range []int{NoChain, 0, 1, 2, 17} {
-		if got := pegsPhrase(d); got == "" {
-			t.Errorf("pegsPhrase(%d) is empty", d)
-		}
-	}
-}
-
 // TestHintOnASealedPositionSaysSo is a regression test for a real defect: in a
 // position where one side has been walled out of the board altogether, the
 // "no route" marker reached the player as a peg count, so the hint offered
@@ -394,9 +411,6 @@ func TestHintOnASealedPositionSaysSo(t *testing.T) {
 				t.Errorf("hint prose %q contains %q, which is a marker and not a peg count", text, bad)
 			}
 		}
-	}
-	if !strings.Contains(h.Detail, "seal") {
-		t.Errorf("detail %q does not say the routes are sealed", h.Detail)
 	}
 	t.Logf("headline: %s", h.Headline)
 	t.Logf("detail:   %s", h.Detail)
@@ -461,7 +475,235 @@ func TestHintDoesNotCountAnInterruptedDefencePrefix(t *testing.T) {
 	if r == reasonOnlyDefence || d.Defences == 1 {
 		t.Fatalf("counted incomplete prefix as exact: actual=%d reported=%d reason=%v hint=%+v", defended, d.Defences, r, h)
 	}
-	if strings.Contains(h.Detail, "One of") || strings.Contains(h.Detail, "only") {
-		t.Fatalf("interrupted enumeration claimed an exact count: %s", h.Detail)
+	if d.Defences != -1 {
+		t.Fatalf("the interrupted enumeration reported %d rather than the marker", d.Defences)
+	}
+	if r != reasonDefence {
+		t.Fatalf("fixture never exercised the defence-count prose: reason=%v", r)
+	}
+	// Recognise counts independently of defencePhrase, including the -1
+	// interrupted marker. Route lengths in pegs are not defence counts.
+	count := regexp.MustCompile(`(?i)(?:\b(?:one|only|single)|-?\d+)\s+(?:peg placement|repl(?:y|ies)|answer|defen[cs]e)`)
+	if count.MatchString(h.Detail) {
+		t.Fatalf("interrupted enumeration emitted a defence count: %q", h.Detail)
+	}
+	known := d
+	known.Defences = defended
+	_, counted := describe(reasonDefence, known, g.Turn(), h.Move)
+	if !count.MatchString(counted) {
+		t.Fatalf("positive control did not expose the completed enumeration's count: %q", counted)
+	}
+}
+
+// hintPoint reads a hole by the name a player types, so a fixture and the moves
+// it is checked against read the way the board does.
+func hintPoint(t testing.TB, name string) game.Point {
+	t.Helper()
+	p, err := game.ParsePoint(name)
+	if err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	return p
+}
+
+// rm26DeadlockFixture builds a committed position both sides read as having no
+// route left, in a game that is not over and that Vertical wins in one turn.
+//
+// Every peg is placed and then stripped of the links that placement offered,
+// and two links are put back by hand on the last vertical turn. Both halves are
+// ordinary play: under the printed rules the mover chooses which of the offered
+// links to keep, and may join two of their own pegs already on the board. So
+// this is a position a game arrives at by being played rather than one edited
+// into existence afterwards, and what it leaves behind is exactly what the
+// evaluation's sweep refuses to travel along — own pegs a knight's move apart
+// with no link between them.
+//
+// The move list is fixed rather than searched for: the fixture exists for one
+// specific pair of readings, NoChain for both sides at once, and a fixture that
+// went looking for it would be a different test every run.
+func rm26DeadlockFixture(t testing.TB) *game.Game {
+	t.Helper()
+	rs := game.Std
+	rs.Size = 6
+	g := game.MustNew(rs)
+	declineEveryLink := func(name string) {
+		t.Helper()
+		p := hintPoint(t, name)
+		if err := g.PlacePeg(p); err != nil {
+			t.Fatalf("place %s: %v", name, err)
+		}
+		for d := range game.Dir(game.NumDirs) {
+			if g.LinkMask(p)&(1<<d) == 0 {
+				continue
+			}
+			if err := g.RemoveLink(p, p.Add(d)); err != nil {
+				t.Fatalf("decline the %s link at %s: %v", d, name, err)
+			}
+		}
+	}
+	commit := func(who string, turn int) {
+		t.Helper()
+		res, err := g.CommitTurn()
+		if err != nil {
+			t.Fatalf("%s turn %d: %v", who, turn, err)
+		}
+		if res.Over() {
+			t.Fatalf("%s turn %d ended the game as %+v", who, turn, res)
+		}
+	}
+	vertical := []string{"B1", "C1", "D1", "E1", "B6", "C6", "D6", "E6", "B2", "C2", "D2", "B3", "C3", "C4", "B5"}
+	horizontal := []string{"A2", "A3", "A4", "A5", "F2", "F3", "F4", "F5", "D3", "B4", "D4", "E4", "C5", "D5", "E5"}
+	for i := range vertical {
+		declineEveryLink(vertical[i])
+		if i == len(vertical)-1 {
+			for _, pair := range [][2]string{{"B1", "C3"}, {"B5", "D6"}} {
+				if err := g.AddLink(hintPoint(t, pair[0]), hintPoint(t, pair[1])); err != nil {
+					t.Fatalf("join %s and %s: %v", pair[0], pair[1], err)
+				}
+			}
+		}
+		commit("vertical", i)
+		declineEveryLink(horizontal[i])
+		commit("horizontal", i)
+	}
+	return g
+}
+
+// TestHintDoesNotCallAPlacementDeadlockADraw is RM-26's counterexample, and the
+// defect it stands on was released: on this position the hint read "the game is
+// already drawn ... no further play can win it", while Vertical wins from it in
+// one legal turn.
+//
+// Both sides read NoChain because the evaluation counts placements and refuses
+// to travel between two occupied holes with no link between them. That refusal
+// is right about placements and says nothing about the game: Vertical plays the
+// compulsory peg and joins two pegs already down, and the game ends there. The
+// test holds three things together — that the position is one Hint accepts and
+// leaves alone, that the winning turn is legal, and that the prose therefore
+// claims nothing unconditional — because any one of them alone would let the
+// misleading wording back in.
+func TestHintDoesNotCallAPlacementDeadlockADraw(t *testing.T) {
+	g := rm26DeadlockFixture(t)
+	if res := g.Result(); res.Over() {
+		t.Fatalf("the fixture is a finished game: %+v", res)
+	}
+	if g.Turn() != game.Vertical {
+		t.Fatalf("expected vertical to move, got %s", g.Turn())
+	}
+	var a analysis
+	a.load(g)
+	mine, theirs := a.terms(game.Vertical), a.terms(game.Horizontal)
+	if mine.Dist != NoChain || theirs.Dist != NoChain {
+		t.Fatalf("the fixture no longer reads as a deadlock: vertical %+v, horizontal %+v", mine, theirs)
+	}
+
+	// A committed position with links chosen by hand is a position to advise
+	// on, not one to refuse: the refusal is for a turn still in progress.
+	before, err := g.Record()
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	e := New(Max, 1).(*engine)
+	ctx := context.Background()
+	if _, err := e.Hint(ctx, g); err != nil {
+		t.Fatalf("Hint refused a committed hand-linked position: %v", err)
+	}
+	h, r, d, err := e.explain(ctx, g)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	after, err := g.Record()
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if after != before {
+		t.Fatalf("asking for advice changed the game record:\n%s\n%s", before.Encode(), after.Encode())
+	}
+	if r != reasonDeadlock {
+		t.Fatalf("reason = %v, want deadlock: the fixture no longer exercises the branch (deltas %+v)", r, d)
+	}
+
+	// The counterexample: one legal turn, the compulsory peg plus a link
+	// between two pegs already down, wins for the side that reads NoChain.
+	proof := g.Clone()
+	if err := proof.PlacePeg(hintPoint(t, "E2")); err != nil {
+		t.Fatalf("place E2: %v", err)
+	}
+	if err := proof.AddLink(hintPoint(t, "C3"), hintPoint(t, "B5")); err != nil {
+		t.Fatalf("join C3 and B5: %v", err)
+	}
+	res, err := proof.CommitTurn()
+	if err != nil {
+		t.Fatalf("commit the winning turn: %v", err)
+	}
+	if res.Winner() != game.Vertical {
+		t.Fatalf("the winning turn no longer wins: %+v", res)
+	}
+
+	// So no unconditional verdict may appear in the prose. A policy badge
+	// elsewhere on the screen cannot rescue a headline that says the game is
+	// over.
+	for _, text := range []string{h.Headline, h.Detail} {
+		low := strings.ToLower(text)
+		for _, claim := range []string{"already drawn", "the game is drawn", "no further play", "for good", "cannot win", "impossible"} {
+			if strings.Contains(low, claim) {
+				t.Errorf("prose %q claims %q of a position that is won in one legal turn", text, claim)
+			}
+		}
+	}
+	if !strings.Contains(h.Headline, "placement-only") {
+		t.Errorf("the deadlock headline does not scope its no-route claim: %q", h.Headline)
+	}
+	if h.Policy != PlacementOnlyPolicy() {
+		t.Errorf("hint states policy %s, want %s", h.Policy, PlacementOnlyPolicy())
+	}
+	t.Logf("headline: %s", h.Headline)
+	t.Logf("detail:   %s", h.Detail)
+	t.Logf("record:   %s", before.Encode())
+}
+
+func TestHintDoesNotDenyAnActualDraw(t *testing.T) {
+	g := rm26DeadlockFixture(t)
+	if _, err := g.PlayPeg(hintPoint(t, "E2")); err != nil {
+		t.Fatal(err)
+	}
+	h, r, _, err := New(Max, 1).(*engine).explain(context.Background(), g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r != reasonDeadlock {
+		t.Fatalf("fixture missed the no-route explanation: %v", r)
+	}
+	next := g.Clone()
+	result, err := next.PlayPeg(h.Move)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != game.Draw || result.Reason != game.NoMovesLeft {
+		t.Fatalf("the recommended last peg did not really draw: %+v", result)
+	}
+	if strings.Contains(h.Detail, "not a drawn game") {
+		t.Fatalf("advice denies the actual result of its recommended move: %q", h.Detail)
+	}
+}
+
+func TestPPDefenceAdviceDoesNotOfferForbiddenLinkEdits(t *testing.T) {
+	g := game.MustNew(smallRules(8))
+	playMoves(t, g, "B1", "G2", "B5", "G3", "C7", "G4", "E8", "G5", "F1")
+	if err := g.AddLink(hintPoint(t, "G2"), hintPoint(t, "E3")); err == nil {
+		t.Fatal("the PP fixture unexpectedly permits deliberate links")
+	}
+	h, r, _, err := New(Max, 1).(*engine).explain(context.Background(), g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r != reasonOnlyDefence {
+		t.Fatalf("fixture missed the only-defence explanation: %v", r)
+	}
+	if !strings.Contains(h.Headline, "placement-only") {
+		t.Fatalf("defence count is not scoped to placements: %q", h.Headline)
+	}
+	if strings.Contains(h.Detail, "A turn may edit a link") {
+		t.Fatalf("PP advice offers an action its rules forbid: %q", h.Detail)
 	}
 }

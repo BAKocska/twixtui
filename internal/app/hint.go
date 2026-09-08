@@ -2,16 +2,19 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/BAKocska/twixtui/internal/bot"
 	"github.com/BAKocska/twixtui/internal/game"
 )
 
 // Fixed text of the advice block. These four strings, plus the engine's own
-// Headline and Detail, are everything the interface ever says about a hint.
+// Headline, Detail and policy summary, are everything the interface ever says
+// about a hint.
 const (
 	hintLabel     = "hint"
 	hintSearching = "asking the engine"
@@ -130,14 +133,20 @@ func (h hintPanel) highlights() []game.Point {
 // lines renders the advice block for a panel of the given width.
 //
 // The whole of the position-specific text is Headline and Detail as the engine
-// wrote them, wrapped on spaces. gameScreen has no other route to the panel for
-// hint text, so a claim the search did not make cannot appear here.
+// wrote them, wrapped on spaces, followed by the engine's own account of what
+// its reading covers. gameScreen has no other route to the panel for hint text,
+// so a claim the search did not make cannot appear here.
 //
 // The legend is the one line this panel writes itself, and it deliberately says
 // nothing about the position: the recommended move and the holes the explanation
 // refers to are marked with the same glyph, so without it a player cannot tell
 // which mark is the move, or what the others are for. It names the move only by
 // the coordinate the engine returned.
+//
+// The policy line is the engine's, not the panel's: it is bot.AnalysisPolicy's
+// own summary of the restrictions the advice was produced under, and it is
+// shown whenever advice is, including when the engine stated no policy at all —
+// silence there would let a stub's advice read as a full reading of the rules.
 func (h hintPanel) lines(width int) []string {
 	if !h.active() {
 		return nil
@@ -149,11 +158,16 @@ func (h hintPanel) lines(width int) []string {
 	case h.unavailable != "":
 		out = append(out, gsWrap(h.unavailable, width)...)
 	default:
+		out[0] = hintLabel + " " + h.scopeLine()
+		if ansi.StringWidth(out[0]) > width {
+			out[0] = h.scopeLine()
+		}
 		out = append(out, gsWrap(h.hint.Headline, width)...)
 		if strings.TrimSpace(h.hint.Detail) != "" {
 			out = append(out, gsWrap(h.hint.Detail, width)...)
 		}
 		out = append(out, gsWrap(h.legend(), width)...)
+		out = append(out, gsWrap(h.hint.Policy.Summary(), width)...)
 	}
 	return out
 }
@@ -174,15 +188,27 @@ func (h hintPanel) legend() string {
 	return "marked on the board: " + move + " is the move, the rest is what the counts above measure"
 }
 
-// statusText is the one-line form for a terminal too narrow for a panel.
-func (h hintPanel) statusText() string {
+// scopeLine fits a four-character coordinate and the known policy in 19 cells.
+// It is kept whole when the terminal has no room for the explanation.
+func (h hintPanel) scopeLine() string {
+	return fmt.Sprintf("%s %s", h.hint.Move, h.hint.Policy.Label())
+}
+
+// statusText includes the explanation only if it fits in full. An ellipsis at
+// the badge boundary would make Compose's whole-word clipping drop the policy.
+func (h hintPanel) statusText(width int) string {
 	switch {
 	case h.running:
 		return hintLabel + ": " + hintSearching
 	case h.unavailable != "":
 		return h.unavailable
 	case h.shown:
-		return hintLabel + ": " + h.hint.Headline
+		scope := h.scopeLine()
+		prefixWidth := len(hintLabel) + 1 + ansi.StringWidth(scope) + 3 // " — "
+		if prefixWidth+ansi.StringWidth(h.hint.Headline) <= width {
+			return hintLabel + " " + scope + " — " + h.hint.Headline
+		}
+		return scope
 	}
 	return ""
 }

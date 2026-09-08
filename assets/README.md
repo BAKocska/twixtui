@@ -131,8 +131,12 @@ dark one to stand in for it.
 
 ## Introductory video
 
-twixtui-demo.mp4 is the 68.3-second animated feature tour used by the README.
-It is an authored recreation of the terminal screens, not a screen recording.
+twixtui-demo.mp4 is the 68.3-second historical illustrative tour linked from
+the README and website. It recreates an earlier three-tier interface, before
+`max` and the placement-only hint labels; it is not a recording of the current
+release. Its storyboard is retained with the movie, not presented as current
+UI documentation. Use docs/MANUAL.md for today's controls and search policy.
+
 The sequence and artwork come from the supplied design. The relay camera
 shows each command at close range before the two-window overview, and its
 example uses a complete sample pairing code. The hint panel is labelled
@@ -143,7 +147,8 @@ is at the front of the file for progressive playback. demo-poster.png is the
 menu scene at ten seconds. Both are documentation assets; the game binary
 embeds only cover.png.
 
-The editable source and export command are in demo/. From the repository root:
+The historical storyboard and export command are in demo/. Exporting reproduces
+that earlier tour, not the current release. From the repository root:
 
 ```sh
 bun install --cwd assets/demo --frozen-lockfile --ignore-scripts

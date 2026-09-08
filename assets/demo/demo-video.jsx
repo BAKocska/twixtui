@@ -1,8 +1,7 @@
-// twixtui feature demo — an animated tour of the program's screens, drawn
-// here rather than captured from a terminal: every frame is a recreation of
-// what the repo itself renders (internal/app/menu.go, gamescreen.go, hint.go,
-// internal/ui/board.go, internal/cover/homage.go + wordmark.go,
-// internal/theme/theme.go), and the copy is quoted from those files.
+// Historical twixtui storyboard: the earlier three-tier interface before max
+// and placement-only hint labels. Kept with the published illustrative movie,
+// not a statement of the current UI. See docs/MANUAL.md for current behavior.
+// Frames are authored recreations, not terminal captures.
 const { useComposition, CompositionStage, Shot, Captions, Easing, animate, clamp } = window;
 
 // ---- theme palettes (internal/theme/theme.go, hex for hex) ----

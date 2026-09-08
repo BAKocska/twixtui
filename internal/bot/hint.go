@@ -15,6 +15,14 @@ import (
 // input the prose has. Each template states a numeric claim about that
 // difference; verifyReason re-checks the claim before the prose is handed out,
 // so a template can never assert a cause the search did not measure.
+//
+// What the prose may claim is bounded by what the search is allowed to do.
+// Every hint carries PlacementOnlyPolicy, and the wording here is scoped to it:
+// "no route left" means no route the sweep in eval.go can find for a side that
+// places pegs and keeps the links they offer, and never that the position is
+// proved lost or drawn under the printed rules, which let a turn join or
+// withdraw a link as well. A claim that the game is over comes from a
+// game.Result read back out of replaying the move, never from the evaluation.
 
 // reason names why a move scored best.
 type reason int
@@ -54,11 +62,18 @@ type deltas struct {
 	// Threatened records that the opponent was one peg from a finished chain
 	// before the move.
 	Threatened bool
-	// Defences counts legal replies, or -1 when enumeration was interrupted.
+	// Defences counts the peg placements that answer the threat, or -1 when
+	// enumeration was interrupted. Link edits are not in it: the search does
+	// not try them, so this is never a count of every legal answer.
 	Defences int
 	// Close records that the second-best move scored within a peg of the best,
 	// which softens the wording: the move is strong, not the only way.
 	Close bool
+	// Won records that replaying the move ended the game in the asking side's
+	// favour. It is read from the game the move produces rather than from the
+	// evaluation: a Dist of zero is the placement sweep's own reading of the
+	// board, and a reading cannot license the claim that the game is over.
+	Won bool
 	// Partner and Carriers describe a setup the move creates: an own peg the
 	// move now has two independent ways of linking to, and the holes those
 	// links would run through.
@@ -91,7 +106,7 @@ func (d deltas) measured() bool {
 // chooseReason picks the reason by strict priority over the measured deltas.
 func chooseReason(d deltas) reason {
 	switch {
-	case d.After.Dist == 0:
+	case d.After.Dist == 0 && d.Won:
 		return reasonWin
 	case d.After.Dist == NoChain && d.After.OppDist == NoChain:
 		return reasonDeadlock
@@ -125,6 +140,9 @@ func chooseReason(d deltas) reason {
 func verifyReason(r reason, d deltas) error {
 	switch r {
 	case reasonWin:
+		if !d.Won {
+			return errors.New("claimed the game is won without a result from replaying the move")
+		}
 		if d.After.Dist != 0 {
 			return fmt.Errorf("claimed a completed chain but the distance afterwards is %s", pegsPhrase(d.After.Dist))
 		}
@@ -246,6 +264,26 @@ func pegsPhrase(dist int) string {
 	return fmt.Sprintf("%d pegs", dist)
 }
 
+// defencePhrase renders how many placements answered a threat.
+//
+// An interrupted enumeration renders as nothing at all: what came back is a
+// prefix of the list and not a count, and "3 answer it" out of a list that was
+// cut short would be a number the search never established. An empty list
+// renders as nothing for the same reason from the other end — a threat with no
+// answer at all, alongside a move recommended for answering it, is a count that
+// describes some other position. What it does print is a count of peg
+// placements, because peg placements are all the search enumerates: a turn may
+// also add or withdraw a link, and that is not in it.
+func defencePhrase(defences int) string {
+	switch {
+	case defences <= 0:
+		return ""
+	case defences == 1:
+		return " One peg placement answers the threat."
+	}
+	return fmt.Sprintf(" Of the peg placements it counted, %d answer the threat.", defences)
+}
+
 // groundPhrase renders a reach balance, which Terms carries in parts per
 // thousand, as a percentage of the board with the side it favours named.
 func groundPhrase(ground int, me game.Player) string {
@@ -278,28 +316,25 @@ func describe(r reason, d deltas, me game.Player, move game.Point) (headline, de
 		return lead + " and the game is yours.",
 			fmt.Sprintf("It closes the last gap in your chain, joining %s.", borderNames(me))
 	case reasonDeadlock:
-		return lead + "; the game is already drawn.",
-			fmt.Sprintf("Neither side has a route left — the links on the board seal both %s and %s — so no further play can win it.",
+		return lead + "; the placement-only evaluation finds neither route.",
+			fmt.Sprintf("It finds no route joining %s or %s. That reading does not establish a draw; where the rules permit link edits, those unsearched turns may change the routes.",
 				borderNames(me), borderNames(opp))
 	case reasonSeal:
-		return lead + " to shut " + opp.String() + " out for good.",
-			fmt.Sprintf("Afterwards no chain of theirs can reach from edge to edge at all, while yours still needs %s.",
+		return lead + " to leave " + opp.String() + " with no route in this evaluation.",
+			fmt.Sprintf("The placement-only evaluation finds no route for them, while yours costs %s. Where the rules permit link edits, an unsearched turn may change that.",
 				pegsPhrase(d.After.Dist))
 	case reasonSealedOut:
-		return lead + " and hope for a mistake.",
-			fmt.Sprintf("%s's links already seal every route of yours, so no chain of yours can reach %s; they need %s to finish. This is the most testing reply left.",
-				titled(opp), borderNames(me), pegsPhrase(d.After.OppDist))
+		return lead + "; the placement-only evaluation finds no route for you.",
+			fmt.Sprintf("It finds no route of yours joining %s; %s's route costs %s. Where the rules permit link edits, an unsearched turn may change that.",
+				borderNames(me), opp.String(), pegsPhrase(d.After.OppDist))
 	case reasonOnlyDefence:
-		return "Play " + move.String() + ": it is the only defence.",
-			fmt.Sprintf("%s is one peg from joining %s, and this is the single reply that stops it. Afterwards they need %s.",
+		return "Play " + move.String() + ": it is the only placement-only defence.",
+			fmt.Sprintf("%s is one peg from joining %s; this is the single defence among placements that keep their offered links, leaving their route at %s. Link edits, where permitted, and swaps were not searched.",
 				titled(opp), borderNames(opp), pegsPhrase(d.After.OppDist))
 	case reasonDefence:
-		detail := fmt.Sprintf("%s was one peg from joining %s; this pushes them back to %s.",
-			titled(opp), borderNames(opp), pegsPhrase(d.After.OppDist))
-		if d.Defences >= 0 {
-			detail += fmt.Sprintf(" One of %d replies does that.", d.Defences)
-		}
-		return lead + " to stop " + opp.String() + " finishing.", detail
+		return lead + " to stop " + opp.String() + " finishing.",
+			fmt.Sprintf("%s was one peg from joining %s; this pushes them back to %s.%s",
+				titled(opp), borderNames(opp), pegsPhrase(d.After.OppDist), defencePhrase(d.Defences))
 	case reasonBlock:
 		return lead + " to cut " + opp.String() + "'s cheapest route.",
 			fmt.Sprintf("It lengthens their remaining chain from %s to %s, while yours still needs %s.",
@@ -568,7 +603,11 @@ func (e *engine) explain(ctx context.Context, g *game.Game) (Hint, reason, delta
 	me := g.Turn()
 
 	next := g.Clone()
-	if _, err := next.PlayPeg(res.best); err != nil {
+	// The result of the move is read back off the game the move produces. It is
+	// the only thing that may put a finished game in the prose: the evaluation
+	// answers a question about walks on the board and cannot end a game.
+	outcome, err := next.PlayPeg(res.best)
+	if err != nil {
 		return Hint{}, reasonBalanced, deltas{}, fmt.Errorf("bot: hint move %v is not playable: %w", res.best, err)
 	}
 	// The decomposition after the move has to be read the same way the search
@@ -584,6 +623,7 @@ func (e *engine) explain(ctx context.Context, g *game.Game) (Hint, reason, delta
 		Threatened: res.threatened,
 		Defences:   res.defences,
 		Close:      len(res.moves) > 1 && res.moves[0].exact && res.moves[1].exact && res.moves[0].score-res.moves[1].score < distWeight,
+		Won:        outcome.Winner() == me,
 	}
 	if partner, carriers, gap, ok := findSetup(&after, me, res.best); ok {
 		d.Partner, d.Carriers, d.Gap, d.HasSetup = partner, carriers, gap, true
@@ -602,5 +642,6 @@ func (e *engine) explain(ctx context.Context, g *game.Game) (Hint, reason, delta
 		Headline:  headline,
 		Detail:    detail,
 		Highlight: highlightFor(r, d, res.an, &after, me, res.best),
+		Policy:    PlacementOnlyPolicy(),
 	}, r, d, nil
 }

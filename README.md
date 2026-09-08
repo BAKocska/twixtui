@@ -17,8 +17,9 @@ your shell.
 
 https://github.com/user-attachments/assets/79156074-db7b-4ff5-8eea-bd15964c176f
 
-An animated tour of the menu, the bot tiers, a 24×24 board, hints, remote play,
-standings and four colour schemes. About a minute, with illustrative screens.
+An earlier illustrated tour of the menu, a 24×24 board, hints, remote play,
+standings and four colour schemes. About a minute; not a recording of the current
+release. The manual describes today's four effort tiers and placement-only advice.
 
 <p align="center">
   <a href="docs/MANUAL.md"><img src="https://img.shields.io/badge/FULL%20DOCUMENTATION-docs%2FMANUAL.md-561d25?style=for-the-badge" alt="Full documentation: docs/MANUAL.md"></a>
@@ -72,7 +73,7 @@ twixtui help                                          # every command, with what
 
 | | |
 | --- | --- |
-| [Play a bot](docs/MANUAL.md#playing-a-bot) | Four measured tiers: `beginner`, `intermediate`, a clock-bounded `pro`, and `max`, the largest effort on offer. Hints run `max`'s search under a two-second guard. |
+| [Play a bot](docs/MANUAL.md#playing-a-bot) | Four effort tiers: `beginner`, `intermediate`, a clock-bounded `pro`, and `max`, the largest effort on offer. Hints use `max`'s placement-only search under a two-second guard: advice, not a proof of best play. |
 | [Hotseat](docs/MANUAL.md#hotseat) | Two players, one terminal, alternating turns. |
 | [Remote play](docs/MANUAL.md#remote-play) | Direct, through a relay you or your opponent runs, or by correspondence with no live connection at all. |
 | [Learn it](docs/MANUAL.md#the-tutorial) | Seven lessons taught by playing them, and a five-step introduction on [first run](docs/MANUAL.md#the-first-run). |

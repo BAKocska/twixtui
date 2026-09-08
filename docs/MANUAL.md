@@ -119,10 +119,10 @@ somebody does the thing rather than by the mechanism behind it:
 | Entry | What is behind it |
 | --- | --- |
 | `Play` | A new game. Who is on the other side is the first question — the computer, somebody at this keyboard, or somebody on another machine — and the questions after it depend on the answer. Escape walks back through them. |
-| `Continue a saved game` | The games still waiting for a move. A network game that has lost its connection, and a game imported from elsewhere, are listed but cannot be played on, and the row says why. |
+| `Continue a saved game` | Games still waiting for a move. A disconnected network game offers reconnection setup and keeps its saved identity. Imported games are listed for reference but cannot be played on; the row explains why. |
 | `Watch a finished game` | Step through a finished game, including one imported from another machine. |
 | `Learn to play` | The tutorial, the written rules, and the introduction again. |
-| `Leaderboard` | The standings, and one player's history. |
+| `Leaderboard` | The standings. For one player's history, use `twixtui leaderboard show --player NAME` on the command line. |
 | `Settings` | Colours, the default ruleset, the default board size, whether hints are offered, and which profile is playing. Set once and forgotten; kept per machine, as the colour scheme is. |
 | `Quit` | Leave. `q` does the same from the front screen. |
 
@@ -471,8 +471,22 @@ has, whichever tier you are playing, and gives you the move it would play, a lin
 why, and the holes that reason is about, marked on the board. It keeps a two-second
 guard rather than the ten seconds `max` may take in a game, so it can finish at a
 shallower depth. A hint is refused while a turn has uncommitted edits: commit or
-abort it first. Interrupted analysis never presents a partial list of replies
-as an exact count. Hints are available by default; `--hints=false` disables them.
+abort it first. Interrupted analysis never presents a partial count of defensive
+placements as exact. Hints are available by default; `--hints=false` disables them.
+
+Every hint states its policy: **placement-only, offered-links-kept, no-swap**.
+The search places one peg per turn, keeps every offered link, never adds or
+removes links by hand, and never swaps. It also searches a shortlist rather than
+every continuation. The route lengths are heuristic readings, not bounds on
+how many turns a legal game must take; “no route” does not establish a draw or
+an impossible win. Under `std` and `classic`, a legal link edit may change a
+route the evaluator cannot find. `pp` does not permit those edits.
+
+The move and `placement-only` badge remain visible on short panels and narrow
+terminals, with the full explanation shown where there is room. A winning-move
+claim is checked by playing that move on a copy and reading the engine's actual
+result; a zero route estimate alone is not enough. Committed games with chosen
+links remain valid hint inputs and are not changed by asking for advice.
 
 ### Reproducing bot experiments
 
@@ -694,6 +708,7 @@ replayed, and it does not reach the standings.
 
 ```
 twixtui leaderboard show --limit 20      # standings, best first
+twixtui leaderboard show --player ada    # one participant's game history
 twixtui leaderboard reset --yes          # clear ratings/results, not saved games
 ```
 

@@ -109,6 +109,63 @@ func TierSummary(name string) string {
 	return tierSummaries[t]
 }
 
+// AnalysisPolicy identifies the move restrictions and heuristic scope of advice.
+// The zero value is unstated, not unrestricted. Hint carries the policy so its
+// consumers can distinguish a placement-only recommendation from full-rule
+// analysis. Exact terminal claims additionally require an engine-verified result.
+type AnalysisPolicy struct {
+	// kind is unexported so that the only stated policy a caller can hold is
+	// one this package handed out. The policy is a claim about how the search
+	// works, and nothing outside the search is in a position to make it.
+	kind policyKind
+}
+
+// policyKind is which of the two cases an AnalysisPolicy is in.
+type policyKind uint8
+
+const (
+	policyUnstated policyKind = iota
+	policyPlacementOnly
+)
+
+// PlacementOnlyPolicy is the policy every search in this package runs under: it
+// places one peg a turn and keeps every link that placement offers, and it
+// looks at a shortlist of holes rather than at every legal continuation.
+//
+// A turn under the printed rules may do more than that — join two pegs already
+// down, take one of the mover's own links back, take the swap — and none of it
+// is searched. So what comes back is a steer under those restrictions and never
+// a statement about legal play: a side this evaluation reads as having no route
+// left can still have a legal winning turn, because a link it refuses to travel
+// along is a link a player may add by hand.
+func PlacementOnlyPolicy() AnalysisPolicy { return AnalysisPolicy{kind: policyPlacementOnly} }
+
+// Label is the badge for a status line with no room for a sentence.
+func (p AnalysisPolicy) Label() string {
+	if p.kind == policyPlacementOnly {
+		return "placement-only"
+	}
+	return "unstated"
+}
+
+// String is the compact form, for a log line or a machine-readable field.
+func (p AnalysisPolicy) String() string {
+	if p.kind == policyPlacementOnly {
+		return "placement-only, offered-links-kept, no-swap"
+	}
+	return "unstated"
+}
+
+// Summary is the sentence a reader gets. It names the badge inside itself, so a
+// surface with room for one line of policy and no more still shows which policy
+// it is.
+func (p AnalysisPolicy) Summary() string {
+	if p.kind == policyPlacementOnly {
+		return "This advice is placement-only: one peg a turn with the links that placement offers, no link joined or taken back by hand, no swap, and a shortlist of holes rather than every legal line — a steer, not a proof."
+	}
+	return "This advice states no analysis policy, so what it covers is unknown: it is neither a proof nor a reading of the whole of the printed rules."
+}
+
 // Hint is a recommended move together with an explanation derived from the
 // search that found it.
 type Hint struct {
@@ -121,6 +178,10 @@ type Hint struct {
 	// Highlight lists the holes the explanation refers to, for the board to
 	// mark.
 	Highlight []game.Point
+	// Policy is the restriction the advice was produced under. Every hint this
+	// package returns carries PlacementOnlyPolicy; the zero value states
+	// nothing, which is what a stub or scripted bot leaves behind.
+	Policy AnalysisPolicy
 }
 
 // Bot plays one side of a game.

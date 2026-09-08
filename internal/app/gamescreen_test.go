@@ -1938,6 +1938,10 @@ func TestGameScreenFitsEverySize(t *testing.T) {
 				Headline:  "play N14",
 				Detail:    "it shortens your route.",
 				Highlight: []game.Point{{Col: 9, Row: 9}},
+				// The engine's own policy, so that every size is checked with
+				// the advice block the real engine produces, policy line and
+				// all: it is the longest thing the panel ever carries.
+				Policy: bot.PlacementOnlyPolicy(),
 			},
 		}
 		cfg := gsVersusBot(24, engine)

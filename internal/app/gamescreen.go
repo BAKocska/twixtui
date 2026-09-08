@@ -2177,19 +2177,26 @@ func (s *gameScreen) openingPeg() string {
 // statusLine is the one line that is always there. It carries the answer to the
 // last keypress when there is one, and otherwise the keys that matter now; when
 // the terminal is too narrow for a panel it also carries whose turn it is,
-// because there is nowhere else for that to go.
+// because there is nowhere else for that to go, and advice once it has been
+// asked for, which leads the line ahead of the turn.
 func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 	if s.message != "" {
 		return s.style(s.styles.Status, gsTruncate(s.message, arr.Width))
 	}
 	phase := s.keyPhase()
+	if phase == phasePlay && s.hint.shown && s.notice == "" {
+		// A short panel, or the one-turn swap notice above it, can hide the
+		// advice. Keep its complete coordinate and policy on the status line
+		// in every layout, without appending items that could truncate them.
+		return s.style(s.styles.Status, s.hint.statusText(arr.Width))
+	}
 	var parts []string
 	if arr.Panel == ui.PanelNone {
 		if s.notice != "" {
 			return s.style(s.styles.Status, gsTruncate(s.notice, arr.Width))
 		}
 		parts = append(parts, gsPlain(s.headlineText()))
-		if h := s.hint.statusText(); h != "" {
+		if h := s.hint.statusText(arr.Width); h != "" {
 			parts = append(parts, h)
 		}
 	}
