@@ -115,6 +115,7 @@ const (
 // sharing is reported at once. Either way the write fails with dst's previous
 // contents intact, which is what unix does when a rename cannot happen.
 //
+// https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 func Replace(src, dst string) error {
 	from, err := nativePath(src)
@@ -141,11 +142,13 @@ func Replace(src, dst string) error {
 	}
 	var header renameInfo
 	nameLen := len(to) - 1 // FileNameLength excludes the terminating NUL.
-	buf := make([]byte, int(unsafe.Offsetof(header.name))+nameLen*2)
+	// The Win32 wrapper converts a NUL-terminated path even though the native
+	// FileNameLength field excludes that NUL. Reserve and copy both.
+	buf := make([]byte, int(unsafe.Offsetof(header.name))+len(to)*2)
 	info := (*renameInfo)(unsafe.Pointer(&buf[0]))
 	info.flags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
 	info.length = uint32(nameLen * 2)
-	copy(unsafe.Slice(&info.name[0], nameLen), to[:nameLen])
+	copy(unsafe.Slice(&info.name[0], len(to)), to)
 
 	delay := time.Millisecond
 	class := uint32(windows.FileRenameInfoEx)
