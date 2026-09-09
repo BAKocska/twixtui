@@ -1,0 +1,2 @@
+# Rendered frames use LF regardless of the contributor's core.autocrlf setting.
+*.golden text eol=lf

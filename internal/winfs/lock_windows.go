@@ -87,7 +87,7 @@ func openLockFile(path string, exclusive bool) (windows.Handle, error) {
 		return windows.InvalidHandle, fmt.Errorf("opening lock file %s: %w", path, err)
 	}
 	if !exclusive {
-		h, err := windows.CreateFile(name, windows.GENERIC_READ, shareLock, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+		h, err := windows.CreateFile(&name[0], windows.GENERIC_READ, shareLock, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
 		if err == nil {
 			return h, nil
 		}
@@ -106,7 +106,7 @@ func openLockFile(path string, exclusive bool) (windows.Handle, error) {
 		access |= windows.GENERIC_WRITE
 	}
 	// Create a missing lock file only after a shared read-open found it absent.
-	h, err := windows.CreateFile(name, access, shareLock, nil, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	h, err := windows.CreateFile(&name[0], access, shareLock, nil, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
 		if !exclusive && unwritable(err) {
 			return windows.InvalidHandle, nil

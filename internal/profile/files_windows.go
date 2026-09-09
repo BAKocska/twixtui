@@ -22,6 +22,6 @@ func readWholeFile(path string) ([]byte, error) { return winfs.ReadFile(path) }
 func replaceFile(src, dst string) error { return winfs.Replace(src, dst) }
 
 // Windows does not offer the directory-fsync operation used on Unix.
-// Replace requests write-through; filesystem-specific crash durability is
-// not asserted to be equivalent to a successful POSIX directory flush.
+// Callers sync file contents before replacing; crash durability is not asserted
+// to be equivalent to a successful POSIX directory flush.
 func syncDir(dir string) {}

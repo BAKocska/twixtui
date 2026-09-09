@@ -249,9 +249,11 @@ func (tm *conptyTerminal) spawn(command, env []string, dir string) error {
 	startup := new(windows.StartupInfoEx)
 	startup.Cb = uint32(unsafe.Sizeof(*startup))
 	startup.ProcThreadAttributeList = attributes.List()
-	// No STARTF_USESTDHANDLES and no inherited handles: the standard handles
-	// of a process created with a pseudoconsole are the console's, which is
-	// the whole point, and setting them here would take that away.
+	// Explicit NULL standard handles let ConPTY supply the console handles.
+	// Without this flag, CreateProcess copies a redirected parent's standard
+	// handles even when bInheritHandles is false (as under go test -json).
+	// https://github.com/microsoft/terminal/issues/11276
+	startup.Flags = windows.STARTF_USESTDHANDLES
 
 	info := new(windows.ProcessInformation)
 	// EXTENDED_STARTUPINFO_PRESENT is what makes the attribute list, and so

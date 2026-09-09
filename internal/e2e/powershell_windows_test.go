@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -50,16 +51,18 @@ $profile = [System.Management.Automation.CommandCompletion]::CompleteInput($prof
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", path, bin, cfg, fallback)
 	cmd.Env = append(os.Environ(), "TWIXTUI_CONFIG_DIR="+cfg, "NO_COLOR=1")
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("PowerShell completion: %v\n%s", err, out)
+		t.Fatalf("PowerShell completion: %v\n%s\n%s", err, out, stderr.String())
 	}
 	var got struct {
 		Tiers    []string `json:"tiers"`
 		Profiles []string `json:"profiles"`
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("PowerShell completion output: %v\n%s", err, out)
+		t.Fatalf("PowerShell completion output: %v\n%s\nstderr:\n%s", err, out, stderr.String())
 	}
 	for _, tier := range []string{"beginner", "intermediate", "pro", "max"} {
 		if !slices.Contains(got.Tiers, tier) {

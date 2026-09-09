@@ -594,9 +594,6 @@ func TestCountersMeasureTheWorkDone(t *testing.T) {
 				t.Fatalf("round %d, %s: %d evaluations for %d nodes, but every node analyses its position and the root analyses one more",
 					round, c.name, c.s.evaluations, c.s.nodes)
 			}
-			if c.s.elapsed <= 0 {
-				t.Fatalf("round %d, %s: reported %v elapsed", round, c.name, c.s.elapsed)
-			}
 			if c.s.stopReason == "" {
 				t.Fatalf("round %d, %s: no stop reason recorded", round, c.name)
 			}

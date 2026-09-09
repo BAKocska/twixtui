@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -25,7 +26,7 @@ const shareAll = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FI
 // nativePath keeps the long-path behavior supplied by os.Open/os.Rename when
 // calling Win32 directly. Extended paths must be absolute and normalized;
 // existing extended/device prefixes are already in the caller's chosen form.
-func nativePath(path string) (*uint16, error) {
+func nativePath(path string) ([]uint16, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -37,7 +38,7 @@ func nativePath(path string) (*uint16, error) {
 			absolute = `\\?\` + absolute
 		}
 	}
-	return windows.UTF16PtrFromString(absolute)
+	return windows.UTF16FromString(absolute)
 }
 
 // OpenRead opens path for reading without standing in the way of its
@@ -53,7 +54,7 @@ func OpenRead(path string) (*os.File, error) {
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
-	h, err := windows.CreateFile(name, windows.GENERIC_READ, shareAll, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	h, err := windows.CreateFile(&name[0], windows.GENERIC_READ, shareAll, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
@@ -95,11 +96,13 @@ const (
 
 // Replace puts src in dst's place.
 //
-// MoveFileEx with MOVEFILE_REPLACE_EXISTING is the replacement Windows offers:
-// dst is never removed first, so a reader opening it finds the old file or the
-// new one and never a delete-then-create gap. MOVEFILE_WRITE_THROUGH requests
-// completion of the operation before returning; this is not a claim that every
-// filesystem provides POSIX directory-fsync durability.
+// FileRenameInfoEx with POSIX semantics replaces the directory entry without
+// first deleting dst. Unlike MoveFileEx, it permits existing delete-sharing
+// readers to keep their old version while new opens see the replacement.
+// Filesystems without POSIX rename use ordinary rename, still without deleting
+// dst first, but a held reader can prevent replacement on those filesystems.
+// Callers sync the prepared contents before replacement. This operation does
+// not supply the crash-durability guarantee of a POSIX directory fsync.
 //
 // The replacement retains the source's security descriptor. Callers create
 // temporary files in the destination directory, inheriting that directory's
@@ -111,6 +114,8 @@ const (
 // reported. Access control does not pass, so a refusal that is not about
 // sharing is reported at once. Either way the write fails with dst's previous
 // contents intact, which is what unix does when a rename cannot happen.
+//
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 func Replace(src, dst string) error {
 	from, err := nativePath(src)
 	if err != nil {
@@ -120,9 +125,40 @@ func Replace(src, dst string) error {
 	if err != nil {
 		return &os.LinkError{Op: "rename", Old: src, New: dst, Err: err}
 	}
+	h, err := windows.CreateFile(&from[0], windows.DELETE, shareAll, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return &os.LinkError{Op: "rename", Old: src, New: dst, Err: err}
+	}
+	defer windows.CloseHandle(h)
+
+	// FILE_RENAME_INFO has a variable-length UTF-16 tail; the native HANDLE
+	// field determines alignment on both supported Windows architectures.
+	type renameInfo struct {
+		flags  uint32
+		root   windows.Handle
+		length uint32
+		name   [1]uint16
+	}
+	var header renameInfo
+	nameLen := len(to) - 1 // FileNameLength excludes the terminating NUL.
+	buf := make([]byte, int(unsafe.Offsetof(header.name))+nameLen*2)
+	info := (*renameInfo)(unsafe.Pointer(&buf[0]))
+	info.flags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
+	info.length = uint32(nameLen * 2)
+	copy(unsafe.Slice(&info.name[0], nameLen), to[:nameLen])
+
 	delay := time.Millisecond
+	class := uint32(windows.FileRenameInfoEx)
 	for attempt := 1; ; attempt++ {
-		err := windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+		err := windows.SetFileInformationByHandle(h, class, &buf[0], uint32(len(buf)))
+		if class == windows.FileRenameInfoEx && (errors.Is(err, windows.ERROR_NOT_SUPPORTED) ||
+			errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, windows.ERROR_INVALID_FUNCTION)) {
+			// FAT and other filesystems may not implement POSIX rename.
+			// Retrying ordinary rename must not weaken access-control errors.
+			class = windows.FileRenameInfo
+			info.flags = windows.FILE_RENAME_REPLACE_IF_EXISTS
+			err = windows.SetFileInformationByHandle(h, class, &buf[0], uint32(len(buf)))
+		}
 		if err == nil {
 			return nil
 		}
