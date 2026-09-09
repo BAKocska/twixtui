@@ -25,6 +25,7 @@ separately in [rules.md](rules.md), with the source audit trail in
 - [The tutorial](#the-tutorial)
 - [Profiles](#profiles)
 - [The leaderboard](#the-leaderboard)
+  - [Reviewing saved games](#reviewing-saved-games)
 - [Rulesets](#rulesets)
 - [Themes](#themes)
 - [The cover](#the-cover)
@@ -120,7 +121,7 @@ somebody does the thing rather than by the mechanism behind it:
 | --- | --- |
 | `Play` | A new game. Who is on the other side is the first question — the computer, somebody at this keyboard, or somebody on another machine — and the questions after it depend on the answer. Escape walks back through them. |
 | `Continue a saved game` | Games still waiting for a move. A disconnected network game offers reconnection setup and keeps its saved identity. Imported games are listed for reference but cannot be played on; the row explains why. |
-| `Watch a finished game` | Step through a finished game, including one imported from another machine. |
+| `Watch a finished game` | Review a finished or imported game with a numbered entry list, direct entry jump and final winning-chain highlights. |
 | `Learn to play` | The tutorial, the written rules, and the introduction again. |
 | `Leaderboard` | The standings. For one player's history, use `twixtui leaderboard show --player NAME` on the command line. |
 | `Settings` | Colours, the default ruleset, the default board size, whether hints are offered, and which profile is playing. Set once and forgotten; kept per machine, as the colour scheme is. |
@@ -488,6 +489,10 @@ claim is checked by playing that move on a copy and reading the engine's actual
 result; a zero route estimate alone is not enough. Committed games with chosen
 links remain valid hint inputs and are not changed by asking for advice.
 
+Opening hints describe starting a route instead of continuing a nonexistent
+chain; tactical explanations and no-route caveats still take precedence.
+This changes the explanation, not the search or the opponent's playing strength.
+
 ### Reproducing bot experiments
 
 The ordinary suite runs tactical and effort regressions. The larger experiment
@@ -750,6 +755,41 @@ lock on that game, so when the same game is open in two windows the first
 result written is the one kept: the second window is told its game was neither
 saved nor rated. The labels beside an unchanged finished record can still be
 corrected.
+
+### Reviewing saved games
+
+`twixtui game replay <id>` opens at the record's final entry. The menu's
+**Watch a finished game** opens the same viewer. Its numbered list follows the
+selected entry; `0` is the initial empty board. These are **record entries, not
+plies**: a draw offer has an entry of its own without placing a peg. The panel
+shows both the entry counter and the number of moves played.
+
+| Key | Replay action |
+| --- | --- |
+| `h` / `left` / `p` | Back one entry. |
+| `l` / `right` / `n` | Forward one entry. |
+| `k` / `up`, `j` / `down` | Back or forward five entries. |
+| `g` / `G` | Initial position / final entry. |
+| `:` | Type an entry number; `enter` jumps and `esc` cancels the input. |
+| `q` / `esc` | Leave the viewer when not editing the entry number. |
+| `ctrl+c` | End the program. |
+
+Numbers outside `0..last entry`, non-digits and oversized input are refused,
+not silently clamped. An invalid request leaves the current entry unchanged
+and the field open for correction. Errors remain readable at the supported
+20-column minimum. Resizing preserves the selected entry and an open input.
+
+The board follows the most recent peg at the selected entry, including the
+reflected peg after a swap. Before any peg exists it returns to the opening
+viewport. A connection-winning chain is highlighted only at the final entry;
+resignations and agreed draws do not invent a chain. The displayed final result
+remains the record's result while stepping through earlier positions.
+
+Replay validates the whole record before opening and retains one mutable board,
+not a board snapshot per entry. Small backward steps use undo; longer backward
+seeks rebuild the requested prefix to avoid repeatedly scanning draw-offer
+history. Reviewing never changes the stored record or ratings. Notes, analysis
+and variations are not part of this viewer.
 
 ## Rulesets
 

@@ -7,6 +7,38 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Saved-game replay has a numbered entry list, `:` entry-number input, and
+  final-position connection-chain highlights. Draw offers count as entries,
+  not plies; invalid numbers leave the input open for correction, and short
+  terminals keep errors visible.
+- Reproducible replay construction, traversal and long-seek benchmarks with
+  checked 12×12/24-entry and 48×48/400-entry records.
+
+### Changed
+
+- Replay keeps one mutable board rather than cloning the growing history at
+  every entry. On the fixed 48×48/400-entry benchmark, construction allocated
+  about 243 KB instead of 67 MB. Five single-worker Go 1.26.5 samples on an
+  Apple M5 Pro measured construction only, not rendering or whole-game speed.
+  Seeking now performs undo/replay work instead of selecting a cached snapshot;
+  the same fixture's full backward/forward traversal took about 0.19 ms.
+- Long backward seeks rebuild the requested prefix rather than repeatedly
+  rescanning draw-offer history. Ordinary one- and five-entry steps use undo.
+
+### Fixed
+
+- First-peg hints describe starting a route, not continuing a nonexistent chain,
+  while preserving tactical priorities and the placement-only policy. Search
+  evaluation, effort tiers and move ordering are unchanged.
+- Undo restores a draw offer that survived a swap, allowing a later acceptance
+  to be replayed correctly. The new replay cursor exercises this case.
+- Replays reset the viewport before the first peg and preserve whitespace
+  between notation tokens when drawing imported entry labels.
+- The PP hint test verifies its ruleset capabilities, and correspondence e2e
+  waits for Escape to dismiss the exchange before sending further keys.
+
 ## [0.3.3] - 2026-09-08
 
 ### Fixed
