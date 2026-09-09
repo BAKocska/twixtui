@@ -1097,6 +1097,26 @@ func TestUndoAfterOfferDuringOpponentsStagedTurn(t *testing.T) {
 	}
 }
 
+func TestUndoRestoresTheDrawOfferThatSurvivedSwap(t *testing.T) {
+	g, err := ReplayTranscript(Std, "C4; v:draw?; swap; h:draw!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.UndoLastMove(); err != nil {
+		t.Fatal(err)
+	}
+	if g.DrawOfferedBy() != Vertical || !g.Swapped() || g.Result().Over() {
+		t.Fatalf("undo lost the position after swap: offer=%v swapped=%v result=%v",
+			g.DrawOfferedBy(), g.Swapped(), g.Result())
+	}
+	if err := g.AcceptDraw(Horizontal); err != nil {
+		t.Fatalf("the restored offer cannot be accepted again: %v", err)
+	}
+	if g.Result() != (Result{Outcome: Draw, Reason: Agreement}) {
+		t.Fatalf("reaccepting the offer produced %v", g.Result())
+	}
+}
+
 // TestCloneHistoryDoesNotAlias checks a cloned game's record shares no storage
 // with the original. Copying the slice of entries is not enough: each entry
 // carries its own link and peg lists, and a caller that rewrites a cloned record

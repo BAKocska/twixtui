@@ -1083,7 +1083,7 @@ func (g *Game) UndoLastMove() error {
 		switch {
 		case h.Kind == DrawOfferMove:
 			g.drawOfferedBy = h.Player
-		case h.Kind.ConsumesTurn() && g.drawOfferedBy == h.Player.Opponent():
+		case h.Kind == PlaceMove && g.drawOfferedBy == h.Player.Opponent():
 			g.drawOfferedBy = NoPlayer
 		}
 	}
