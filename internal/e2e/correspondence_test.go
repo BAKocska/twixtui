@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -105,8 +107,26 @@ func TestTwoTerminalsPlayByCode(t *testing.T) {
 	// started as an argument vector: no shell is involved, so a configuration
 	// directory whose path holds a space is passed as it is.
 	open := func(dir, player string) *Terminal {
+		trace := filepath.Join(t.TempDir(), player+"-input.log")
+		t.Cleanup(func() {
+			data, err := os.ReadFile(trace)
+			if err != nil {
+				t.Logf("%s trace: %v", player, err)
+				return
+			}
+			lines := 0
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.Contains(line, "input:") || strings.Contains(line, "processing buf") {
+					t.Logf("%s trace: %s", player, line)
+					lines++
+					if lines == 128 {
+						break
+					}
+				}
+			}
+		})
 		tm := Start(t, []string{bin, "--config", dir, "--profile", player, "play", "correspondence"},
-			Options{Width: 100, Height: 30, Dir: repoRoot(t), Env: []string{"TWIXTUI_CONFIG_DIR=" + dir}})
+			Options{Width: 100, Height: 30, Dir: repoRoot(t), Env: []string{"TWIXTUI_CONFIG_DIR=" + dir, "TEA_TRACE=" + trace}})
 		tm.MustWaitFor("correspondence", 20*time.Second)
 		return tm
 	}

@@ -55,17 +55,15 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-  # Vet and the tests both compile every package, including the ones with no
-  # test files, so this job is not here to catch a type error: it would fail in
-  # two other jobs first. It is here because it is the only check that links,
-  # and an executable is what the release publishes. A link that fails while a
-  # compile succeeds is rare in pure Go, which is the honest measure of what
-  # this job is worth -- but it costs nine seconds beside jobs that take longer,
-  # and the alternative place to find out is a pushed tag.
+  # Build the actual release archives, without publishing them. Windows jobs
+  # execute these ZIPs as well as their source-built binaries, so packaging and
+  # release ldflags cannot stay unchecked until a tag is pushed.
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
@@ -73,15 +71,22 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Build
-        run: go build ./...
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
 
-  # Both operating systems the project publishes binaries for. Testing one and
-  # shipping both was the largest unchecked claim in the release, and the gap is
-  # not theoretical: the end-to-end layer drives a real pseudo-terminal, and
-  # pseudo-terminals are where Darwin and Linux differ most for a program like
-  # this one -- window-size signals, terminfo, and the shell the harness runs
-  # its commands through.
+      - name: Keep Windows snapshot archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-snapshot-archives
+          path: |
+            dist/*_windows_*.zip
+            dist/checksums.txt
+            dist/metadata.json
+          if-no-files-found: error
+
+  # Unix release targets use tmux; native Windows uses ConPTY below.
   test:
     strategy:
       # Both answers are wanted. Cancelling macOS because Linux failed hides
@@ -183,9 +188,9 @@ jobs:
   # search enough to change what they measure: on a 24x24 board at the
   # measurement budgets the depths reached fall from beginner 1, intermediate 3,
   # pro 4 to 1, 2 and 2, so the tiers stop being distinguishable and a strength
-  # number produced under the detector is not the engine's. e2e is absent for a
-  # different reason: the harness has no concurrency of its own, and the program
-  # it drives is a separate process the detector cannot see into.
+  # number produced under the detector is not the engine's. The Unix terminal
+  # harness delegates its PTY to tmux; the concurrent ConPTY implementation is
+  # covered separately by the native Windows amd64 race job below.
   race:
     runs-on: ubuntu-latest
     steps:
@@ -209,6 +214,7 @@ jobs:
   # script fails if any terminal test skips or if its positive controls did
   # not pass; cross-compilation and WSL cannot satisfy this job.
   windows:
+    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -231,6 +237,8 @@ jobs:
       - name: Native tests and mandatory terminal coverage
         shell: pwsh
         run: |
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Windows vet failed.' }
           ./.github/scripts/test-windows.ps1 -ExpectedArch '${{ matrix.arch }}'
 
       # Go 1.26 has a Windows race detector for amd64, not arm64. ARM64 runs
@@ -243,15 +251,34 @@ jobs:
         run: |
           gcc --version
           if ($LASTEXITCODE -ne 0) { throw 'The Windows race detector requires the runner C compiler.' }
-          go test -race -count=1 -timeout 5m ./internal/netplay ./internal/app ./internal/cli ./internal/leaderboard ./internal/profile ./internal/gamestore
+          go test -race -count=1 -timeout 5m ./internal/netplay ./internal/app ./internal/cli ./internal/leaderboard ./internal/profile ./internal/gamestore ./internal/winfs
           if ($LASTEXITCODE -ne 0) { throw 'Windows race tests failed.' }
           go test -race -count=1 -parallel 4 -timeout 5m ./internal/e2e
           if ($LASTEXITCODE -ne 0) { throw 'Windows terminal harness race tests failed.' }
+
+      - name: Download release-format Windows archives
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-snapshot-archives
+          path: ${{ runner.temp }}/windows-snapshot-archives
+
+      - name: Verify and drive the packaged binary
+        shell: pwsh
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          $directory = Join-Path $env:RUNNER_TEMP 'windows-snapshot-archives'
+          $metadata = Get-Content -Raw -LiteralPath (Join-Path $directory 'metadata.json') | ConvertFrom-Json
+          $archive = Join-Path $directory "twixtui_$($metadata.version)_windows_$($env:EXPECTED_ARCH).zip"
+          ./.github/scripts/test-windows-archive.ps1 -ExpectedArch $env:EXPECTED_ARCH -ExpectedVersion $metadata.version -ExpectedCommit $env:EXPECTED_COMMIT -Archive $archive -Checksums (Join-Path $directory 'checksums.txt')
 
       - name: Keep native execution evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: windows-tests-${{ matrix.arch }}
-          path: ${{ runner.temp }}/windows-tests
+          path: |
+            ${{ runner.temp }}/windows-tests
+            ${{ runner.temp }}/windows-archive-tests
           if-no-files-found: error

@@ -79,32 +79,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path $destination | Out-Null
           gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern $name --pattern checksums.txt --dir $destination
           if ($LASTEXITCODE -ne 0) { throw 'Published artifact download failed.' }
-          $archive = Join-Path $destination $name
-          $lines = @(Get-Content (Join-Path $destination 'checksums.txt') | Where-Object { ($_ -split '\s+')[-1] -eq $name })
-          if ($lines.Count -ne 1) { throw 'Missing or ambiguous published checksum.' }
-          $expected = ($lines[0] -split '\s+')[0]
-          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
-          if ($expected -ne $actual) { throw 'Published archive checksum mismatch.' }
-          Expand-Archive -LiteralPath $archive -DestinationPath $destination
-          $binary = Join-Path $destination 'twixtui.exe'
-          $reported = & $binary version
-          if ($LASTEXITCODE -ne 0 -or $reported -notmatch [regex]::Escape("twixtui $version ") -or $reported -notmatch [regex]::Escape($env:EXPECTED_COMMIT)) {
-            throw "Published binary has the wrong version/commit: $reported"
-          }
-          "TWIXTUI_PUBLISHED_BINARY=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'windows-tests') | Out-Null
-          @{ tag = $env:RELEASE_TAG; commit = $env:EXPECTED_COMMIT; archive = $name; sha256 = $actual; version = $reported } |
-            ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'windows-tests/artifact.json')
-
-      - name: Drive the downloaded binary natively
-        shell: pwsh
-        run: |
-          ./.github/scripts/test-windows.ps1 -ExpectedArch '${{ matrix.arch }}' -Scope artifact -Binary $env:TWIXTUI_PUBLISHED_BINARY
+          ./.github/scripts/test-windows-archive.ps1 -ExpectedArch $env:RELEASE_ARCH -ExpectedVersion $version -ExpectedCommit $env:EXPECTED_COMMIT -Archive (Join-Path $destination $name) -Checksums (Join-Path $destination 'checksums.txt')
 
       - name: Keep artifact execution evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: published-windows-${{ matrix.arch }}
-          path: ${{ runner.temp }}/windows-tests
+          path: ${{ runner.temp }}/windows-archive-tests
           if-no-files-found: error
