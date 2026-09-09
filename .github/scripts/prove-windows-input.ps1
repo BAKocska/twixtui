@@ -74,3 +74,7 @@ try {
     if ($hadWork) { $env:GOWORK = $oldWork } else { Remove-Item Env:GOWORK -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $scratch -Recurse -Force
 }
+
+# The final native command intentionally failed. Do not leak its status through
+# GitHub Actions' PowerShell wrapper after every proof assertion succeeded.
+exit 0
