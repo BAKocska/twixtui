@@ -253,10 +253,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows vet failed.' }
           ./.github/scripts/test-windows.ps1 -ExpectedArch '${{ matrix.arch }}'
 
-      - name: Prove the input regressions discriminate
+      - name: Windows input dependency tests
         shell: pwsh
         timeout-minutes: 3
-        run: ./.github/scripts/prove-windows-input.ps1 -ExpectedArch '${{ matrix.arch }}'
+        run: |
+          go test -count=1 github.com/charmbracelet/ultraviolet/...
+          if ($LASTEXITCODE -ne 0) { throw 'Windows input dependency tests failed.' }
 
       # Go 1.26 has a Windows race detector for amd64, not arm64. ARM64 runs
       # the native functional/concurrency tests above, never an emulated race job.
@@ -298,5 +300,4 @@ jobs:
           path: |
             ${{ runner.temp }}/windows-tests
             ${{ runner.temp }}/windows-archive-tests
-            ${{ runner.temp }}/windows-input-proof
           if-no-files-found: error

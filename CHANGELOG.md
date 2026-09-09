@@ -22,6 +22,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   adds `windows_amd64` and `windows_arm64` ZIPs under the existing
   `checksums.txt`. Windows downloads are not published yet.
 
+### Fixed
+
+- Windows bracketed paste no longer gains NUL bytes before uppercase letters.
+  The filter removes standalone modifier records, not genuine NUL input, and
+  leaves pending UTF-16 pairs intact.
+  It is pinned in `go.work` while
+  [the upstream fix](https://github.com/charmbracelet/ultraviolet/pull/184) is
+  reviewed; Windows builds currently require the checkout or packaged ZIP.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added

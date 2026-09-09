@@ -5,4 +5,5 @@ use .
 // Preserve standalone modifier records in Win32 mode without inserting NULs
 // into VT input. Keep this override out of go.mod so versioned Go installs
 // continue to work on macOS/Linux. Windows uses the checkout or packaged ZIP.
+// Upstream repair: https://github.com/charmbracelet/ultraviolet/pull/184
 replace github.com/charmbracelet/ultraviolet => github.com/BAKocska/ultraviolet v0.0.0-20260909131952-194026188632
