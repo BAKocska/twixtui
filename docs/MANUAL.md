@@ -37,6 +37,8 @@ separately in [rules.md](rules.md), with the source audit trail in
 
 ### With Go
 
+For macOS and Linux:
+
 ```
 go install github.com/BAKocska/twixtui/cmd/twixtui@latest
 ```
@@ -99,6 +101,12 @@ go build -o twixtui.exe ./cmd/twixtui
 
 Go 1.26 or newer, and nothing else: no C compiler to build it, nothing to install
 beside it to run it.
+
+Keep the checkout's `go.work` file. It pins a small Windows input-decoder fix
+while it is being contributed upstream. Versioned `go install ...@version`
+ignores that workspace override, so Windows installation currently requires a
+packaged ZIP or a build from the checkout. Existing macOS/Linux versioned Go
+installs are unchanged.
 
 **Windows Terminal with PowerShell 7 on Windows 11 is recommended.** CI exercises
 the Windows console through ConPTY on x64 and ARM64; it does not verify every

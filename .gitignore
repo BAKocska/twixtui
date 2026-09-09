@@ -5,7 +5,9 @@
 # Build output
 /dist/
 /twixtui
+/twixtui.exe
 *.test
+*.test.exe
 *.out
 
 # Optional documentation-media export dependencies

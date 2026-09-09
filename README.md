@@ -49,6 +49,8 @@ good at drawing, and nothing here wants a mouse.
 
 ## Install
 
+macOS and Linux:
+
 ```
 go install github.com/BAKocska/twixtui/cmd/twixtui@latest
 ```
@@ -66,6 +68,10 @@ downloaded through a browser needs its quarantine attribute cleared first;
 go build -o twixtui.exe ./cmd/twixtui
 .\twixtui.exe
 ```
+
+Keep `go.work` in the checkout: it pins the Windows input-decoder fix.
+Versioned `go install ...@version` does not use that override; Windows builds
+currently require the checkout or a packaged ZIP.
 
 [The manual](docs/MANUAL.md#on-windows) has the terminal to run it in, where it keeps
 its state, and what the test suite needs.

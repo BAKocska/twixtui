@@ -110,7 +110,7 @@ release:
   footer: |
     ## Install
 
-    macOS, Linux and Windows, from source:
+    macOS and Linux, with Go:
 
         go install github.com/BAKocska/twixtui/cmd/twixtui@{{ .Tag }}
 
@@ -118,6 +118,10 @@ release:
     `twixtui` binary (`twixtui.exe` on Windows) on your `PATH`. Windows archives
     are ZIP files; Windows Terminal is recommended. On macOS, clear the download
     quarantine flag first: `xattr -d com.apple.quarantine ./twixtui`.
+
+    Windows source builds must use a checkout, including its `go.work` file,
+    which pins the Windows input-decoder fix. Versioned `go install ...@version`
+    ignores that workspace override; use the ZIP or build the checkout instead.
 
 # A Homebrew tap would be the nicest install path, but publishing to a tap that
 # does not exist fails the release job and takes the downloadable binaries down
