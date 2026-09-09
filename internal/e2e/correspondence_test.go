@@ -1,8 +1,6 @@
 package e2e
 
 import (
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -20,26 +18,15 @@ import (
 // fast and precise. What only a terminal can show is that the code reaches the
 // screen whole and that a bracketed paste arrives as a code.
 
-// corrRun runs the binary non-interactively and returns what it printed.
+// corrRun runs the binary non-interactively, insists it succeeded, and returns
+// what it printed.
 func corrRun(t *testing.T, bin, dir string, args ...string) string {
 	t.Helper()
-	full := append([]string{"--config", dir}, args...)
-	cmd := exec.Command(bin, full...)
-	cmd.Env = append(os.Environ(), "NO_COLOR=1", "TWIXTUI_CONFIG_DIR="+dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("twixtui %s: %v\n%s", strings.Join(full, " "), err, out)
+	res := cliRun(t, bin, dir, "", args...)
+	if res.code != 0 {
+		t.Fatalf("twixtui %s exited %d:\n%s%s", strings.Join(args, " "), res.code, res.stdout, res.stderr)
 	}
-	return string(out)
-}
-
-// corrPasteInto pastes text the way a terminal does when the player presses the
-// paste key: as one bracketed block, not as a run of keystrokes. That is the
-// path the interface has to handle, and send-keys would not exercise it.
-func corrPasteInto(t *testing.T, tm *Terminal, text string) {
-	t.Helper()
-	tm.mustTmux("set-buffer", "set-buffer", "--", text)
-	tm.mustTmux("paste-buffer", "paste-buffer", "-p", "-t", "main")
+	return res.stdout
 }
 
 // corrCodeOnScreen returns the one line of the screen that is a move code and
@@ -102,9 +89,6 @@ func corrInvite(t *testing.T, out string) string {
 // the compiled binary and checks the two stores end up holding the same game.
 func TestTwoTerminalsPlayByCode(t *testing.T) {
 	t.Parallel()
-	if err := Available(); err != nil {
-		t.Skipf("skipping terminal test: %v", err)
-	}
 	bin := binary(t)
 	hostDir, guestDir := t.TempDir(), t.TempDir()
 
@@ -117,9 +101,11 @@ func TestTwoTerminalsPlayByCode(t *testing.T) {
 		t.Fatalf("the guest joined a different game:\n%s", joined)
 	}
 
-	// A terminal each. Neither knows anything about the other.
+	// A terminal each. Neither knows anything about the other. The program is
+	// started as an argument vector: no shell is involved, so a configuration
+	// directory whose path holds a space is passed as it is.
 	open := func(dir, player string) *Terminal {
-		tm := Start(t, bin+" --config "+dir+" --profile "+player+" play correspondence",
+		tm := Start(t, []string{bin, "--config", dir, "--profile", player, "play", "correspondence"},
 			Options{Width: 100, Height: 30, Dir: repoRoot(t), Env: []string{"TWIXTUI_CONFIG_DIR=" + dir}})
 		tm.MustWaitFor("correspondence", 20*time.Second)
 		return tm
@@ -142,8 +128,11 @@ func TestTwoTerminalsPlayByCode(t *testing.T) {
 		t.Fatal("closing the host exchange unexpectedly ended the program")
 	}
 
-	// The guest pastes it in and applies it.
-	corrPasteInto(t, guest, code)
+	// The guest pastes it in and applies it. The code goes in the way a
+	// terminal delivers a paste — one bracketed block, not a run of keystrokes
+	// — because that is the path the interface has to handle and sending the
+	// characters as keys would not exercise it.
+	guest.Paste(code)
 	guest.MustWaitFor("TWX-", 20*time.Second)
 	guest.SendKeys("Enter")
 	guest.MustWaitFor("last "+opening, 20*time.Second)
@@ -166,7 +155,7 @@ func TestTwoTerminalsPlayByCode(t *testing.T) {
 		t.Fatal("closing the guest exchange unexpectedly ended the program")
 	}
 
-	corrPasteInto(t, host, reply)
+	host.Paste(reply)
 	host.MustWaitFor("TWX-", 20*time.Second)
 	host.SendKeys("Enter")
 	host.MustWaitFor("last "+answer, 20*time.Second)

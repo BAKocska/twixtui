@@ -31,10 +31,15 @@ builds:
       - darwin_amd64
       - linux_arm64
       - linux_amd64
+      - windows_amd64
+      - windows_arm64
 
 archives:
   - id: twixtui
     formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
@@ -105,13 +110,14 @@ release:
   footer: |
     ## Install
 
-    macOS and Linux, from source:
+    macOS, Linux and Windows, from source:
 
         go install github.com/BAKocska/twixtui/cmd/twixtui@{{ .Tag }}
 
     Or download the archive for your platform below, unpack it, and put the
-    `twixtui` binary on your `PATH`. On macOS, clear the download quarantine
-    flag first: `xattr -d com.apple.quarantine ./twixtui`.
+    `twixtui` binary (`twixtui.exe` on Windows) on your `PATH`. Windows archives
+    are ZIP files; Windows Terminal is recommended. On macOS, clear the download
+    quarantine flag first: `xattr -d com.apple.quarantine ./twixtui`.
 
 # A Homebrew tap would be the nicest install path, but publishing to a tap that
 # does not exist fails the release job and takes the downloadable binaries down

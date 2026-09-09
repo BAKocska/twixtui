@@ -2,34 +2,29 @@
 // rendering, key handling and resize behaviour can be asserted on the frames a
 // user would actually see.
 //
-// It uses tmux as a scriptable terminal. Two tmux facts shape this package and
-// were verified empirically rather than assumed:
+// The terminal itself is whatever the platform really offers. On Unix it is
+// tmux, driven as a scriptable terminal; on Windows it is a ConPTY
+// pseudoconsole owned by the test process, with the program's output parsed by
+// a virtual terminal emulator. Both are real terminals in the sense that
+// matters here: the program under test is talking to a pty or a console host,
+// not to a pipe, so it turns colour on, enters the alternate screen, and is
+// told its size. The platform files carry the facts each backend was built
+// around, all of which were established from the platform's own documentation
+// and behaviour rather than assumed.
 //
-//   - resize-window changes the size of a detached session's pseudo-terminal and
-//     the process receives SIGWINCH. resize-pane does not: on a window with a
-//     single pane it silently does nothing, so a resize test built on it would
-//     pass while never resizing anything.
-//   - capture-pane without a scrollback range captures the visible screen, which
-//     for a full-screen program is the alternate screen buffer. Scrollback
-//     captures do not contain alternate-screen output at all.
-//
-// Every Terminal runs on its own tmux server socket, so a test can never
-// disturb a tmux session the user is working in.
+// This file holds everything that is the same on both: the API tests use, and
+// the waits, which are where a terminal test is won or lost. Every wait polls
+// for a condition rather than sleeping for a guessed duration, because a slow
+// machine makes a sleep too short, never too long.
 package e2e
 
 import (
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
-
-var serverSeq atomic.Int64
 
 // Options configures a Terminal.
 type Options struct {
@@ -45,18 +40,52 @@ type Options struct {
 	Color bool
 }
 
-// Terminal is a tmux-hosted terminal running one command.
+// Terminal is one command running in a real terminal.
+//
+// Every method reports failure through the test rather than returning an
+// error, except the waits that a test may legitimately expect to time out.
 type Terminal struct {
 	t      *testing.T
-	socket string
-	dir    string
-	env    []string
+	be     backend
 	closed bool
 }
 
-// placeholderCommand keeps the session alive while the options are applied. It
-// must not exit and must not draw anything.
-const placeholderCommand = "sh -c 'while :; do sleep 3600; done'"
+// backend is the platform's terminal. Exactly one implementation is compiled
+// in: the tmux backend on Unix, the ConPTY backend on Windows.
+//
+// Methods return errors instead of failing the test themselves so that the
+// wording of a failure is the same on every platform, and so that the waits
+// can keep polling through a transient failure.
+type backend interface {
+	// resize changes the terminal size, which the program observes.
+	resize(width, height int) error
+	// size reports the size the program is being told, not the size last
+	// requested: the two can differ.
+	size() (width, height int, err error)
+	// sendKeys sends key names, sendText literal text, and paste one
+	// bracketed paste block.
+	sendKeys(keys []string) error
+	sendText(text string) error
+	paste(text string) error
+	// capture returns the visible screen as plain text, captureANSI the same
+	// screen with the escape sequences that style it. Both trim trailing
+	// blanks from each line and drop trailing blank lines.
+	capture() (string, error)
+	captureANSI() (string, error)
+	// alive reports whether the program is still running.
+	alive() bool
+	// exitStatus returns the program's status, and whether it has exited and
+	// the status is known. Those are two events, not one.
+	exitStatus() (code int, exited bool)
+	// unreapedReport describes the state where the program has demonstrably
+	// exited but no status will ever arrive, so that a wait for the status can
+	// fail with the reason rather than as a bare timeout. It reports false
+	// when the platform cannot get into that state.
+	unreapedReport() (report string, unreaped bool)
+	// close tears the terminal down: the program and anything it started are
+	// killed, and every handle is released.
+	close()
+}
 
 const (
 	// settleQuiet is how long the screen must stay unchanged before a frame is
@@ -68,31 +97,27 @@ const (
 	defaultTimeout = 15 * time.Second
 )
 
-// Available reports whether tmux is usable, so tests can skip cleanly rather
-// than fail on a machine without it.
-func Available() error {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return fmt.Errorf("tmux not found in PATH: %w", err)
-	}
-	return nil
-}
-
-// Start launches command in a new terminal of the requested size. The command is
-// run through the shell, so it may contain arguments. The Terminal is closed
-// automatically when the test finishes.
-func Start(t *testing.T, command string, opts Options) *Terminal {
+// Start launches command in a new terminal of the requested size and returns
+// once the program has been started.
+//
+// command is an argument vector, not a shell command line: command[0] is the
+// executable and the rest are passed to it exactly as given, so a path or an
+// argument containing spaces needs no quoting by the caller and no shell is
+// involved. Pass an absolute path for command[0]: a relative one is resolved
+// against a working directory that differs between the platforms, since one
+// terminal starts the program itself and the other has the program started
+// for it. The Terminal is closed automatically when the test finishes.
+func Start(t *testing.T, command []string, opts Options) *Terminal {
 	t.Helper()
-	if err := Available(); err != nil {
-		t.Skipf("skipping terminal test: %v", err)
+	requireAvailable(t)
+	if len(command) == 0 {
+		t.Fatal("Start: command must contain at least the executable")
+	}
+	if command[0] == "" {
+		t.Fatal("Start: command[0] must be the executable")
 	}
 	if opts.Width <= 0 || opts.Height <= 0 {
 		t.Fatalf("Start: width and height must be positive, got %dx%d", opts.Width, opts.Height)
-	}
-
-	tm := &Terminal{
-		t:      t,
-		socket: fmt.Sprintf("twixtui-e2e-%d-%d", os.Getpid(), serverSeq.Add(1)),
-		dir:    opts.Dir,
 	}
 
 	env := []string{"TERM=xterm-256color"}
@@ -102,136 +127,92 @@ func Start(t *testing.T, command string, opts Options) *Terminal {
 		env = append(env, "COLORTERM=truecolor")
 	}
 	env = append(env, opts.Env...)
-	tm.env = env
 
-	// The session is created running a placeholder that simply waits, so that
-	// the options can be applied before the command under test starts. Setting
-	// them afterwards is a race: a command that exits immediately takes the
-	// window with it and remain-on-exit is never applied, which is exactly the
-	// case the exit-status assertions need.
-	args := []string{"new-session", "-d", "-s", "main",
-		"-x", strconv.Itoa(opts.Width), "-y", strconv.Itoa(opts.Height)}
-	if opts.Dir != "" {
-		args = append(args, "-c", opts.Dir)
-	}
-	for _, e := range env {
-		args = append(args, "-e", e)
-	}
-	args = append(args, placeholderCommand)
-	if out, err := tm.tmux(args...); err != nil {
-		t.Fatalf("starting tmux session: %v\n%s", err, out)
-	}
-
-	// The status line steals a row and confuses size assertions; keeping a dead
-	// pane is what lets a program's exit status be read.
-	for _, set := range [][]string{
-		{"set-option", "-g", "status", "off"},
-		{"set-option", "-g", "remain-on-exit", "on"},
-	} {
-		if out, err := tm.tmux(set...); err != nil {
-			t.Fatalf("configuring tmux: %v\n%s", err, out)
-		}
-	}
-	// Applying status off changes the usable height, so restate the size before
-	// the program starts and sees it.
-	tm.Resize(opts.Width, opts.Height)
-
-	respawn := []string{"respawn-pane", "-k", "-t", "main"}
-	if opts.Dir != "" {
-		respawn = append(respawn, "-c", opts.Dir)
-	}
-	for _, e := range env {
-		respawn = append(respawn, "-e", e)
-	}
-	respawn = append(respawn, command)
-	if out, err := tm.tmux(respawn...); err != nil {
-		t.Fatalf("starting the command under test: %v\n%s", err, out)
-	}
-
+	tm := &Terminal{t: t, be: startBackend(t, command, env, opts)}
 	t.Cleanup(tm.Close)
 	return tm
 }
 
-func (tm *Terminal) tmux(args ...string) (string, error) {
-	full := append([]string{"-L", tm.socket}, args...)
-	cmd := exec.Command("tmux", full...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
-}
-
-func (tm *Terminal) mustTmux(what string, args ...string) string {
+// must turns a backend failure into a test failure. A backend error means the
+// terminal itself misbehaved, which no test can meaningfully continue past.
+func (tm *Terminal) must(what string, err error) {
 	tm.t.Helper()
-	out, err := tm.tmux(args...)
 	if err != nil {
-		tm.t.Fatalf("%s: %v\n%s", what, err, out)
+		tm.t.Fatalf("%s: %v", what, err)
 	}
-	return out
 }
 
-// Close kills the tmux server backing this terminal.
+// Close tears down the terminal and everything running in it.
 func (tm *Terminal) Close() {
 	if tm.closed {
 		return
 	}
 	tm.closed = true
-	_, _ = tm.tmux("kill-server")
+	tm.be.close()
 }
 
-// Resize changes the terminal size, which delivers SIGWINCH to the program.
+// Resize changes the terminal size, which the program observes as a resize.
 func (tm *Terminal) Resize(width, height int) {
 	tm.t.Helper()
-	tm.mustTmux("resize-window",
-		"resize-window", "-t", "main", "-x", strconv.Itoa(width), "-y", strconv.Itoa(height))
+	tm.must("resizing the terminal", tm.be.resize(width, height))
 }
 
-// Size returns the size tmux reports for the pane, which is the size the program
-// actually sees. It is not necessarily the size passed to Start or Resize, so
-// assertions about wrapping should use this.
+// Size returns the size the program actually sees. It is not necessarily the
+// size passed to Start or Resize, so assertions about wrapping should use this.
 func (tm *Terminal) Size() (width, height int) {
 	tm.t.Helper()
-	out := tm.mustTmux("display-message",
-		"display-message", "-p", "-t", "main", "#{pane_width} #{pane_height}")
-	parts := strings.Fields(strings.TrimSpace(out))
-	if len(parts) != 2 {
-		tm.t.Fatalf("unexpected size report %q", out)
-	}
-	w, err1 := strconv.Atoi(parts[0])
-	h, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil {
-		tm.t.Fatalf("unexpected size report %q", out)
-	}
-	return w, h
+	width, height, err := tm.be.size()
+	tm.must("reading the terminal size", err)
+	return width, height
 }
 
-// SendKeys sends key names to the program. Names are tmux key names, so "Enter",
-// "Escape", "C-c", "Up" and plain characters all work.
+// SendKeys sends key names to the program: "Enter", "Escape", "Space", "Tab",
+// "BSpace", "Up", "Down", "Left", "Right", "Home", "End", "PageUp",
+// "PageDown", "Insert", "Delete", "F1" to "F12", a single printable character,
+// and those prefixed with "C-", "M-" or "S-" for control, alt and shift. Names
+// are matched without regard to case.
+//
+// A name that is not one of those is a test failure rather than something sent
+// literally: a typo that silently typed its own letters into the program would
+// be found as a mysterious assertion failure much later. Use SendText for
+// literal text.
 func (tm *Terminal) SendKeys(keys ...string) {
 	tm.t.Helper()
-	args := append([]string{"send-keys", "-t", "main"}, keys...)
-	tm.mustTmux("send-keys", args...)
+	tm.must("sending keys", tm.be.sendKeys(keys))
 }
 
-// SendText sends literal text, which is safer than SendKeys for characters tmux
-// would interpret as key names.
+// SendText sends literal text, which is what to use for characters a key name
+// would claim.
 func (tm *Terminal) SendText(text string) {
 	tm.t.Helper()
-	tm.mustTmux("send-keys", "send-keys", "-t", "main", "-l", text)
+	tm.must("sending text", tm.be.sendText(text))
 }
 
-// Capture returns the visible screen as plain text with trailing blanks trimmed
-// from each line.
+// Paste pastes text the way a terminal does when the user presses the paste
+// key: as one bracketed block, not as a run of keystrokes. Programs that read
+// pastes as a unit take a different path for it, and a run of SendKeys would
+// not exercise that path.
+func (tm *Terminal) Paste(text string) {
+	tm.t.Helper()
+	tm.must("pasting text", tm.be.paste(text))
+}
+
+// Capture returns the visible screen as plain text with trailing blanks
+// trimmed from each line.
 func (tm *Terminal) Capture() string {
 	tm.t.Helper()
-	out := tm.mustTmux("capture-pane", "capture-pane", "-p", "-t", "main")
-	return strings.TrimRight(out, "\n")
+	screen, err := tm.be.capture()
+	tm.must("capturing the screen", err)
+	return screen
 }
 
-// CaptureANSI returns the visible screen including escape sequences, for
-// assertions where styling is the thing under test.
+// CaptureANSI returns the visible screen including the escape sequences that
+// style it, for assertions where styling is the thing under test.
 func (tm *Terminal) CaptureANSI() string {
 	tm.t.Helper()
-	out := tm.mustTmux("capture-pane", "capture-pane", "-p", "-e", "-t", "main")
-	return strings.TrimRight(out, "\n")
+	screen, err := tm.be.captureANSI()
+	tm.must("capturing the styled screen", err)
+	return screen
 }
 
 // Lines returns the visible screen split into lines.
@@ -242,102 +223,32 @@ func (tm *Terminal) Lines() []string {
 // Alive reports whether the program is still running.
 func (tm *Terminal) Alive() bool {
 	tm.t.Helper()
-	out, err := tm.tmux("display-message", "-p", "-t", "main", "#{pane_dead}")
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(out) == "0"
+	return tm.be.alive()
 }
 
 // ExitStatus returns the program's exit status, and whether it has exited.
 //
-// A pane is dead the moment its terminal closes; its exit status arrives when
-// tmux reaps the child, which is a separate event and can come later. In that
-// window tmux prints the pane as dead with an empty status, and reading the
-// empty string as zero made an immediate `exit 3` report as a clean exit on a
-// loaded runner. A dead pane with no status yet is therefore not "exited" here:
-// the caller keeps polling, and the answer it gets is the program's own. A
-// program ended by a signal has no exit status; tmux reports the signal
-// instead, and that is returned the way a shell would, as 128 plus the number.
-//
-// tmux built with utempter, which is how Debian and Ubuntu package it, can
-// leave the pane's process a zombie without ever reaping it (tmux issue 4559).
-// The program has exited then, and the only place its status still exists is
-// the kernel's record of the zombie, which Linux exposes in /proc. That is read
-// as a last resort; where /proc does not exist the situation has not been seen.
+// A terminal is dead the moment the program closes it; the exit status arrives
+// when the program is reaped, which is a separate event and can come later. In
+// that window a backend can see a dead terminal with no status yet, and
+// reading that as zero made an immediate `exit 3` report as a clean exit on a
+// loaded runner. A dead terminal with no status yet is therefore not "exited"
+// here: the caller keeps polling, and the answer it gets is the program's own.
 func (tm *Terminal) ExitStatus() (int, bool) {
 	tm.t.Helper()
-	dead, status, signal, ok := tm.deathReport()
-	if !ok || !dead {
-		return 0, false
-	}
-	if code, err := strconv.Atoi(status); err == nil {
-		return code, true
-	}
-	if sig, err := strconv.Atoi(signal); err == nil {
-		return 128 + sig, true
-	}
-	if pid, err := tm.tmux("display-message", "-p", "-t", "main", "#{pane_pid}"); err == nil {
-		if code, ok := zombieStatus(strings.TrimSpace(pid)); ok {
-			return code, true
-		}
-	}
-	return 0, false
+	return tm.be.exitStatus()
 }
 
-// zombieStatus reads the wait status of an exited but unreaped process from
-// /proc/<pid>/stat, whose last field is the exit code in waitpid form. It
-// reports false unless the process is a zombie: a running process has no exit
-// code yet, and a reaped one has no /proc entry.
-func zombieStatus(pid string) (int, bool) {
-	raw, err := os.ReadFile("/proc/" + pid + "/stat")
-	if err != nil {
-		return 0, false
-	}
-	// The command name is in parentheses and may contain spaces, so the
-	// fields are read from after the closing parenthesis.
-	rest := string(raw)
-	if i := strings.LastIndexByte(rest, ')'); i >= 0 {
-		rest = rest[i+1:]
-	}
-	fields := strings.Fields(rest)
-	if len(fields) < 2 || fields[0] != "Z" {
-		return 0, false
-	}
-	wait, err := strconv.Atoi(fields[len(fields)-1])
-	if err != nil {
-		return 0, false
-	}
-	if sig := wait & 0x7f; sig != 0 {
-		return 128 + sig, true
-	}
-	return (wait >> 8) & 0xff, true
-}
-
-// deathReport reads what tmux knows about the pane's process: whether the pane
-// is dead, and the exit status or signal once the child has been reaped.
-func (tm *Terminal) deathReport() (dead bool, status, signal string, ok bool) {
-	out, err := tm.tmux("display-message", "-p", "-t", "main", "#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}")
-	if err != nil {
-		return false, "", "", false
-	}
-	parts := strings.SplitN(strings.TrimSpace(out), ":", 3)
-	if len(parts) != 3 {
-		return false, "", "", false
-	}
-	return parts[0] == "1", parts[1], parts[2], true
-}
-
-// WaitExit blocks until the program has exited and tmux has published its
-// status, and returns that status. It is the wait to use before asserting on an
-// exit code: Alive going false says the terminal closed, which is earlier than
-// the status being known, so a caller that polls Alive and then reads
-// ExitStatus once can read it in the gap.
+// WaitExit blocks until the program has exited and its status is known, and
+// returns that status. It is the wait to use before asserting on an exit code:
+// Alive going false says the terminal closed, which is earlier than the status
+// being known, so a caller that polls Alive and then reads ExitStatus once can
+// read it in the gap.
 //
-// A pane that is dead for the whole wait without tmux ever publishing a status
-// is reported through t.Fatalf with tmux's own view of the pane and the process
-// table, rather than as a timeout: that state means the child was not reaped,
-// and the reason is in that report, not in the program under test.
+// A program that has demonstrably exited without its status ever becoming
+// available is reported through t.Fatalf with the backend's own view of it,
+// rather than as a timeout: that state has a cause, and the cause is in that
+// report rather than in the program under test.
 func (tm *Terminal) WaitExit(timeout time.Duration) (int, bool) {
 	tm.t.Helper()
 	if timeout <= 0 {
@@ -345,15 +256,12 @@ func (tm *Terminal) WaitExit(timeout time.Duration) (int, bool) {
 	}
 	deadline := time.Now().Add(timeout)
 	for {
-		if code, exited := tm.ExitStatus(); exited {
+		if code, exited := tm.be.exitStatus(); exited {
 			return code, true
 		}
 		if !time.Now().Before(deadline) {
-			if dead, status, signal, ok := tm.deathReport(); ok && dead {
-				pid, _ := tm.tmux("display-message", "-p", "-t", "main", "#{pane_pid}")
-				ps, _ := exec.Command("ps", "-o", "pid,ppid,stat,comm", "-p", strings.TrimSpace(pid)).CombinedOutput()
-				tm.t.Fatalf("the pane died but tmux published no exit status within %s (status=%q signal=%q pane_pid=%s)\n%s",
-					timeout, status, signal, strings.TrimSpace(pid), ps)
+			if report, unreaped := tm.be.unreapedReport(); unreaped {
+				tm.t.Fatalf("the program exited but no exit status became available within %s\n%s", timeout, report)
 			}
 			return 0, false
 		}
@@ -420,15 +328,15 @@ func (tm *Terminal) WaitSettled(timeout time.Duration) string {
 	return previous
 }
 
-// WaitChanged blocks until the screen differs from previous and has then stopped
-// changing, and returns the new screen.
+// WaitChanged blocks until the screen differs from previous and has then
+// stopped changing, and returns the new screen.
 //
-// This is the wait to use after anything that should redraw. WaitSettled alone is
-// not enough: it returns as soon as the screen has held still for a moment, and
-// immediately after a resize the screen is still the old one and perfectly
+// This is the wait to use after anything that should redraw. WaitSettled alone
+// is not enough: it returns as soon as the screen has held still for a moment,
+// and immediately after a resize the screen is still the old one and perfectly
 // still, so a caller can be handed the frame from before the change and assert
-// against it. That is not a hypothetical — it is how a genuine recovery from the
-// too-small state looked like a failure to recover.
+// against it. That is not a hypothetical — it is how a genuine recovery from
+// the too-small state looked like a failure to recover.
 func (tm *Terminal) WaitChanged(previous string, timeout time.Duration) string {
 	tm.t.Helper()
 	if timeout <= 0 {
@@ -471,9 +379,9 @@ func (tm *Terminal) AssertFits() {
 	}
 }
 
-// visibleWidth counts the cells a captured line occupies. tmux capture-pane
-// without -e returns text with no escape sequences, so counting runes is right,
-// except that wide runes occupy two cells.
+// visibleWidth counts the cells a captured line occupies. A plain capture
+// carries no escape sequences, so counting runes is right, except that wide
+// runes occupy two cells.
 func visibleWidth(s string) int {
 	n := 0
 	for _, r := range s {
@@ -498,4 +406,15 @@ func runeCells(r rune) int {
 		return 2
 	}
 	return 1
+}
+
+// trimScreen puts a captured screen into the shape assertions are written
+// against: trailing blanks removed from each line, and the blank lines at the
+// bottom of a part-filled screen removed altogether.
+func trimScreen(screen string) string {
+	lines := strings.Split(screen, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " ")
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }

@@ -603,3 +603,82 @@ func TestAStoredResultIsNotReplacedByAnotherOne(t *testing.T) {
 		t.Fatalf("the corrected label was not stored: %v", err)
 	}
 }
+
+// TestDeviceNamesAreEitherRefusedOrStoredAsFiles covers the identifiers that
+// are not file names on Windows. "nul", "con", "aux", "prn" and the com and lpt
+// names are the machine's devices wherever they appear in a directory, so a
+// game saved as one of them would be written to nothing at all and read back as
+// nothing, and the player would have been told it was saved. Identifiers this
+// build hands out cannot collide with one — the alphabet they are drawn from
+// has no "o" in it and they are eight characters long — but an identifier can
+// also arrive from a caller or from the command line.
+//
+// Which of these names an extension rescues changed with Windows 11, so the
+// assertion is not that they are refused but that whichever way each one goes
+// is a safe one: refused, or stored as a file that reads back. That is the
+// property regardless of platform, which is why this test is not a Windows one.
+func TestDeviceNamesAreEitherRefusedOrStoredAsFiles(t *testing.T) {
+	s := newStore(t)
+	record, _ := sampleRecord(t)
+	for _, id := range []string{"nul", "con", "aux", "prn", "com1", "com9", "lpt1"} {
+		if err := s.Put(Saved{
+			ID: id, Kind: Hotseat, Player: "Ann", Opponent: "Ben", Record: record, Finished: true,
+		}); err != nil {
+			continue
+		}
+		got, err := s.Get(id)
+		if err != nil {
+			t.Errorf("game %q was stored and cannot be read back: %v", id, err)
+			continue
+		}
+		if got.ID != id || got.Opponent != "Ben" {
+			t.Errorf("game %q reads back as %+v", id, got)
+		}
+		if _, err := got.Game(); err != nil {
+			t.Errorf("game %q was stored and its position cannot be rebuilt: %v", id, err)
+		}
+		listed := false
+		for _, sv := range s.List() {
+			listed = listed || sv.ID == id
+		}
+		if !listed {
+			t.Errorf("game %q was stored and is not in the listing, so nothing landed in the directory", id)
+		}
+	}
+}
+
+// TestAStoreDirectoryWithSpacesAndAccents covers the path a real installation
+// has. A Windows user's application data directory holds the account name,
+// which has spaces and accents in it as often as not, and the files under it
+// are reached through calls that convert the path themselves rather than
+// through the standard library.
+func TestAStoreDirectoryWithSpacesAndAccents(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Bálint Kocska's Data", "twixtui config")
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, _ := sampleRecord(t)
+	id := "accented"
+	if err := s.Put(Saved{ID: id, Kind: Hotseat, Player: "Réka", Opponent: "Bálint", Record: record, Finished: true}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved := reopened.List(); len(saved) != 1 || saved[0].Player != "Réka" {
+		t.Fatalf("List = %+v, want the stored game", saved)
+	}
+	sv, err := reopened.Resolve("acc")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, err := sv.Game(); err != nil {
+		t.Errorf("rebuilding the position: %v", err)
+	}
+	if err := reopened.Delete(id); err != nil {
+		t.Errorf("Delete: %v", err)
+	}
+}

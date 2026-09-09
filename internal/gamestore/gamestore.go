@@ -172,8 +172,13 @@ func (s *Store) lockPath(id string) string {
 	return filepath.Join(s.dir, id+".lock")
 }
 
-// ValidateID rejects an identifier that could escape the store's directory or
-// collide with a shell pattern.
+// ValidateID rejects an identifier that could escape the store's directory,
+// collide with a shell pattern, or name something other than a file in it.
+//
+// Windows reserves historical DOS device basenames even in many paths carrying
+// extensions. The Windows implementation refuses those identifiers consistently
+// rather than allowing platform-version-dependent names. Generated identifiers
+// cannot collide; externally supplied identifiers still require this check.
 func ValidateID(id string) error {
 	if id == "" {
 		return errors.New("game identifier is empty")
@@ -187,6 +192,9 @@ func ValidateID(id string) error {
 		default:
 			return fmt.Errorf("game identifier %q may only hold lower-case letters, digits and hyphens", id)
 		}
+	}
+	if reservedName(id) {
+		return fmt.Errorf("game identifier %q names a device on this system rather than a file", id)
 	}
 	return nil
 }
@@ -288,7 +296,7 @@ func (s *Store) Get(id string) (Saved, error) {
 	if err != nil {
 		return Saved{}, err
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := readWholeFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Saved{}, fmt.Errorf("no saved game %q", id)
 	}
@@ -320,7 +328,7 @@ func (s *Store) List() []Saved {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
+		raw, err := readWholeFile(filepath.Join(s.dir, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -403,8 +411,10 @@ func (s *Store) Resolve(prefix string) (Saved, error) {
 	return Saved{}, fmt.Errorf("%q matches several games: %s", prefix, strings.Join(ids, ", "))
 }
 
-// writeFileAtomic writes through a temporary file in the same directory so that
-// an interrupted write cannot leave a half-written game behind.
+// writeFileAtomic writes through a temporary file in the same directory and
+// puts it in the target's place, so that an interrupted write cannot leave a
+// half-written game behind. What each platform needs for that step is in
+// replaceFile.
 func writeFileAtomic(path string, body []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -428,5 +438,5 @@ func writeFileAtomic(path string, body []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return replaceFile(tmpName, path)
 }

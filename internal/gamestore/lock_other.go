@@ -1,12 +1,13 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package gamestore
 
-// lockGame does nothing on platforms without advisory whole-file locking, so
+// lockGame does nothing on a platform with no whole-file locking of its own, so
 // two twixtui processes sharing a configuration directory there can interleave
 // the check and the write and let the second finish of one game replace the
-// first. The release targets, macOS and Linux, both take the unix
-// implementation instead.
+// first. The platforms twixtui is built and tested for — macOS, Linux and
+// Windows — each have an implementation instead, so this is reached only by a
+// build for somewhere nobody has looked yet.
 func lockGame(path string) (func(), error) {
 	return func() {}, nil
 }

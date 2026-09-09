@@ -451,3 +451,32 @@ func TestWriteSweepsStaleTempsButNotFreshOnes(t *testing.T) {
 		t.Fatalf("recent temporary file was removed: %v", err)
 	}
 }
+
+// TestAConfigurationDirectoryWithSpacesAndAccents covers the path a real
+// installation has. A Windows user's application data directory holds the
+// account name, which has spaces and accents in it as often as not, and the
+// store's files there are reached through calls that convert the path
+// themselves rather than through the standard library. The round trip is done
+// through a second store, so what is being read back is the file and not the
+// first store's memory of it.
+func TestAConfigurationDirectoryWithSpacesAndAccents(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Bálint Kocska's Data", "twixtui config")
+	s := openStore(t, dir)
+	if _, err := s.Create("Réka Nagy"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := s.SetCurrent("Réka Nagy"); err != nil {
+		t.Fatalf("SetCurrent: %v", err)
+	}
+
+	reopened := openStore(t, dir)
+	if list := reopened.List(); len(list) != 1 || list[0].Name != "Réka Nagy" {
+		t.Fatalf("List = %+v, want the stored profile", list)
+	}
+	if p, ok := reopened.Current(); !ok || p.Name != "Réka Nagy" {
+		t.Errorf("Current = %+v, %v, want the chosen profile", p, ok)
+	}
+	if err := reopened.Delete("Réka Nagy"); err != nil {
+		t.Errorf("Delete: %v", err)
+	}
+}

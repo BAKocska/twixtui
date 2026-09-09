@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -344,11 +345,10 @@ func TestThemeRolesAreToldApart(t *testing.T) {
 	}
 }
 
-// TestSelectCreatesThePrivateConfigDirectory checks this writer agrees with the
-// others about the mode. The configuration directory holds profiles, saved games
-// and the result log, and whichever writer runs first decides the mode, so a
-// single writer using a laxer one is enough to leave it world-readable.
-func TestSelectCreatesThePrivateConfigDirectory(t *testing.T) {
+// Creating the store must work on every supported platform. Unix mode bits
+// additionally enforce owner-only access; Windows uses inherited ACLs, which
+// os.FileMode does not describe.
+func TestSelectCreatesTheConfigDirectory(t *testing.T) {
 	base := t.TempDir()
 	dir := filepath.Join(base, "twixtui")
 	if _, err := Select(dir, "slate"); err != nil {
@@ -358,14 +358,25 @@ func TestSelectCreatesThePrivateConfigDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o700 {
-		t.Errorf("configuration directory created with mode %#o, want 0700", perm)
+	if !info.IsDir() {
+		t.Fatal("the configuration path is not a directory")
+	}
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Errorf("configuration directory created with mode %#o, want 0700", perm)
+		}
 	}
 	settings, err := os.Stat(filepath.Join(dir, settingsFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := settings.Mode().Perm(); perm&0o077 != 0 {
-		t.Errorf("settings file created with mode %#o, which is readable by others", perm)
+	if runtime.GOOS != "windows" {
+		if perm := settings.Mode().Perm(); perm&0o077 != 0 {
+			t.Errorf("settings file created with mode %#o, which is readable by others", perm)
+		}
+	}
+	selected, err := Selected(dir)
+	if err != nil || selected.Name != "slate" {
+		t.Fatalf("the new directory did not preserve its selected theme: %v %v", selected, err)
 	}
 }

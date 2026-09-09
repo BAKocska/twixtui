@@ -204,3 +204,54 @@ jobs:
         run: |
           go test -race -count=1 ./internal/netplay/ ./internal/app/ ./internal/cli/ \
             ./internal/leaderboard/ ./internal/profile/
+
+  # Native Windows executes the same product scenarios through ConPTY. The
+  # script fails if any terminal test skips or if its positive controls did
+  # not pass; cross-compilation and WSL cannot satisfy this job.
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: amd64
+          - os: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Native tests and mandatory terminal coverage
+        shell: pwsh
+        run: |
+          ./.github/scripts/test-windows.ps1 -ExpectedArch '${{ matrix.arch }}'
+
+      # Go 1.26 has a Windows race detector for amd64, not arm64. ARM64 runs
+      # the native functional/concurrency tests above, never an emulated race job.
+      - name: Windows race detector
+        if: matrix.arch == 'amd64'
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          gcc --version
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows race detector requires the runner C compiler.' }
+          go test -race -count=1 -timeout 5m ./internal/netplay ./internal/app ./internal/cli ./internal/leaderboard ./internal/profile ./internal/gamestore
+          if ($LASTEXITCODE -ne 0) { throw 'Windows race tests failed.' }
+          go test -race -count=1 -parallel 4 -timeout 5m ./internal/e2e
+          if ($LASTEXITCODE -ne 0) { throw 'Windows terminal harness race tests failed.' }
+
+      - name: Keep native execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-tests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/windows-tests
+          if-no-files-found: error
