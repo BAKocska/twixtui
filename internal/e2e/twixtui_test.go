@@ -584,3 +584,93 @@ digest 58bd5b8fa99be99f
 		t.Fatal("asking for advice changed or finished the saved game")
 	}
 }
+
+func TestReplayEntryJumpPreservesRecordAcrossResize(t *testing.T) {
+	t.Parallel()
+	rs := game.Std
+	rs.Size = 6
+	g := game.MustNew(rs)
+	for i, move := range []string{"B1", "F2", "C3", "F3", "D5", "F4", "B6"} {
+		if i < 5 {
+			for range 2 {
+				if err := g.OfferDraw(g.Turn()); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if err := g.PlayNotation(move); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if g.Entries() != 17 || g.Ply() != 7 || g.Result().Winner() != game.Vertical {
+		t.Fatal("replay fixture no longer separates entries, plies and a connection result")
+	}
+	record, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := t.TempDir()
+	store, err := gamestore.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := gamestore.NewID()
+	if err := store.Put(gamestore.Saved{
+		ID: id, Kind: gamestore.Imported, Player: "Vertical", Opponent: "Horizontal",
+		Record: record.Encode(), Finished: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tm := sessionIn(t, cfg, "game replay "+id, 120, 30)
+	tm.MustWaitFor("step 17 of 17", 20*time.Second)
+	end := tm.WaitSettled(10 * time.Second)
+	entry := regexp.MustCompile(`>\s*17\s+B6`)
+	if !tm.Alive() || !entry.MatchString(end) {
+		t.Fatalf("replay does not expose its selected final entry:\n%s", end)
+	}
+	tm.SendKeys(":")
+	tm.WaitChanged(end, 10*time.Second)
+	tm.SendKeys("4", "Enter")
+	tm.MustWaitFor("step 4 of 17", 10*time.Second)
+	middle := tm.WaitSettled(10 * time.Second)
+	if !regexp.MustCompile(`>\s*4\s+h:draw\?`).MatchString(middle) ||
+		!strings.Contains(middle, "moves played: 1") {
+		t.Fatalf("numeric jump counted plies instead of entries:\n%s", middle)
+	}
+	tm.ResizeAndWait(20, 8, 10*time.Second)
+	tm.AssertFits()
+	restored := tm.ResizeAndWait(120, 30, 10*time.Second)
+	if restored != middle {
+		t.Fatalf("replay lost entry or list position after resize\nbefore:\n%s\nafter:\n%s", middle, restored)
+	}
+	tm.SendKeys(":")
+	tm.WaitChanged(restored, 10*time.Second)
+	tm.SendText("9999999999999999999999999999999999999999")
+	tm.SendKeys("Enter")
+	tm.MustWaitFor("range 0..17", 10*time.Second)
+	rejected := tm.WaitSettled(10 * time.Second)
+	if !strings.Contains(rejected, "step 4 of 17") || !strings.Contains(rejected, "99") {
+		t.Fatalf("out-of-range input changed the replay or lost the correctable field:\n%s", rejected)
+	}
+	tm.SendKeys("Escape")
+	cancelled := tm.WaitChanged(rejected, 10*time.Second)
+	if cancelled != restored {
+		t.Fatalf("cancelling the rejected jump did not restore the prior frame:\n%s", cancelled)
+	}
+	tm.SendKeys("g")
+	tm.MustWaitFor("step 0 of 17", 10*time.Second)
+	tm.SendKeys("G")
+	tm.MustWaitFor("step 17 of 17", 10*time.Second)
+	tm.SendKeys("q")
+	code, exited := tm.WaitExit(20 * time.Second)
+	if !exited || code != 0 {
+		t.Fatalf("replay did not exit cleanly: exited=%v status=%d", exited, code)
+	}
+	saved, err := store.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Record != record.Encode() {
+		t.Fatal("read-only replay changed the canonical game record")
+	}
+}

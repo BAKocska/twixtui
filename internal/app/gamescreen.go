@@ -407,7 +407,7 @@ func newGameScreen(d Deps, cfg GameConfig) (*gameScreen, error) {
 		s.recorded = true
 		s.stopped = true
 		s.notice = s.resultText(res)
-		s.winning = s.winningChain()
+		s.winning = winningChain(s.g)
 	}
 	return s, nil
 }
@@ -1367,7 +1367,7 @@ func (s *gameScreen) finish() tea.Cmd {
 	s.cancelBot()
 	s.botThinking = false
 	s.notice = s.resultText(res)
-	s.winning = s.winningChain()
+	s.winning = winningChain(s.g)
 	s.message = ""
 
 	// Save first, and rate only what the store took. The store is what decides
@@ -1666,7 +1666,7 @@ func (s *gameScreen) highlights() []game.Point {
 }
 
 // winningChain is the run of the winner's linked pegs that joins their two
-// borders, empty unless the game was won by making one.
+// borders in g, empty unless that game was won by making one.
 //
 // A player is told who won and then has to find the connection by eye; on a
 // full-size board that means tracing a wire through a couple of hundred pegs,
@@ -1680,13 +1680,19 @@ func (s *gameScreen) highlights() []game.Point {
 // The run comes back from the far border towards the near one, which is the
 // order the predecessors give and which nothing downstream cares about: the
 // caller marks holes, not a path.
-func (s *gameScreen) winningChain() []game.Point {
-	res := s.g.Result()
+//
+// It takes the position rather than a screen because two screens want the same
+// answer: a game that has just been won marks the chain for the player who has
+// to find it, and a review of a finished record marks it on the position that
+// won. Neither is a search worth repeating per frame, so both work it out once
+// and keep the holes.
+func winningChain(g *game.Game) []game.Point {
+	res := g.Result()
 	winner := res.Winner()
 	if !res.Over() || res.Reason != game.Connection || winner == game.NoPlayer {
 		return nil
 	}
-	n := s.g.Size()
+	n := g.Size()
 	at := func(p game.Point) int { return p.Row*n + p.Col }
 	prev := make([]int, n*n)
 	for i := range prev {
@@ -1699,7 +1705,7 @@ func (s *gameScreen) winningChain() []game.Point {
 		if winner == game.Horizontal {
 			p = game.Point{Col: 0, Row: i}
 		}
-		if s.g.At(p) != winner {
+		if g.At(p) != winner {
 			continue
 		}
 		seen[at(p)] = true
@@ -1719,13 +1725,13 @@ func (s *gameScreen) winningChain() []game.Point {
 				cur = game.Point{Col: i % n, Row: i / n}
 			}
 		}
-		mask := s.g.LinkMask(p)
+		mask := g.LinkMask(p)
 		for d := game.Dir(0); d < game.NumDirs; d++ {
 			if mask&(1<<d) == 0 {
 				continue
 			}
 			q := p.Add(d)
-			if !s.g.InBounds(q) || s.g.At(q) != winner || seen[at(q)] {
+			if !g.InBounds(q) || g.At(q) != winner || seen[at(q)] {
 				continue
 			}
 			seen[at(q)] = true

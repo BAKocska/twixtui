@@ -160,11 +160,14 @@ wrote about its own games, they are yours to edit, and no digest covers them.`,
 
 	replay := &cobra.Command{
 		Use:   "replay <id>",
-		Short: "Step through a saved game move by move",
-		Long: `Step through a saved game move by move.
+		Short: "Review a saved game's numbered entries",
+		Long: `Review a saved game's numbered entries.
 
-Opens the board and walks forwards and backwards through the game with the same
-keys used to play it.`,
+Opens at the final entry with a scrolling entry list. Use h/l (or left/right)
+to step, k/j (or up/down) to move five entries, and g/G for the ends.
+Press : to enter an entry number: 0 is the initial position, enter jumps and
+escape cancels. Draw offers count as entries, not moves. A winning connection
+is highlighted only at the final entry. Review never changes the saved record.`,
 		Args:              exactArgs(1),
 		ValidArgsFunction: opts.gameIDCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
