@@ -13,6 +13,7 @@ separately in [rules.md](rules.md), with the source audit trail in
 - [Install](#install)
   - [With Go](#with-go)
   - [Download a binary](#download-a-binary)
+  - [On Windows](#on-windows)
 - [Quick start](#quick-start)
 - [The first run](#the-first-run)
 - [The menu](#the-menu)
@@ -44,8 +45,8 @@ Go 1.26 or newer. The binary lands in `$(go env GOPATH)/bin`.
 
 ### Download a binary
 
-Every release publishes binaries for four platforms, built without cgo so they carry
-no third-party dependencies. Take the
+Every published release carries binaries for four platforms, built without cgo so they
+carry no third-party dependencies. Take the
 archive for yours from the
 [releases page](https://github.com/BAKocska/twixtui/releases/latest):
 
@@ -80,6 +81,57 @@ xattr -d com.apple.quarantine ./twixtui
 
 Downloading with `curl -LO` instead of a browser avoids the attribute altogether, since
 `curl` does not set it.
+
+### On Windows
+
+Windows runs natively — x64 and ARM64, the same product, no WSL layer and no
+emulation — and no release includes it yet. `v0.4.0`, which is what
+`go install ...@latest` resolves to, predates the console and storage work, and the
+releases page has no `windows_*` archive on it. So on Windows, build this checkout. In
+PowerShell:
+
+```
+git clone --branch feat/windows --single-branch https://github.com/BAKocska/twixtui
+cd twixtui
+go build -o twixtui.exe ./cmd/twixtui
+.\twixtui.exe
+```
+
+Go 1.26 or newer, and nothing else: no C compiler to build it, nothing to install
+beside it to run it.
+
+**Windows Terminal with PowerShell 7 on Windows 11 is recommended.** CI exercises
+the Windows console through ConPTY on x64 and ARM64; it does not verify every
+desktop terminal host.
+
+State lives in `%AppData%\twixtui`: profiles, the leaderboard, saved games and the
+theme choice, in the per-user configuration directory Windows names for exactly this.
+`--config DIR` and `TWIXTUI_CONFIG_DIR` behave as they do everywhere else, with the
+same precedence — the flag first, then the variable, then that default — and a
+present-but-empty value of either is still refused rather than quietly falling back.
+Quote a path with a space in it, as PowerShell requires:
+
+```
+.\twixtui.exe --config 'C:\Users\Ada\twixt games' profile list
+$env:TWIXTUI_CONFIG_DIR = 'C:\Users\Ada\twixt games'
+```
+
+Tab completion has [a PowerShell script](#shell-completion) of its own.
+
+**When a release does carry Windows,** its archives will be ZIP files —
+`twixtui_<version>_windows_amd64.zip` and `twixtui_<version>_windows_arm64.zip` — with
+the same `checksums.txt` beside them as every other platform's. Check the download
+before extracting it:
+
+```
+Get-FileHash .\twixtui_<version>_windows_amd64.zip -Algorithm SHA256
+```
+
+and compare the hash it prints with the line for that filename in `checksums.txt`. If
+they match, use `Expand-Archive` and put `twixtui.exe` somewhere on your `PATH`.
+These builds are not code-signed, so a downloaded one may trigger SmartScreen.
+A matching checksum verifies integrity, not publisher trust or SmartScreen
+reputation. Review any security prompt yourself; do not disable Windows protections.
 
 ## Quick start
 
@@ -917,7 +969,9 @@ twixtui completion fish > ~/.config/fish/completions/twixtui.fish
 twixtui completion powershell | Out-String | Invoke-Expression
 ```
 
-Put that line in your PowerShell profile to make it permanent.
+Put that line in your PowerShell profile (`$PROFILE`) to make it permanent.
+Native CI checks dynamic tier and profile completion through PowerShell 7's
+completion engine, including quoted configuration paths with spaces and Unicode.
 
 ## Building from source
 
@@ -928,6 +982,26 @@ go build ./cmd/twixtui
 go test ./...
 ```
 
-The end-to-end suite drives a real terminal through `tmux`. Without `tmux` on the
-`PATH` those tests skip rather than fail, so install it if you want the whole suite to
-actually run.
+On Windows, use the [Windows checkout instructions](#on-windows), then in PowerShell:
+
+```
+go build -o twixtui.exe ./cmd/twixtui
+go test ./...
+```
+
+The end-to-end suite uses `tmux` on macOS and Linux; install it to avoid skipped
+terminal tests. Windows uses ConPTY and requires PowerShell 7 (`pwsh`) for its
+completion probe. Missing Windows prerequisites fail rather than skip. Run from
+native Windows: WSL exercises Linux, not the Windows implementation.
+
+The game processes in the end-to-end suite use temporary configuration directories,
+not the player's normal `%AppData%\twixtui` store. CI additionally checks the
+checksummed GoReleaser ZIPs and drives their extracted executables on both Windows
+architectures.
+
+`go test -race` needs cgo and a C compiler. On Windows that means x64, where the
+`gcc` on a GitHub runner is enough; Go 1.26 has no race detector for windows/arm64, so
+an ARM64 machine runs the functional and concurrency tests without it rather than under
+emulation. The project's own race runs leave the bot's search out on every platform:
+the detector slows the search enough to change what its wall-clock budgets measure, so
+a strength number produced under it would not be the engine's.

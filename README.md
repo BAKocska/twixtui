@@ -31,7 +31,7 @@ release. The manual describes today's four effort tiers and placement-only advic
 
 <p align="center">
   <a href="https://github.com/BAKocska/twixtui/actions/workflows/ci.yml"><img src="https://github.com/BAKocska/twixtui/actions/workflows/ci.yml/badge.svg" alt="CI"></a> <a href="https://github.com/BAKocska/twixtui/releases/latest"><img src="https://img.shields.io/github/v/release/BAKocska/twixtui?sort=semver&color=561d25" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26 or newer"> <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-561d25" alt="MIT licence"></a> <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey" alt="macOS and Linux, arm64 and x86-64">
+  <img src="https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26 or newer"> <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-561d25" alt="MIT licence"></a> <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="macOS, Linux and Windows, on arm64 and x86-64">
 </p>
 
 > [!NOTE]
@@ -58,6 +58,17 @@ Go 1.26 or newer. Or take a prebuilt binary — macOS or Linux, arm64 or x86-64,
 [releases page](https://github.com/BAKocska/twixtui/releases/latest). On macOS a binary
 downloaded through a browser needs its quarantine attribute cleared first;
 [the manual](docs/MANUAL.md#download-a-binary) has that and the checksum command.
+
+**Windows support is unreleased.** Build this checkout in PowerShell; the current
+`v0.4.0` release has no Windows ZIPs:
+
+```
+go build -o twixtui.exe ./cmd/twixtui
+.\twixtui.exe
+```
+
+[The manual](docs/MANUAL.md#on-windows) has the terminal to run it in, where it keeps
+its state, and what the test suite needs.
 
 ## Quick start
 

@@ -7,6 +7,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Native Windows support on x64 and ARM64: cross-process `LockFileEx` locking,
+  long paths, read-only store access, and rejection of DOS-device game identifiers.
+  On filesystems supporting POSIX rename, replacement preserves existing
+  delete-sharing readers while new opens see the new data. Refused writes leave
+  the previous file intact; Windows does not claim Unix directory-fsync durability.
+- The end-to-end suite runs natively on Windows in a ConPTY pseudoconsole it
+  owns, covering the scenarios the tmux backend covers plus PowerShell
+  completion and an execution-identity check that refuses a cross-compiled or
+  emulated pass. CI is configured to run it from source and against a
+  checksummed snapshot archive on both architectures, and release packaging
+  adds `windows_amd64` and `windows_arm64` ZIPs under the existing
+  `checksums.txt`. Windows downloads are not published yet.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added
