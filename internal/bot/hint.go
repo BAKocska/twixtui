@@ -23,6 +23,14 @@ import (
 // proved lost or drawn under the printed rules, which let a turn join or
 // withdraw a link as well. A claim that the game is over comes from a
 // game.Result read back out of replaying the move, never from the evaluation.
+//
+// How many pegs the asking side already has is read off the board for the same
+// reason. The decomposition holds distances, forced holes and reach, and has no
+// notion of a side that has not started: it cannot tell a first peg apart from
+// a chain being carried on, so a template that says "carry your chain on" needs
+// the board's own count behind it and not a difference of distances. The swap
+// option, which the second player's first turn may also have, is not searched
+// at all; PlacementOnlyPolicy states that with every hint.
 
 // reason names why a move scored best.
 type reason int
@@ -34,6 +42,7 @@ const (
 	reasonSealedOut
 	reasonOnlyDefence
 	reasonDefence
+	reasonOpening
 	reasonBlock
 	reasonAdvance
 	reasonSetup
@@ -43,7 +52,7 @@ const (
 
 var reasonNames = [...]string{
 	"win", "deadlock", "seal", "sealed-out", "only-defence", "defence",
-	"block", "advance", "setup", "ground", "balanced",
+	"opening", "block", "advance", "setup", "ground", "balanced",
 }
 
 func (r reason) String() string {
@@ -54,7 +63,9 @@ func (r reason) String() string {
 }
 
 // deltas is the evaluation decomposition of one candidate move together with
-// the threat context the search found around it.
+// the context the prose needs around it: the threat the search found, and the
+// two readings taken off the game itself — what the move did to the result,
+// and whether the asking side has a peg down at all.
 type deltas struct {
 	// Before and After are the terms for the side asking, on either side of
 	// the move.
@@ -74,6 +85,11 @@ type deltas struct {
 	// evaluation: a Dist of zero is the placement sweep's own reading of the
 	// board, and a reading cannot license the claim that the game is over.
 	Won bool
+	// OwnPegs counts the asking side's pegs on the board before the move. It
+	// is read from the game rather than from the evaluation, which measures
+	// walks and knows nothing about whether the side has started, and it is
+	// what separates a first peg from a chain being carried on.
+	OwnPegs int
 	// Partner and Carriers describe a setup the move creates: an own peg the
 	// move now has two independent ways of linking to, and the holes those
 	// links would run through.
@@ -118,9 +134,22 @@ func chooseReason(d deltas) reason {
 		return reasonOnlyDefence
 	case d.Threatened && d.After.OppDist >= 2:
 		return reasonDefence
+	// A side with no peg on the board has no chain, so the arithmetic reasons
+	// below cannot speak for it: each of them compares the route left with the
+	// one the side was already following. This case sits under everything that
+	// outranks a first peg — a result read back off the game, a reading that
+	// finds no route for a side, and an opponent one peg from a finished chain
+	// — and it claims nothing beyond the two counts its prose prints.
+	case d.OwnPegs == 0 && !d.Won && !d.Threatened &&
+		d.After.Dist > 0 && d.After.OppDist > 0:
+		return reasonOpening
 	case d.measured() && d.block() > 0 && d.block() > d.advance():
 		return reasonBlock
-	case d.measured() && d.advance() > 0 && d.advance() >= d.block():
+	// The own-peg count belongs to the advance claim itself and not only to the
+	// case above: "carry your chain on" is false of a first peg however far the
+	// distance fell, and the opening case is passed over whenever a threat or a
+	// result outranks it.
+	case d.measured() && d.OwnPegs > 0 && d.advance() > 0 && d.advance() >= d.block():
 		return reasonAdvance
 	case d.measured() && d.advance() == 0 && d.block() <= 0 && d.freed() > 0:
 		return reasonSetup
@@ -185,6 +214,22 @@ func verifyReason(r reason, d deltas) error {
 		if d.After.OppDist != NoChain && d.After.OppDist < 2 {
 			return errors.New("claimed a defence that leaves the winning hole open")
 		}
+	case reasonOpening:
+		if d.OwnPegs != 0 {
+			return fmt.Errorf("claimed a first peg with %d of the asking side's pegs already on the board", d.OwnPegs)
+		}
+		if d.Won {
+			return errors.New("claimed a route is being started by a move that ended the game")
+		}
+		if d.Threatened {
+			return errors.New("claimed a route is being started while the opponent is one peg from a finished chain")
+		}
+		if d.After.Dist <= 0 {
+			return fmt.Errorf("claimed a route to start but the distance afterwards is %s", pegsPhrase(d.After.Dist))
+		}
+		if d.After.OppDist <= 0 {
+			return fmt.Errorf("claimed a route to start while the opponent's distance is %s", pegsPhrase(d.After.OppDist))
+		}
 	case reasonBlock:
 		if !d.measured() {
 			return errors.New("claimed a measured block where one side has no route to measure")
@@ -199,6 +244,9 @@ func verifyReason(r reason, d deltas) error {
 	case reasonAdvance:
 		if !d.measured() {
 			return errors.New("claimed measured progress where one side has no route to measure")
+		}
+		if d.OwnPegs <= 0 {
+			return errors.New("claimed a chain carried on with no peg of the asking side on the board")
 		}
 		if d.advance() <= 0 {
 			return fmt.Errorf("claimed progress that changes own distance by %d", d.advance())
@@ -335,6 +383,13 @@ func describe(r reason, d deltas, me game.Player, move game.Point) (headline, de
 		return lead + " to stop " + opp.String() + " finishing.",
 			fmt.Sprintf("%s was one peg from joining %s; this pushes them back to %s.%s",
 				titled(opp), borderNames(opp), pegsPhrase(d.After.OppDist), defencePhrase(d.Defences))
+	case reasonOpening:
+		// Two counts and the fact of having no peg down. Which hole among the
+		// first pegs is the search's own ordering, and nothing here measures
+		// the centre, a shape or a plan, so nothing here says so.
+		return lead + " to start a route.",
+			fmt.Sprintf("You have no peg on the board yet, so there is no chain to carry on: this is a first peg. From here your cheapest route joining %s costs %s, while %s needs %s.",
+				borderNames(me), pegsPhrase(d.After.Dist), titled(opp), pegsPhrase(d.After.OppDist))
 	case reasonBlock:
 		return lead + " to cut " + opp.String() + "'s cheapest route.",
 			fmt.Sprintf("It lengthens their remaining chain from %s to %s, while yours still needs %s.",
@@ -624,6 +679,7 @@ func (e *engine) explain(ctx context.Context, g *game.Game) (Hint, reason, delta
 		Defences:   res.defences,
 		Close:      len(res.moves) > 1 && res.moves[0].exact && res.moves[1].exact && res.moves[0].score-res.moves[1].score < distWeight,
 		Won:        outcome.Winner() == me,
+		OwnPegs:    g.PegCount(me),
 	}
 	if partner, carriers, gap, ok := findSetup(&after, me, res.best); ok {
 		d.Partner, d.Carriers, d.Gap, d.HasSetup = partner, carriers, gap, true

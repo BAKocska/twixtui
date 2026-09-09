@@ -63,6 +63,11 @@ func TestHintReasonMatchesDecomposition(t *testing.T) {
 		if got := after.terms(me); got != d.After {
 			t.Fatalf("hint claims after-terms %+v, engine says %+v\n%s", d.After, got, g)
 		}
+		// The own-peg count is board context and not a difference of terms,
+		// so it is checked against the board the advice was asked about.
+		if got := g.PegCount(me); got != d.OwnPegs {
+			t.Fatalf("hint claims %d pegs of its own, the board has %d\n%s", d.OwnPegs, got, g)
+		}
 		if err := verifyReason(r, d); err != nil {
 			t.Fatalf("hint reason %v is not supported by the decomposition: %v\n%+v\n%s", r, err, d, g)
 		}
@@ -150,14 +155,20 @@ func TestVerifyReasonRejectsWrongClaims(t *testing.T) {
 			d:    deltas{Before: Terms{Dist: 5, OppDist: 4}, After: Terms{Dist: 3, OppDist: 5}},
 		},
 		{
+			// These two cases are about the arithmetic, so the side has pegs of
+			// its own down: without them the own-peg guard would turn the claim
+			// away before the distances were looked at, and the case below
+			// covers that guard on its own.
 			name: "advance claimed when the distance did not fall",
 			r:    reasonAdvance,
-			d:    deltas{Before: Terms{Dist: 4, OppDist: 4}, After: Terms{Dist: 4, OppDist: 6}},
+			d: deltas{Before: Terms{Dist: 4, OppDist: 4}, After: Terms{Dist: 4, OppDist: 6},
+				OwnPegs: 2},
 		},
 		{
 			name: "advance claimed when blocking dominates",
 			r:    reasonAdvance,
-			d:    deltas{Before: Terms{Dist: 5, OppDist: 4}, After: Terms{Dist: 4, OppDist: 7}},
+			d: deltas{Before: Terms{Dist: 5, OppDist: 4}, After: Terms{Dist: 4, OppDist: 7},
+				OwnPegs: 2},
 		},
 		{
 			name: "loosened plan claimed while the distance fell",
@@ -196,6 +207,31 @@ func TestVerifyReasonRejectsWrongClaims(t *testing.T) {
 			r:    reasonBlock,
 			d:    deltas{Before: Terms{Dist: 4, OppDist: NoChain}, After: Terms{Dist: 4, OppDist: NoChain}},
 		},
+		{
+			name: "opening claimed with a peg of its own already down",
+			r:    reasonOpening,
+			d: deltas{Before: Terms{Dist: 5, OppDist: 4}, After: Terms{Dist: 4, OppDist: 4},
+				OwnPegs: 1},
+		},
+		{
+			name: "opening claimed while the opponent is one peg from finishing",
+			r:    reasonOpening,
+			d: deltas{Before: Terms{Dist: 6, OppDist: 1}, After: Terms{Dist: 6, OppDist: 3},
+				Threatened: true, Defences: 1},
+		},
+		{
+			name: "opening claimed where no route is left to start",
+			r:    reasonOpening,
+			d:    deltas{Before: Terms{Dist: 6, OppDist: 4}, After: Terms{Dist: NoChain, OppDist: 4}},
+		},
+		{
+			// Every other term supports progress, so the own-peg count is the
+			// only thing left to reject: this is the released defect's shape,
+			// a distance that fell for a side with no chain to carry on.
+			name: "chain carried on with no peg of its own on the board",
+			r:    reasonAdvance,
+			d:    deltas{Before: Terms{Dist: 5, OppDist: 4}, After: Terms{Dist: 4, OppDist: 4}},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -230,6 +266,7 @@ func TestChooseReasonAlwaysVerifies(t *testing.T) {
 			Threatened: src.IntN(2) == 0,
 			Defences:   src.IntN(4),
 			Won:        src.IntN(2) == 0,
+			OwnPegs:    src.IntN(3),
 		}
 		r := chooseReason(d)
 		if err := verifyReason(r, d); err != nil {
@@ -311,6 +348,167 @@ func TestHintOnAThreatCallsItTheOnlyDefence(t *testing.T) {
 	t.Logf("headline: %s", h.Headline)
 	t.Logf("detail:   %s", h.Detail)
 	t.Logf("marks:    %v", h.Highlight)
+}
+
+// TestHintOnAFirstPegSaysStartARoute is RM-32's regression. A side with no peg
+// of its own on the board has no chain, and the advance wording told it to
+// "carry your chain on" all the same. Both sides get a turn with nothing of
+// theirs down — Vertical's opening peg and Horizontal's answer to it — and all
+// the prose may say is that a route is being started.
+func TestHintOnAFirstPegSaysStartARoute(t *testing.T) {
+	cases := []struct {
+		name  string
+		moves []string
+		me    game.Player
+	}{
+		{"vertical opens", nil, game.Vertical},
+		{"horizontal answers the opening peg", []string{"D4"}, game.Horizontal},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := game.MustNew(smallRules(8))
+			playMoves(t, g, c.moves...)
+			if g.Turn() != c.me {
+				t.Fatalf("expected %s to move, got %s", c.me, g.Turn())
+			}
+			if n := g.PegCount(c.me); n != 0 {
+				t.Fatalf("the fixture gives %s %d pegs, so this is not a first peg", c.me, n)
+			}
+			h, r, d, err := hintEngine(200*time.Millisecond).explain(context.Background(), g)
+			if err != nil {
+				t.Fatalf("explain: %v", err)
+			}
+			if d.OwnPegs != 0 {
+				t.Fatalf("the decomposition claims %d own pegs on a board with none", d.OwnPegs)
+			}
+			if r != reasonOpening {
+				t.Fatalf("reason = %v, want opening (deltas %+v)", r, d)
+			}
+			if !strings.Contains(h.Headline, h.Move.String()) {
+				t.Errorf("headline %q does not name the move %v", h.Headline, h.Move)
+			}
+			// The one number the detail is entitled to: the route the move
+			// leaves, in the words the sentinel-safe renderer chose for it.
+			if !strings.Contains(h.Detail, pegsPhrase(d.After.Dist)) {
+				t.Errorf("detail %q does not state the route it measured (%s)", h.Detail, pegsPhrase(d.After.Dist))
+			}
+			// What a first peg is popularly said to achieve, none of which the
+			// decomposition holds a number for.
+			low := strings.ToLower(h.Headline + " " + h.Detail)
+			for _, unsupported := range []string{"carry your chain", "centre", "center", "control", "setup", "tempo", "opening book", "strongest"} {
+				if strings.Contains(low, unsupported) {
+					t.Errorf("prose claims %q, which nothing measured supports: %q / %q", unsupported, h.Headline, h.Detail)
+				}
+			}
+			if len(h.Highlight) == 0 || h.Highlight[0] != h.Move {
+				t.Fatalf("highlight %v does not start at the recommended move %v", h.Highlight, h.Move)
+			}
+			if h.Policy != PlacementOnlyPolicy() {
+				t.Errorf("hint states policy %s, want %s", h.Policy, PlacementOnlyPolicy())
+			}
+			t.Logf("headline: %s", h.Headline)
+			t.Logf("detail:   %s", h.Detail)
+		})
+	}
+}
+
+// TestHintOnAnEstablishedChainNeverSaysOpening is the control the case above
+// needs: once a side has pegs of its own down, the opening wording describes
+// some other position, whichever reason the numbers pick.
+func TestHintOnAnEstablishedChainNeverSaysOpening(t *testing.T) {
+	g := game.MustNew(smallRules(8))
+	playMoves(t, g, "D4", "G2", "D6", "G3")
+	me := g.Turn()
+	if n := g.PegCount(me); n < 2 {
+		t.Fatalf("the fixture leaves %s with %d pegs, so there is no chain to control for", me, n)
+	}
+	h, r, d, err := hintEngine(200*time.Millisecond).explain(context.Background(), g)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	if got := g.PegCount(me); d.OwnPegs != got {
+		t.Fatalf("the decomposition claims %d own pegs, the board has %d", d.OwnPegs, got)
+	}
+	if r == reasonOpening {
+		t.Fatalf("a position with %d pegs of its own was explained as an opening (deltas %+v)", d.OwnPegs, d)
+	}
+	low := strings.ToLower(h.Headline + " " + h.Detail)
+	for _, leak := range []string{"start a route", "no peg on the board", "first peg"} {
+		if strings.Contains(low, leak) {
+			t.Errorf("opening wording %q reached a position with %d pegs down: %q / %q",
+				leak, d.OwnPegs, h.Headline, h.Detail)
+		}
+	}
+	t.Logf("reason %v headline: %s", r, h.Headline)
+}
+
+// TestOpeningYieldsToResultsThreatsAndNoRoute is the priority the opening
+// wording sits under. Every case has no peg of the asking side on the board,
+// which on its own reads as a first peg; a result read back off the game, a
+// reading that finds no route, and an opponent one peg from a finished chain
+// each outrank that, and the checker refuses the opening claim on all of them.
+func TestOpeningYieldsToResultsThreatsAndNoRoute(t *testing.T) {
+	cases := []struct {
+		name string
+		d    deltas
+		want reason
+	}{
+		{"a move that ends the game", deltas{Before: Terms{Dist: 1, OppDist: 4},
+			After: Terms{Dist: 0, OppDist: 4}, Won: true}, reasonWin},
+		{"no route for either side", deltas{Before: Terms{Dist: 3, OppDist: 3},
+			After: Terms{Dist: NoChain, OppDist: NoChain}}, reasonDeadlock},
+		{"the opponent shut out", deltas{Before: Terms{Dist: 3, OppDist: 3},
+			After: Terms{Dist: 3, OppDist: NoChain}}, reasonSeal},
+		{"shut out itself", deltas{Before: Terms{Dist: 3, OppDist: 3},
+			After: Terms{Dist: NoChain, OppDist: 3}}, reasonSealedOut},
+		{"the only answer to a threat", deltas{Before: Terms{Dist: 6, OppDist: 1},
+			After: Terms{Dist: 6, OppDist: 3}, Threatened: true, Defences: 1}, reasonOnlyDefence},
+		{"one answer among several", deltas{Before: Terms{Dist: 6, OppDist: 1},
+			After: Terms{Dist: 6, OppDist: 3}, Threatened: true, Defences: 3}, reasonDefence},
+		// The counterexample the wording is most exposed to: a threat this move
+		// does not answer still forbids advising a reader to develop, and with
+		// no chain of its own the position has no arithmetic reason left either.
+		{"a threat this move does not answer", deltas{Before: Terms{Dist: 6, OppDist: 1},
+			After: Terms{Dist: 5, OppDist: 1}, Threatened: true, Defences: 2}, reasonBalanced},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.d.OwnPegs != 0 {
+				t.Fatalf("the case has %d own pegs, so it does not test the opening priority", c.d.OwnPegs)
+			}
+			if got := chooseReason(c.d); got != c.want {
+				t.Fatalf("chooseReason = %v, want %v (deltas %+v)", got, c.want, c.d)
+			}
+			if err := verifyReason(c.want, c.d); err != nil {
+				t.Fatalf("the checker rejects %v, which the priority order picked: %v", c.want, err)
+			}
+			if err := verifyReason(reasonOpening, c.d); err == nil {
+				t.Fatalf("the checker accepted an opening claim for %+v", c.d)
+			}
+		})
+	}
+}
+
+// TestAdvanceStillSpeaksForAnEstablishedChain is the positive control for the
+// own-peg requirement the advance claim now carries: the same numbers must
+// still read as progress once a peg of the side's own is down, or the
+// requirement would have silenced the branch instead of scoping it.
+func TestAdvanceStillSpeaksForAnEstablishedChain(t *testing.T) {
+	carried := deltas{Before: Terms{Dist: 5, OppDist: 4}, After: Terms{Dist: 4, OppDist: 4}, OwnPegs: 3}
+	if got := chooseReason(carried); got != reasonAdvance {
+		t.Fatalf("chooseReason = %v, want advance (deltas %+v)", got, carried)
+	}
+	if err := verifyReason(reasonAdvance, carried); err != nil {
+		t.Fatalf("the checker rejects progress on an established chain: %v", err)
+	}
+	first := carried
+	first.OwnPegs = 0
+	if got := chooseReason(first); got != reasonOpening {
+		t.Fatalf("chooseReason = %v for the same numbers with no peg down, want opening", got)
+	}
+	if err := verifyReason(reasonAdvance, first); err == nil {
+		t.Fatal("the checker accepted a chain carried on with no peg of its own on the board")
+	}
 }
 
 // TestFindSetupNeedsTwoLiveCarriers checks the setup detection the prose leans
