@@ -87,8 +87,7 @@ func ReadFile(path string) ([]byte, error) {
 // replaceAttempts and replaceMaxDelay bound retries for explicit sharing or lock
 // violations: eight attempts, doubling from a millisecond and capped, so the
 // whole loop gives up after about a tenth of a second. Other refusals return
-// immediately; Windows does not identify every held-reader refusal as a sharing
-// violation.
+// immediately.
 const (
 	replaceAttempts = 8
 	replaceMaxDelay = 32 * time.Millisecond
@@ -108,11 +107,9 @@ const (
 // temporary files in the destination directory, inheriting that directory's
 // ACL rather than preserving any separately customized destination-file ACL.
 //
-// Explicit sharing and lock violations are retried briefly. Windows can also
-// report a destination held open without delete sharing as ERROR_ACCESS_DENIED,
-// indistinguishable from an access-control refusal. Those errors return at once
-// rather than retrying permission failures. Either way a refused replacement
-// leaves dst's previous contents intact.
+// Explicit sharing and lock violations are retried briefly. Access-denied
+// refusals return immediately rather than retrying a possible permission
+// failure. Either way a refused replacement leaves dst's previous contents intact.
 //
 // https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
@@ -174,8 +171,8 @@ func Replace(src, dst string) error {
 	}
 }
 
-// shared reports explicit sharing or lock violations. Access-denied errors are
-// ambiguous (a held reader or permissions) and deliberately not retried.
+// shared reports explicit sharing or lock violations. Access-denied errors may
+// indicate permissions and are deliberately not retried.
 func shared(err error) bool {
 	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_LOCK_VIOLATION)
 }

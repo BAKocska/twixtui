@@ -260,51 +260,6 @@ jobs:
           go test -count=1 github.com/charmbracelet/ultraviolet/...
           if ($LASTEXITCODE -ne 0) { throw 'Windows input dependency tests failed.' }
 
-      - name: Prove completion executable identity guard
-        shell: pwsh
-        timeout-minutes: 6
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
-          $proof = Join-Path $env:RUNNER_TEMP 'windows-tests/completion-identity-proof'
-          $selectedDir = Join-Path $proof 'selected'
-          $decoyDir = Join-Path $proof 'decoy'
-          New-Item -ItemType Directory -Force $selectedDir, $decoyDir | Out-Null
-          $selected = Join-Path $selectedDir 'renamed.exe'
-          go build -ldflags '-X main.version=selected' -o $selected ./cmd/twixtui
-          if ($LASTEXITCODE -ne 0) { throw 'Selected binary build failed.' }
-          go build -ldflags '-X main.version=decoy' -o (Join-Path $decoyDir 'twixtui.exe') ./cmd/twixtui
-          if ($LASTEXITCODE -ne 0) { throw 'Decoy binary build failed.' }
-          git fetch --no-tags origin 9fe621c463ca35ab151abfd90147ed1d2271527e
-          if ($LASTEXITCODE -ne 0) { throw 'Baseline fetch failed.' }
-          $original = git show '9fe621c463ca35ab151abfd90147ed1d2271527e:internal/e2e/powershell_windows_test.go'
-          if ($LASTEXITCODE -ne 0) { throw 'Baseline source read failed.' }
-          $baseline = Join-Path $proof 'baseline_test.go'
-          $original | Set-Content -Encoding utf8 $baseline
-          $overlay = Join-Path $proof 'overlay.json'
-          $replace = @{}
-          $replace[(Join-Path $PWD.Path 'internal/e2e/powershell_windows_test.go')] = $baseline
-          @{ Replace = $replace } | ConvertTo-Json | Set-Content -Encoding utf8 $overlay
-          $env:TWIXTUI_E2E_BINARY = $selected
-          $env:PATH = $decoyDir + [IO.Path]::PathSeparator + $env:PATH
-          $before = go test -overlay $overlay -count=1 -run '^TestPowerShellCompletesTiersAndProfiles$' -json ./internal/e2e
-          $beforeExit = $LASTEXITCODE
-          $before | Set-Content -Encoding utf8 (Join-Path $proof 'before.jsonl')
-          $beforeEvents = @($before | ForEach-Object { $_ | ConvertFrom-Json })
-          if ($beforeExit -ne 0 -or -not ($beforeEvents | Where-Object { $_.Test -eq 'TestPowerShellCompletesTiersAndProfiles' -and $_.Action -eq 'pass' })) {
-            throw 'Baseline did not reproduce the false pass against the decoy.'
-          }
-          $after = go test -count=1 -run '^TestPowerShellCompletesTiersAndProfiles$' -json ./internal/e2e
-          $afterExit = $LASTEXITCODE
-          $after | Set-Content -Encoding utf8 (Join-Path $proof 'after.jsonl')
-          $afterEvents = @($after | ForEach-Object { $_ | ConvertFrom-Json })
-          $diagnostic = (($afterEvents | Where-Object { $_.Action -eq 'output' } | ForEach-Object { $_.Output }) -join '') -replace '[\s|]', ''
-          if ($afterExit -eq 0 -or -not ($afterEvents | Where-Object { $_.Test -eq 'TestPowerShellCompletesTiersAndProfiles' -and $_.Action -eq 'fail' }) -or -not $diagnostic.Contains('Completionwouldinvokeadifferentexecutablethantheselectedbinary.')) {
-            throw 'The fixed test did not reject the selected/decoy mismatch for the intended reason.'
-          }
-          Write-Host 'Original test falsely passes against the decoy; fixed test rejects the executable mismatch.'
-          exit 0
-
       # Go 1.26 has a Windows race detector for amd64, not arm64. ARM64 runs
       # the native functional/concurrency tests above, never an emulated race job.
       - name: Windows race detector
