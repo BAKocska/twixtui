@@ -564,8 +564,21 @@ func TestAnalyzeObservesOnlyFinishedIterations(t *testing.T) {
 		const depth = 3
 		var seen []AnalysisProgress
 		out, err := Analyze(ctx, g, AnalysisOptions{
-			Limits:     Limits{Depth: depth, Time: time.Hour},
-			OnComplete: func(p AnalysisProgress) { seen = append(seen, p) },
+			Limits: Limits{Depth: depth, Time: time.Hour},
+			OnComplete: func(p AnalysisProgress) {
+				seen = append(seen, p)
+				if len(seen) == 1 {
+					// Force an observable clock tick between reports. A fast
+					// first iteration may legitimately take zero clock ticks.
+					start := time.Now()
+					for tries := 0; time.Since(start) == 0; tries++ {
+						if tries == 1000 {
+							t.Fatal("clock did not advance during the timing control")
+						}
+						time.Sleep(time.Millisecond)
+					}
+				}
+			},
 		})
 		if err != nil {
 			t.Fatalf("Analyze: %v", err)
@@ -583,9 +596,8 @@ func TestAnalyzeObservesOnlyFinishedIterations(t *testing.T) {
 			if p.Stats.StopReason != "" {
 				t.Errorf("report %d says the search stopped for %q", i, p.Stats.StopReason)
 			}
-			if p.Stats.Elapsed <= 0 {
-				t.Errorf("report %d is dated %v: while the search runs, the boundary's own reading is the only elapsed figure there is",
-					i, p.Stats.Elapsed)
+			if p.Stats.Elapsed < 0 {
+				t.Errorf("report %d has negative elapsed time: %v", i, p.Stats.Elapsed)
 			}
 			if p.Stats.Elapsed > out.Stats.Elapsed {
 				t.Errorf("report %d is dated %v, past the %v the whole search took", i, p.Stats.Elapsed, out.Stats.Elapsed)
@@ -612,6 +624,9 @@ func TestAnalyzeObservesOnlyFinishedIterations(t *testing.T) {
 					t.Errorf("report %d is earlier than report %d", i, i-1)
 				}
 			}
+		}
+		if seen[1].Stats.Elapsed <= seen[0].Stats.Elapsed {
+			t.Errorf("progress ignored the observed clock advance: first=%v, second=%v", seen[0].Stats.Elapsed, seen[1].Stats.Elapsed)
 		}
 		last := seen[len(seen)-1]
 		if last.Recommended != *out.Recommended {
