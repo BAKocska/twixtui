@@ -55,14 +55,15 @@ macOS and Linux:
 go install github.com/BAKocska/twixtui/cmd/twixtui@latest
 ```
 
-Go 1.26 or newer. Or take a prebuilt binary — macOS or Linux, arm64 or x86-64, with
+Go 1.26 or newer. Or take a prebuilt binary — macOS, Linux or Windows, arm64 or x86-64, with
 `checksums.txt` beside it — from the
 [releases page](https://github.com/BAKocska/twixtui/releases/latest). On macOS a binary
 downloaded through a browser needs its quarantine attribute cleared first;
 [the manual](docs/MANUAL.md#download-a-binary) has that and the checksum command.
 
-**Windows support is unreleased.** Build this checkout in PowerShell; the current
-`v0.4.0` release has no Windows ZIPs:
+**Windows:** download the x64 or ARM64 ZIP from the releases page, verify and
+extract it as described in [the manual](docs/MANUAL.md#on-windows), then run
+`.\twixtui.exe` in Windows Terminal. Or build this checkout in PowerShell:
 
 ```
 go build -o twixtui.exe ./cmd/twixtui

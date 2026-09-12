@@ -159,8 +159,8 @@
 
           <h3>Or download a binary</h3>
           <p class="note">
-            Prebuilt archives for macOS and Linux, on arm64 and x86-64, are
-            attached to each
+            Prebuilt archives for macOS, Linux and Windows, on arm64 and x86-64,
+            are available from the latest
             <a href="https://github.com/BAKocska/twixtui/releases/latest"
               >release</a
             >, together with a checksums file.
@@ -178,16 +178,19 @@ twixtui version</pre
           </p>
           <pre class="cmd">xattr -d com.apple.quarantine ./twixtui</pre>
 
-          <h3>Windows (unreleased)</h3>
+          <h3>Windows</h3>
           <p class="note">
-            Native x64 and ARM64 support is available from the source checkout;
-            the current v0.4.0 release has no Windows ZIPs. Keep the checkout's
-            <code>go.work</code> input-decoder fix: versioned
-            <code>go install ...@version</code> does not use it.
-            See the
+            Download the x64 or ARM64 ZIP, verify its checksum, extract it, and
+            run <code>twixtui.exe</code>. Windows Terminal with PowerShell 7 is
+            recommended. See the
             <a href="https://github.com/BAKocska/twixtui/blob/main/docs/MANUAL.md#on-windows"
-              >Windows build instructions</a
-            > for the source build and terminal requirements.
+              >Windows installation instructions</a
+            > for checksum, terminal and source-build details.
+          </p>
+          <p class="note">
+            Source builds must keep the checkout's <code>go.work</code>
+            input-decoder fix. Versioned <code>go install ...@version</code>
+            ignores that override; use a Windows ZIP or build the checkout.
           </p>
 
           <h3>Then</h3>

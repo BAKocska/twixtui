@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-12
+
 ### Added
 
 - Native Windows support on x64 and ARM64: cross-process `LockFileEx` locking,
@@ -20,7 +22,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   emulated pass. CI is configured to run it from source and against a
   checksummed snapshot archive on both architectures, and release packaging
   adds `windows_amd64` and `windows_arm64` ZIPs under the existing
-  `checksums.txt`. Windows downloads are not published yet.
+  `checksums.txt`.
 
 ### Fixed
 
@@ -632,7 +634,8 @@ First release.
   succeeding silently, and the tutorial's prose is set to a readable measure on a wide
   terminal.
 
-[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/BAKocska/twixtui/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/BAKocska/twixtui/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/BAKocska/twixtui/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/BAKocska/twixtui/compare/v0.3.1...v0.3.2

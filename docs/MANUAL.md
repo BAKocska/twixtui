@@ -47,9 +47,9 @@ Go 1.26 or newer. The binary lands in `$(go env GOPATH)/bin`.
 
 ### Download a binary
 
-Every published release carries binaries for four platforms, built without cgo so they
-carry no third-party dependencies. Take the
-archive for yours from the
+Current releases carry binaries for six platform/architecture combinations,
+built without cgo so they need no third-party runtime dependencies. Windows
+archives are available from v0.5.0 onward. Take the archive for yours from the
 [releases page](https://github.com/BAKocska/twixtui/releases/latest):
 
 | Platform | Archive |
@@ -58,8 +58,10 @@ archive for yours from the
 | macOS, Intel | `twixtui_<version>_darwin_amd64.tar.gz` |
 | Linux, arm64 | `twixtui_<version>_linux_arm64.tar.gz` |
 | Linux, x86-64 | `twixtui_<version>_linux_amd64.tar.gz` |
+| Windows, x64 | `twixtui_<version>_windows_amd64.zip` |
+| Windows, ARM64 | `twixtui_<version>_windows_arm64.zip` |
 
-Unpack it and put `twixtui` somewhere on your `PATH`:
+On macOS or Linux, unpack it and put `twixtui` somewhere on your `PATH`:
 
 ```
 tar xzf twixtui_<version>_darwin_arm64.tar.gz
@@ -87,9 +89,8 @@ Downloading with `curl -LO` instead of a browser avoids the attribute altogether
 ### On Windows
 
 Windows runs natively — x64 and ARM64, the same product, no WSL layer and no
-emulation — and no release includes it yet. `v0.4.0`, which is what
-`go install ...@latest` resolves to, predates the console and storage work, and the
-releases page has no `windows_*` archive on it. So on Windows, build this checkout. In
+emulation. Download the matching ZIP from the releases page and follow the
+checksum and extraction steps below. Alternatively, build the checkout in
 PowerShell:
 
 ```
@@ -126,7 +127,7 @@ $env:TWIXTUI_CONFIG_DIR = 'C:\Users\Ada\twixt games'
 
 Tab completion has [a PowerShell script](#shell-completion) of its own.
 
-**When a release does carry Windows,** its archives will be ZIP files —
+Windows archives are ZIP files —
 `twixtui_<version>_windows_amd64.zip` and `twixtui_<version>_windows_arm64.zip` — with
 the same `checksums.txt` beside them as every other platform's. Check the download
 before extracting it:
