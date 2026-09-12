@@ -27,6 +27,7 @@ separately in [rules.md](rules.md), with the source audit trail in
 - [Profiles](#profiles)
 - [The leaderboard](#the-leaderboard)
   - [Reviewing saved games](#reviewing-saved-games)
+- [Position analysis](#position-analysis)
 - [Rulesets](#rulesets)
 - [Themes](#themes)
 - [The cover](#the-cover)
@@ -206,6 +207,7 @@ it never costs an entry, so at eighty columns there is simply no picture.
 | `twixtui profile` | `list`, `create`, `use`, `rename`, `delete`, `whoami` — the local usernames games are recorded against. |
 | `twixtui leaderboard` | `show`, `reset` — standings and per-player history. |
 | `twixtui game` | `list`, `show`, `replay`, `export`, `import`, `delete` — saved games: browse them, step through them, move them between machines. |
+| `twixtui analyze` | `game`, `record`, `position` — a bounded, read-only engine analysis as text or JSON. |
 | `twixtui rules show` | Print the rules, or one topic of them, and the sources behind them. |
 | `twixtui serve` | Run the relay that pairs two remote players. |
 | `twixtui theme` | `list`, `set`, `show` — colour schemes. |
@@ -876,8 +878,98 @@ remains the record's result while stepping through earlier positions.
 Replay validates the whole record before opening and retains one mutable board,
 not a board snapshot per entry. Small backward steps use undo; longer backward
 seeks rebuild the requested prefix to avoid repeatedly scanning draw-offer
-history. Reviewing never changes the stored record or ratings. Notes, analysis
-and variations are not part of this viewer.
+history. Reviewing never changes the stored record or ratings. Notes and
+variations are not part of this viewer; engine analysis is available through the
+separate `analyze` commands below, not as an interactive replay action.
+
+## Position analysis
+
+Analyse a saved game, a record file (or standard input), or a position written in
+the game's notation. No profile is required, and analysis does not write games,
+ratings, profiles or configuration.
+
+```
+twixtui analyze position --size 12 --moves 'B1; L2; C3' --nodes 10000
+twixtui analyze game <id> --at 17 --nodes 10000 --format json
+twixtui analyze record game.twixt --budget 2s
+twixtui analyze record - --at 0 --nodes 10000 --format json
+```
+
+`--at` is available on `game` and `record`. It counts **record entries, not
+plies**: draw offers and resignations have entries too. Zero means the initial
+position, omission means the final entry, and values outside the record are
+refused. A saved-game identifier may be exact or an unambiguous prefix. A broken
+exact match is reported rather than silently redirected to a longer identifier.
+
+For `position`, `--ruleset` and `--size` use the same rules as `play` (default
+`std`, 24×24). Moves are semicolon-separated transcript entries. Omit `--moves`
+for the opening position; an explicitly blank flag is refused. Record inputs
+and move transcripts are limited to 1 MiB. The complete input record is checked
+before any earlier entry is analysed.
+
+### Budgets and interpretation
+
+The default `--budget 2s` is a search-time guard checked at work boundaries, not
+a hard deadline for file input, output or the entire process. A positive
+`--nodes N` instead bounds recursive search nodes and retains a one-hour safety
+clock. An explicitly supplied `--budget` cannot be combined with `--nodes`.
+Root evaluation and tactical defence probes are additional work, not nodes.
+
+Analysis uses the same fixed Max placement-only policy as hints: offered links
+are kept, swaps and deliberate link edits are not searched, and candidate
+shortlists make the search selective. Existing hint defaults are unchanged.
+Scores are root-side-relative integer search units, **not win probabilities or
+proofs of the best full-rule move**.
+
+- `exact` is a measured selective-search value.
+- `upper` is a ceiling, not an exact value to compare with another candidate.
+- `lower` is reserved for a proven search floor; the current engine does not emit it.
+- `unscored` means no completed search iteration measured the candidate. JSON
+  uses a null score, not a misleading zero.
+
+Only completed iterations are reported. If interrupted before the first one,
+the recommendation is a legal ordering fallback with unscored candidates.
+An actual terminal position reports its game result and static terms, with no
+recommendation, candidate list or search statistics.
+
+A time or cancellation stop sets `reproducible` to false. Otherwise the reported
+completed work is deterministic for the same position, engine and policy.
+This does not guarantee that another machine will finish that work under the
+same wall-clock budget: compare runs only when both avoided time/cancellation
+stops, and exclude elapsed time. Ctrl+C during search prints the available
+result and exits unsuccessfully; reaching a time or node ceiling is a normal
+successful result. Input-stream blocking is not made cancellable by the search
+budget.
+
+### JSON and the analysis API
+
+`--format json` emits one `twixtui-analysis/1` envelope on stdout. Diagnostics go
+to stderr. The envelope carries:
+
+- `engine` version, commit and modification flag; unknown source commits are
+  empty, and unstamped builds identify themselves as `dev`.
+- Canonical `rules`, `entry`, `position_digest`, `root_side`, `status` and the
+  current `result`, plus `policy` and its human-readable `limitations`.
+- `recommended`, bound-labelled `candidates`, `terms_before`, `terms_after`,
+  and `reason` with its code, headline, explanation and highlighted holes.
+- `stats`: `nodes`, `analyses`, `completed_depth`, `elapsed_ns`, `stop_reason`.
+  Analyses counts search evaluator loads, including root/tactical probes;
+  post-search explanation work is excluded.
+- `reproducible` under the conditions above. It is not a guarantee tied to
+  arbitrary wall-clock flags.
+
+Terminal output has `status: "terminal"`, `candidates: []`, and null
+`recommended`, `terms_after`, `reason` and `stats`. Distance terms use `-1` for
+the evaluator's “no route found” sentinel, not a claim that a legal win is
+impossible. Static term scores and searched candidate scores are different
+quantities.
+
+The internal Go API is `bot.Analyze(ctx, position, bot.AnalysisOptions{...})`.
+It returns owned data and optionally sends owned snapshots to `OnComplete`
+after completed iterations. The callback is synchronous and must not block or
+change the working position. Search makes and unmakes trial moves, so callers
+must not access that game concurrently. Staged edits are refused; `StatsOf`
+continues to describe a bot's Move search, not analysis or hints.
 
 ## Rulesets
 

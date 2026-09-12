@@ -7,6 +7,27 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `twixtui analyze game`, `analyze record` (file or stdin), and `analyze position`:
+  read-only, bounded engine analysis with entry-based selection, text output and
+  the `twixtui-analysis/1` JSON envelope. No profile or configuration write is
+  required.
+- An owned analysis API shared with Hint, with optional completed-iteration
+  snapshots. Results expose static terms, reasons, root-side scores and explicit
+  exact/upper/unscored bounds; terminal positions return no invented move or
+  search statistics.
+- Positive time or recursive-node budgets, cancellation reporting, and explicit
+  reproducibility status. Node budgets retain a safety clock and do not pretend
+  to bound root/tactical evaluation work. Existing hint policy and defaults are
+  unchanged.
+
+### Fixed
+
+- An unreadable exact saved-game identifier no longer silently resolves to a
+  longer matching identifier. Healthy exact matches, case-insensitive prefixes
+  and prefixes that are reserved Windows basenames retain their behavior.
+
 ## [0.6.0] - 2026-09-12
 
 ### Added
