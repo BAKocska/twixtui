@@ -799,8 +799,8 @@ menu, preserving each selection. `ctrl+c` ends the program. Shared keybindings
 also apply here, and the hints follow remapped keys. Narrow layouts hide secondary
 columns and abbreviate dates, but retain the selected result and action/back keys.
 
-**History format:** the first leaderboard write upgrades the file to schema 2,
-preserving existing rows without inventing identities or removing old duplicates.
+**History format:** recording a new result upgrades the leaderboard to schema 2,
+preserving earlier rows without inventing identities or removing old duplicates.
 Browsing alone does not rewrite a schema-1 log. Version 0.5.0 and older refuse the
 upgraded leaderboard rather than silently stripping its links; keep a pre-upgrade
 copy if you need to downgrade. The canonical exported game-record format is unchanged.
