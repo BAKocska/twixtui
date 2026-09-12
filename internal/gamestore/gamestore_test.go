@@ -217,6 +217,42 @@ func TestResolvePrefix(t *testing.T) {
 	}
 }
 
+func TestResolveRefusesABrokenExactMatchBeforeLongerIDs(t *testing.T) {
+	s := newStore(t)
+	record, _ := sampleRecord(t)
+	longer := Saved{ID: "match-long", Kind: Hotseat, Record: record}
+	if err := s.Put(longer); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir(), "match.json")
+	for _, broken := range []string{"{", `{"id":"somewhere-else"}`} {
+		if err := os.WriteFile(path, []byte(broken), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.Resolve("MATCH"); err == nil || got.ID != "" {
+			t.Fatalf("broken exact match redirected to %q: %v", got.ID, err)
+		}
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Resolve("MATCH"); err != nil || got.ID != longer.ID {
+		t.Fatalf("an absent exact ID did not resolve its unique prefix: %+v, %v", got, err)
+	}
+	if err := s.Put(Saved{ID: "match", Kind: Hotseat, Record: record}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Resolve("MATCH"); err != nil || got.ID != "match" {
+		t.Fatalf("valid exact ID did not take precedence: %+v, %v", got, err)
+	}
+	if err := s.Put(Saved{ID: "con-long", Kind: Hotseat, Record: record}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Resolve("CON"); err != nil || got.ID != "con-long" {
+		t.Fatalf("reserved basename could not be used as a prefix: %+v, %v", got, err)
+	}
+}
+
 func TestDelete(t *testing.T) {
 	s := newStore(t)
 	record, _ := sampleRecord(t)
