@@ -69,7 +69,11 @@ $required = @(
     'TestTwoTerminalsPlayByCode',
     'TestHintScopesNoRouteClaimsOnWideAndNarrowBoards',
     'TestReplayEntryJumpPreservesRecordAcrossResize',
-    'TestLeaderboardHistoryReplayFromTheMenu'
+    'TestLeaderboardHistoryReplayFromTheMenu',
+    'TestAnalyzeInputsDescribeTheSameRecordEntry',
+    'TestAnalyzeTerminalAndUnsearchedResultsAreExplicit',
+    'TestAnalyzeRefusalsDoNotWriteState',
+    'TestAnalyzeDoesNotRedirectAnUnreadableExactGame'
 )
 $missing = @($required | Where-Object { -not $passes.ContainsKey($_) })
 $missingStorage = @()
@@ -100,6 +104,7 @@ if ($Scope -eq 'all') {
         'app/TestLeaderboardChecksTheGameAgainWhenItIsOpened',
         'app/TestLeaderboardOpensOnlyTheGameTheResultNames',
         'gamestore/TestMissingGamesAreDistinguishedFromUnreadableGames',
+        'gamestore/TestResolveRefusesABrokenExactMatchBeforeLongerIDs',
         'gamestore/TestOnlyOneFinishOfAGameIsStored',
         'gamestore/TestReadingAStoreNothingMayWriteTo',
         'gamestore/TestASaveThatCannotReplaceTheGameKeepsTheStoredOne',
