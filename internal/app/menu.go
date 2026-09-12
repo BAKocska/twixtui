@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/BAKocska/twixtui/docs"
 
@@ -37,17 +35,12 @@ type Menu struct {
 	deps           Deps
 	player         string
 
-	nav navKeys
-	// listUp and listDown are the letters the board moves by. Every list on
-	// this screen answers them as well as the arrows, because the board is
-	// driven h/j/k/l and its panel teaches that: a hand coming off the board
-	// should not have to find the arrow keys to work the menu. navKeys narrows
-	// the same bindings to their arrow forms (see arrowKeys) for the screens
-	// that carry a text field, where the letters are characters being typed.
-	// Nothing on this screen carries one; the profile picker does, and
-	// deliberately keeps the letters as search characters.
-	listUp, listDown []string
-	list             *chooser
+	// nav is the movement every list on this screen shares: the arrows, the
+	// emacs pair, and the letters the board moves by. The profile picker
+	// deliberately does not use it — the letters are search characters there —
+	// so it takes the narrower navKeys instead.
+	nav  listKeys
+	list *chooser
 	// form is the question on top of the list, nil when the list has focus.
 	form menuForm
 	// moveHint and quitHint are the status-line fragments naming the keys, built
@@ -118,10 +111,9 @@ type gameSetup struct {
 // NewMenu returns the main menu for a player.
 func NewMenu(d Deps, player string) *Menu {
 	km := shellKeymap(d)
-	m := &Menu{deps: d, player: player, nav: newNavKeys(km)}
+	m := &Menu{deps: d, player: player, nav: newListKeys(km)}
 	m.defaults = loadDefaults(d.ConfigDir)
-	m.listUp, m.listDown = letterKeys(km, ui.ActMoveUp), letterKeys(km, ui.ActMoveDown)
-	m.moveHint = m.movementHint()
+	m.moveHint = m.nav.moveHint()
 	m.quitHint = keyLabel(globalQuitKeys(km)...) + " quit"
 	m.quitLetters = letterKeys(km, ui.ActQuit)
 	if len(m.quitLetters) > 0 {
@@ -944,70 +936,17 @@ func savedHelp(sv gamestore.Saved) string {
 		sv.Kind, sv.Updated.Local().Format("2 January 2006 at 15:04"))
 }
 
-// openLeaderboard shows the standings in a panel that scrolls.
+// openLeaderboard opens the standings, which are a screen of their own: the
+// board is something a player moves about in — a player's line leads to their
+// games, and a game of theirs to the game itself — and a panel drawn on the
+// menu has nowhere to put the two lists that belong underneath it.
 func (m *Menu) openLeaderboard() tea.Cmd {
-	m.form = &scrollForm{title: "Leaderboard", body: standingsLines(m.deps)}
-	return nil
-}
-
-// standingsLines renders the standings: people ranked against one another, and
-// under them the bots they played, unranked. A bot's rating is a constant in the
-// program rather than something it won, so a single column holding both invites
-// a comparison neither number supports — that is what made a player who had lost
-// their only game read as the best on the machine.
-//
-// The rate column is labelled "score" and not "wins" because it counts half of
-// every draw, which is the same quantity the rating is derived from.
-func standingsLines(d Deps) []string {
-	board := d.Board.Standings()
-	if len(board.Players) == 0 && len(board.Bots) == 0 {
-		return []string{"No games recorded yet. Play one and it will appear here."}
+	sc, err := NewLeaderboardScreen(m.deps)
+	if err != nil {
+		m.message = err.Error()
+		return nil
 	}
-
-	// Measured in terminal cells, which is what padTo pads to. Counting runes
-	// instead made the column too narrow for a fullwidth name and too wide for
-	// one carrying combining marks, and the rating column beside it moved by
-	// the difference — the one thing a column of numbers must not do.
-	nameW := ansi.StringWidth("player")
-	for _, s := range board.Players {
-		nameW = max(nameW, ansi.StringWidth(leaderboard.DisplayName(s.Name)))
-	}
-	for _, s := range board.Bots {
-		nameW = max(nameW, ansi.StringWidth(leaderboard.DisplayName(s.Name)))
-	}
-	// A position needs somebody to hold it against. With one player it would
-	// say only that they are the only one, over a score that is quite possibly
-	// zero, so the column waits for a second player before it appears.
-	rankW := 0
-	if len(board.Players) > 1 {
-		rankW = len("#") + 3
-	}
-	// padTo cannot pad to nothing, so the position is built here: with no rank
-	// column there is no prefix at all, not a one-character stub.
-	pos := func(s string) string {
-		if rankW == 0 {
-			return ""
-		}
-		return padTo(s, rankW)
-	}
-	row := func(rank, name string, s leaderboard.Standing) string {
-		return fmt.Sprintf("%s%s %6d %6d %5.0f%%",
-			pos(rank), padTo(name, nameW), s.Rating, s.Played, s.WinRate*100)
-	}
-
-	out := make([]string, 0, len(board.Players)+len(board.Bots)+4)
-	out = append(out, fmt.Sprintf("%s%s %6s %6s %6s",
-		pos("#"), padTo("player", nameW), "rating", "games", "score"))
-	for i, s := range board.Players {
-		out = append(out, row(strconv.Itoa(i+1), leaderboard.DisplayName(s.Name), s))
-	}
-	if len(board.Bots) > 0 {
-		out = append(out, "", "Bots are not ranked: a tier's rating is fixed, not earned.", "")
-		for _, s := range board.Bots {
-			out = append(out, row("", leaderboard.DisplayName(s.Name), s))
-		}
-	}
-	return out
+	return Open(sc)
 }
 
 // openThemes offers the colour schemes, each shown rather than only named: a
@@ -2133,52 +2072,6 @@ func (m *Menu) start(cfg GameConfig) tea.Cmd {
 
 // forms.
 
-// listMove is the movement every list on this screen shares: whatever navKeys
-// answers, plus the board's letters.
-//
-// The letters are translated into the pair navKeys already treats as one step
-// rather than being given their own arithmetic, so what a step means — where it
-// wraps, what it does to an empty list — stays defined in exactly one place.
-func (m *Menu) listMove(key string, sel, n int) (int, bool) {
-	switch {
-	case matchesKey(key, m.listUp):
-		key = keyPrev
-	case matchesKey(key, m.listDown):
-		key = keyNext
-	}
-	return m.nav.move(key, sel, n)
-}
-
-// letterKeys returns the letter forms of a movement binding, which is the
-// complement of what arrowKeys takes. Both read the shared keymap rather than
-// naming keys of their own, so rebinding the board's movement moves the menu's
-// with it and no hint can describe a key the screen does not answer.
-func letterKeys(km ui.Keymap, a ui.Action) []string {
-	b, ok := km.ByAction(ui.CtxBoard, a)
-	if !ok {
-		return nil
-	}
-	keys := make([]string, 0, len(b.Keys))
-	for _, k := range b.Keys {
-		if len([]rune(k)) == 1 {
-			keys = append(keys, k)
-		}
-	}
-	return keys
-}
-
-// movementHint names the keys a list moves by. The letters are named only when
-// the bindings really have them, since a keymap without them would leave the
-// arrows as the whole answer.
-func (m *Menu) movementHint() string {
-	hint := keyLabel(m.nav.up...) + "/" + keyLabel(m.nav.down...)
-	up, down := keyLabel(m.listUp...), keyLabel(m.listDown...)
-	if up != "" && down != "" {
-		hint += " or " + up + "/" + down
-	}
-	return hint
-}
-
 // menuForm is a question drawn on top of the menu list.
 type menuForm interface {
 	// key handles a keypress; the command it returns goes straight up.
@@ -2223,7 +2116,7 @@ type chooser struct {
 
 func (c *chooser) key(m *Menu, press tea.KeyPressMsg) tea.Cmd {
 	key := press.String()
-	if sel, moved := m.listMove(key, c.sel, len(c.opts)); moved {
+	if sel, moved := m.nav.move(key, c.sel, len(c.opts)); moved {
 		c.sel = sel
 		m.message = ""
 		return nil
@@ -2270,7 +2163,14 @@ func (c *chooser) lines(m *Menu, st *ui.Styles, width, height int) []string {
 			}
 		}
 	}
-	return listPanel(st, c.title, rows, c.sel, preview, m.message, help, width, height)
+	return listPanel(st, panelLayout{
+		title:   c.title,
+		rows:    rows,
+		sel:     c.sel,
+		preview: preview,
+		message: m.message,
+		help:    help,
+	}, width, height)
 }
 
 func (c *chooser) hints(m *Menu) []string {
@@ -2469,7 +2369,7 @@ func (f *scrollForm) key(m *Menu, press tea.KeyPressMsg) tea.Cmd {
 	if m.nav.isCancel(key) || m.nav.isConfirm(key) {
 		return closeForm(m)
 	}
-	if focus, moved := m.listMove(key, f.focus, len(f.body)); moved {
+	if focus, moved := m.nav.move(key, f.focus, len(f.body)); moved {
 		f.focus = focus
 	}
 	return nil
@@ -2512,17 +2412,44 @@ func (f *pickerForm) hints(*Menu) []string { return nil }
 
 func (f *pickerForm) frame(m *Menu) string { return f.p.View().Content }
 
-// listPanel is the shared shape of every list on this screen: a title, the
-// list, an optional preview of the highlighted entry, and a fixed-height
-// explanation of it underneath. The explanation's height is fixed so that the
-// list does not shift up and down as the selection moves.
-func listPanel(st *ui.Styles, title string, rows []string, sel int, preview func(width, height int) []string, message, help string, width, height int) []string {
+// panelLayout is what a list panel is made of. It is a value rather than a row
+// of arguments because the blocks around the list differ per screen — a column
+// heading, a fixed table the list is read against, a drawing of the highlighted
+// entry — and a caller that wants one of them should not have to name the
+// others.
+type panelLayout struct {
+	title string
+	// head is drawn under the title and does not scroll: a column heading
+	// belongs to the columns rather than to any row, so it cannot be a row.
+	head []string
+	rows []string
+	sel  int
+	// foot is a short fixed block under the list that the list is read
+	// against, such as the unranked bots under the standings. It keeps its
+	// rows while the list can spare them and is dropped whole when it cannot,
+	// since half a table says less than none of it.
+	foot []string
+	// preview shows the highlighted row instead of only naming it, for a list
+	// whose rows can be shown at all. Unlike foot it is what a short panel
+	// gives up first: a row can still be chosen by name with nothing drawn.
+	preview func(width, height int) []string
+	// message displaces help while there is something to say about what has
+	// just happened.
+	message string
+	help    string
+}
+
+// listPanel is the shared shape of every list in this package: a title, an
+// optional heading, the list, the blocks that go under it, and a fixed-height
+// explanation of the highlighted row. The explanation's height is fixed so that
+// the list does not shift up and down as the selection moves.
+func listPanel(st *ui.Styles, p panelLayout, width, height int) []string {
 	if height <= 0 {
 		return nil
 	}
-	text, style := help, &st.PanelText
-	if message != "" {
-		text, style = message, &st.Message
+	text, style := p.help, &st.PanelText
+	if p.message != "" {
+		text, style = p.message, &st.Message
 	}
 	// The explanation's rows are reserved before the list is given any, and it
 	// is pinned to the bottom of the panel, so neither block moves when the
@@ -2533,29 +2460,42 @@ func listPanel(st *ui.Styles, title string, rows []string, sel int, preview func
 		helpH = min(2, max(0, height-2))
 	}
 	out := make([]string, 0, height)
-	out = append(out, paint(st, &st.PanelTitle, title))
+	out = append(out, paint(st, &st.PanelTitle, p.title))
 	if height >= 6 {
 		out = append(out, "")
 	}
+	// A heading is only worth its row while there are rows under it to head.
+	if len(p.head) > 0 && height-len(out)-helpH > len(p.head) {
+		out = append(out, p.head...)
+	}
+	// The foot keeps its space until the list is down to the few rows that
+	// make it a list at all, and is then dropped entirely rather than in part.
+	footH := 0
+	visibleRows := min(minListRows, max(1, len(p.rows)))
+	if room := height - len(out) - helpH - visibleRows; len(p.foot) > 0 && room >= len(p.foot) {
+		footH = len(p.foot)
+	}
 	// The preview is asked for whatever is left once the list has all its rows,
-	// the explanation its own, and one blank line separates the two blocks. It
-	// is the block a short panel gives up, because an entry can still be chosen
-	// by name with nothing shown, and it is asked for its size rather than
-	// clipped afterwards so that what it draws is what fits.
+	// the explanation and the foot theirs, and one blank line separates it from
+	// the list. It is asked for its size rather than clipped afterwards, so
+	// that what it draws is what fits.
 	var shown []string
 	previewH := 0
-	if preview != nil {
-		if room := height - len(out) - helpH - len(rows) - 1; room > 0 {
-			if shown = preview(width, room); len(shown) > 0 {
+	if p.preview != nil {
+		if room := height - len(out) - helpH - footH - len(p.rows) - 1; room > 0 {
+			if shown = p.preview(width, room); len(shown) > 0 {
 				previewH = len(shown) + 1
 			}
 		}
 	}
-	listH := max(1, height-len(out)-helpH-previewH)
-	out = append(out, window(rows, listH, sel)...)
+	listH := max(1, height-len(out)-helpH-footH-previewH)
+	out = append(out, window(p.rows, listH, p.sel)...)
 	if previewH > 0 {
 		out = append(out, "")
 		out = append(out, shown...)
+	}
+	if footH > 0 {
+		out = append(out, p.foot...)
 	}
 	if helpH > 0 {
 		for len(out) < height-helpH {
@@ -2565,3 +2505,8 @@ func listPanel(st *ui.Styles, title string, rows []string, sel int, preview func
 	}
 	return clampLines(out, height)
 }
+
+// minListRows is how short a list may be made by the blocks around it before
+// they are the ones that give way. Three rows is enough to see that a list is a
+// list, and to see where in it the highlight sits.
+const minListRows = 3

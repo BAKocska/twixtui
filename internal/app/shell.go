@@ -496,6 +496,24 @@ func arrowKeys(km ui.Keymap, a ui.Action) []string {
 	return keys
 }
 
+// letterKeys returns the letter forms of a movement binding, which is the
+// complement of what arrowKeys takes. Both read the shared keymap rather than
+// naming keys of their own, so rebinding the board's movement moves the lists'
+// with it and no hint can describe a key the screen does not answer.
+func letterKeys(km ui.Keymap, a ui.Action) []string {
+	b, ok := km.ByAction(ui.CtxBoard, a)
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(b.Keys))
+	for _, k := range b.Keys {
+		if len([]rune(k)) == 1 {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
 // matchesKey reports whether key is one of keys.
 func matchesKey(key string, keys []string) bool {
 	for _, k := range keys {
@@ -557,6 +575,54 @@ func (nk navKeys) move(key string, sel, n int) (int, bool) {
 
 func (nk navKeys) isConfirm(key string) bool { return matchesKey(key, nk.confirm) }
 func (nk navKeys) isCancel(key string) bool  { return matchesKey(key, nk.cancel) }
+
+// listKeys is what a list on a screen with no text field on it answers:
+// whatever navKeys answers, plus the letters the board moves by. The board is
+// driven h/j/k/l and its panel teaches that, so a hand coming off the board
+// should not have to find the arrow keys to work a list.
+//
+// It is one type rather than a copy per screen because a step has to mean the
+// same thing everywhere: where it wraps, what it does to an empty list, and
+// which keys a status line is allowed to name are then defined once. A screen
+// that carries a text field uses navKeys directly, since there the letters are
+// characters being typed.
+type listKeys struct {
+	navKeys
+	// upLetters and downLetters are the letter forms of the movement bindings.
+	upLetters, downLetters []string
+}
+
+func newListKeys(km ui.Keymap) listKeys {
+	return listKeys{
+		navKeys:     newNavKeys(km),
+		upLetters:   letterKeys(km, ui.ActMoveUp),
+		downLetters: letterKeys(km, ui.ActMoveDown),
+	}
+}
+
+// move is navKeys.move with the letters translated into the pair it already
+// treats as one step, rather than given arithmetic of their own.
+func (lk listKeys) move(key string, sel, n int) (int, bool) {
+	switch {
+	case matchesKey(key, lk.upLetters):
+		key = keyPrev
+	case matchesKey(key, lk.downLetters):
+		key = keyNext
+	}
+	return lk.navKeys.move(key, sel, n)
+}
+
+// moveHint names the keys the list moves by. The letters are named only when
+// the bindings really have them, since a keymap without them would leave the
+// arrows as the whole answer.
+func (lk listKeys) moveHint() string {
+	hint := keyLabel(lk.up...) + "/" + keyLabel(lk.down...)
+	up, down := keyLabel(lk.upLetters...), keyLabel(lk.downLetters...)
+	if up != "" && down != "" {
+		hint += " or " + up + "/" + down
+	}
+	return hint
+}
 
 // keyLabel names keys for a hint line, with the arrow keys shown as arrows.
 // The names come from the bindings themselves, so a hint can never describe a

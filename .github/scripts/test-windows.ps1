@@ -68,7 +68,8 @@ $required = @(
     'TestRelayedNetworkGamePlays',
     'TestTwoTerminalsPlayByCode',
     'TestHintScopesNoRouteClaimsOnWideAndNarrowBoards',
-    'TestReplayEntryJumpPreservesRecordAcrossResize'
+    'TestReplayEntryJumpPreservesRecordAcrossResize',
+    'TestLeaderboardHistoryReplayFromTheMenu'
 )
 $missing = @($required | Where-Object { -not $passes.ContainsKey($_) })
 $missingStorage = @()
@@ -90,6 +91,15 @@ if ($Scope -eq 'all') {
         'leaderboard/TestConcurrentRecordAcrossBoards',
         'leaderboard/TestReadingABoardNothingMayWriteTo',
         'leaderboard/TestARecordThatCannotReplaceTheFileKeepsThePreviousResults',
+        'leaderboard/TestFirstWriteToAV1BoardKeepsItsRows',
+        'leaderboard/TestRetryingTheSameFinalResultWritesNothing',
+        'leaderboard/TestADifferentResultForARecordedGameIsRefused',
+        'leaderboard/TestAnotherProcessRecordingTheSameGame',
+        'app/TestTwoWindowsFinishingAGameTheSameWayCreditItOnce',
+        'app/TestARematchIsRatedAsItsOwnGame',
+        'app/TestLeaderboardChecksTheGameAgainWhenItIsOpened',
+        'app/TestLeaderboardOpensOnlyTheGameTheResultNames',
+        'gamestore/TestMissingGamesAreDistinguishedFromUnreadableGames',
         'gamestore/TestOnlyOneFinishOfAGameIsStored',
         'gamestore/TestReadingAStoreNothingMayWriteTo',
         'gamestore/TestASaveThatCannotReplaceTheGameKeepsTheStoredOne',

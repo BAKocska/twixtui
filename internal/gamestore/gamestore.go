@@ -122,6 +122,9 @@ type Store struct {
 
 const subdir = "games"
 
+// ErrNotFound distinguishes an absent saved game from an unreadable one.
+var ErrNotFound = errors.New("no saved game")
+
 // Open prepares the store. The directory is created on the first write rather
 // than here, so listing games on a fresh install does not leave empty
 // directories behind.
@@ -298,7 +301,7 @@ func (s *Store) Get(id string) (Saved, error) {
 	}
 	raw, err := readWholeFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Saved{}, fmt.Errorf("no saved game %q", id)
+		return Saved{}, fmt.Errorf("%w %q", ErrNotFound, id)
 	}
 	if err != nil {
 		return Saved{}, err
@@ -375,7 +378,7 @@ func (s *Store) Delete(id string) error {
 	}
 	if err := os.Remove(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("no saved game %q", id)
+			return fmt.Errorf("%w %q", ErrNotFound, id)
 		}
 		return err
 	}
