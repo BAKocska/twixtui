@@ -710,11 +710,239 @@ func TestTheSecondWindowToFinishAGameDoesNotRateIt(t *testing.T) {
 	if !strings.Contains(b.s.notice, "not rated") || !strings.Contains(b.s.notice, "result of its own") {
 		t.Fatalf("the second window was not told its finish was refused: %q", b.s.notice)
 	}
-	if rows := d.Board.History("ada", 0); len(rows) != 1 {
+	rows := d.Board.History("ada", 0)
+	if len(rows) != 1 {
 		t.Fatalf("%d rows after the second window finished, want the first result alone: %+v", len(rows), rows)
+	}
+	// The surviving row still names the result the store kept rather than the
+	// one it refused. A row whose digest had been written over would point at
+	// a record nobody has.
+	if got, want := rows[0].RecordDigest, gsStoredDigest(t, d, saved[0].ID); got != want {
+		t.Errorf("the surviving row names record %q, want the stored game's %q", got, want)
 	}
 	if again, err := d.Games.Get(saved[0].ID); err != nil || again.Record != stored.Record {
 		t.Fatalf("the stored result changed under the second window: %v", err)
+	}
+}
+
+// --- what a row is tied to --------------------------------------------------
+
+// gsStoredDigest is the digest of the record the store really holds for a game,
+// taken by loading it. Reading it back from a record that replays is what makes
+// it something a leaderboard row can be checked against: a digest copied from
+// the screen that wrote the row would only prove the screen agrees with itself.
+func gsStoredDigest(t *testing.T, d Deps, id string) string {
+	t.Helper()
+	sv, err := d.Games.Get(id)
+	if err != nil {
+		t.Fatalf("the store has no game %q: %v", id, err)
+	}
+	_, rec, err := sv.Load()
+	if err != nil {
+		t.Fatalf("the stored game %q does not load: %v", id, err)
+	}
+	return rec.Digest
+}
+
+// TestTheRowNamesTheGameItCameFrom is what the rest of this feature stands on.
+// A result on the board says which stored game produced it and which record
+// inside that game, so a reader can open the game behind a row and know it is
+// the game that was rated rather than one that merely looks like it.
+func TestTheRowNamesTheGameItCameFrom(t *testing.T) {
+	d := gsTestDeps(t)
+	h := newGSHarness(t, d, gsHotseat(6), 80, 24)
+	gsPlayOutAWin(h)
+
+	saved := d.Games.List()
+	if len(saved) != 1 {
+		t.Fatalf("%d stored games, want 1", len(saved))
+	}
+	rows := d.Board.History("ada", 0)
+	if len(rows) != 1 {
+		t.Fatalf("%d leaderboard rows, want 1: %+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.GameID != saved[0].ID {
+		t.Errorf("the row names game %q, want the game that was stored, %q", row.GameID, saved[0].ID)
+	}
+	if want := gsStoredDigest(t, d, saved[0].ID); row.RecordDigest != want {
+		t.Errorf("the row names record %q, want the record the store holds, %q", row.RecordDigest, want)
+	}
+
+	// The opponent's view of that same game is the same game. The board turns
+	// one row round to credit the other side, and a view that lost the
+	// identity on the way would leave half the results on the board unable to
+	// say where they came from.
+	other := d.Board.History("linus", 0)
+	if len(other) != 1 {
+		t.Fatalf("%d rows for linus, want 1", len(other))
+	}
+	if other[0].GameID != row.GameID || other[0].RecordDigest != row.RecordDigest {
+		t.Errorf("linus's view of the game names %q/%q, want %q/%q",
+			other[0].GameID, other[0].RecordDigest, row.GameID, row.RecordDigest)
+	}
+}
+
+// TestTwoWindowsFinishingAGameTheSameWayCreditItOnce covers the finish the
+// store cannot tell from a first attempt. One saved game can be open in two
+// windows, and both can end it the same way; the second write is the same
+// record, so the store takes it and this end is told the game was saved. The
+// row it would then write is a second credit for one game, and only the
+// identity on the row lets the board recognise it as the game it has already
+// rated.
+func TestTwoWindowsFinishingAGameTheSameWayCreditItOnce(t *testing.T) {
+	d := gsTestDeps(t)
+	first := newGSHarness(t, d, gsHotseat(6), 80, 24)
+	first.playTurn(game.Point{Col: 1, Row: 0})
+	first.press("q")
+	saved := d.Games.List()
+	if len(saved) != 1 {
+		t.Fatalf("%d stored games, want the one that was left", len(saved))
+	}
+
+	cfg := gsHotseat(6)
+	cfg.Resume = &saved[0]
+	a := newGSHarness(t, d, cfg, 80, 24)
+	b := newGSHarness(t, d, cfg, 80, 24)
+
+	// Horizontal is to move in both windows, so a resignation in each is the
+	// same record twice.
+	a.ready()
+	a.press("r")
+	a.press("y")
+	rows := d.Board.History("ada", 0)
+	if len(rows) != 1 {
+		t.Fatalf("%d rows after the first window finished, want 1: %+v", len(rows), rows)
+	}
+	firstRow := rows[0]
+
+	b.ready()
+	b.press("r")
+	b.press("y")
+	if !b.s.g.Result().Over() {
+		t.Fatal("the second window's resignation did not end its game")
+	}
+	if strings.Contains(b.s.notice, "not saved") || strings.Contains(b.s.notice, "not updated") {
+		t.Errorf("the second window was told its identical finish failed: %q", b.s.notice)
+	}
+	after := d.Board.History("ada", 0)
+	if len(after) != 1 {
+		t.Fatalf("%d rows after both windows finished the one game, want 1: %+v", len(after), after)
+	}
+	if after[0] != firstRow {
+		t.Errorf("the second finish rewrote the row:\n got %+v\nwant %+v", after[0], firstRow)
+	}
+}
+
+// TestARematchIsRatedAsItsOwnGame covers the one pair of games whose records
+// are genuinely identical. A rematch played out the same way makes the same
+// moves under the same rules to the same result, so the two records hash alike;
+// they are still two games, and the store gave the second its own identifier.
+// A board that recognised games by what was played would have taken the second
+// for a repeat of the first and credited nobody for it.
+func TestARematchIsRatedAsItsOwnGame(t *testing.T) {
+	d := gsTestDeps(t)
+	h := newGSHarness(t, d, gsHotseat(6), 120, 40)
+	gsPlayOutAWin(h)
+	firstID := h.s.storeID
+
+	next := gsRematchScreen(h)
+	rh := gsAdopt(t, next, 120, 40)
+	gsPlayOutAWin(rh)
+
+	rows := d.Board.History("ada", 0)
+	if len(rows) != 2 {
+		t.Fatalf("%d rows after a game and its rematch, want 2: %+v", len(rows), rows)
+	}
+	if rows[0].RecordDigest != rows[1].RecordDigest {
+		t.Fatalf("the rematch did not replay the same record (%q against %q), so this test no longer covers what it says",
+			rows[0].RecordDigest, rows[1].RecordDigest)
+	}
+	ids := map[string]bool{}
+	for _, r := range rows {
+		if r.GameID == "" || r.RecordDigest == "" {
+			t.Fatalf("a row carries no identity: %+v", r)
+		}
+		ids[r.GameID] = true
+		if want := gsStoredDigest(t, d, r.GameID); r.RecordDigest != want {
+			t.Errorf("the row for %q names record %q, want the stored %q", r.GameID, r.RecordDigest, want)
+		}
+	}
+	if !ids[firstID] || !ids[next.storeID] {
+		t.Errorf("the rows name %v, want the two stored games %q and %q", ids, firstID, next.storeID)
+	}
+}
+
+// TestASavedGameWhoseRowIsRefusedSaysSo keeps the two halves of finishing a
+// game apart on screen. The store took the game, so nothing is lost; the board
+// refused the row, and a player told nothing about that would carry on
+// believing the result was rated.
+func TestASavedGameWhoseRowIsRefusedSaysSo(t *testing.T) {
+	d := gsTestDeps(t)
+	cfg := gsHotseat(6)
+	// One name on both sides is a row no leaderboard can take: it would credit
+	// a player with beating themselves.
+	cfg.Seats[game.Horizontal] = Seat{Profile: "ada"}
+	h := newGSHarness(t, d, cfg, 80, 24)
+	gsPlayOutAWin(h)
+
+	if !strings.Contains(h.s.notice, "the leaderboard was not updated") {
+		t.Errorf("the player was not told the result went unrated: %q", h.s.notice)
+	}
+	if strings.Contains(h.s.notice, "not saved") {
+		t.Errorf("the notice says the game was not saved, but it was: %q", h.s.notice)
+	}
+	saved := d.Games.List()
+	if len(saved) != 1 || !saved[0].Finished {
+		t.Fatalf("the game the board refused was not stored as finished: %+v", saved)
+	}
+	if rows := d.Board.History("ada", 0); len(rows) != 0 {
+		t.Fatalf("%d rows for a result the board refused: %+v", len(rows), rows)
+	}
+}
+
+// TestWithNowhereToSaveGamesNothingIsRated covers the one way a real result can
+// have nothing to point at. A rating names the stored game it came from, and
+// with no store there is no such game: a row written anyway would send every
+// reader of the board after a record that was never written. The same game with
+// a store behind it is rated once, which TestTheRowNamesTheGameItCameFrom is
+// the control for.
+func TestWithNowhereToSaveGamesNothingIsRated(t *testing.T) {
+	d := gsTestDeps(t)
+	d.Games = nil
+	h := newGSHarness(t, d, gsHotseat(6), 80, 24)
+	gsPlayOutAWin(h)
+
+	for _, name := range []string{"ada", "linus"} {
+		if rows := d.Board.History(name, 0); len(rows) != 0 {
+			t.Fatalf("%d rows for %s with nowhere to save the game: %+v", len(rows), name, rows)
+		}
+	}
+	if strings.Contains(h.s.notice, "not saved") || strings.Contains(h.s.notice, "not updated") {
+		t.Errorf("the game-over notice reports a failure that did not happen: %q", h.s.notice)
+	}
+}
+
+// Imported records carry no participant identity. They can be reviewed, but
+// finishing one through another route must not credit local players.
+func TestAnImportedGameIsNotRated(t *testing.T) {
+	d := gsTestDeps(t)
+	cfg := gsHotseat(6)
+	cfg.Kind = gamestore.Imported
+	h := newGSHarness(t, d, cfg, 80, 24)
+	gsPlayOutAWin(h)
+
+	saved := d.Games.List()
+	if len(saved) != 1 || saved[0].Kind != gamestore.Imported {
+		t.Fatalf("the game was not stored as imported: %+v", saved)
+	}
+	for _, name := range []string{"ada", "linus"} {
+		if rows := d.Board.History(name, 0); len(rows) != 0 {
+			t.Fatalf("%d rows for %s from an imported game: %+v", len(rows), name, rows)
+		}
+	}
+	if strings.Contains(h.s.notice, "not updated") {
+		t.Errorf("the notice reports a leaderboard failure for a game that was never to be rated: %q", h.s.notice)
 	}
 }
 

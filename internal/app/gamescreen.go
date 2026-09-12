@@ -453,7 +453,7 @@ func (s *gameScreen) autosave() {
 	if at == s.savedAt {
 		return
 	}
-	if err := s.save(false); err != nil {
+	if _, err := s.save(false); err != nil {
 		// Worth saying once: a player who has been told the game is kept should
 		// hear that it is not. Repeating it every move would bury the game.
 		if !s.saveFailed {
@@ -1376,10 +1376,12 @@ func (s *gameScreen) finish() tea.Cmd {
 	// is refused. Rating first would have written a second row for that same
 	// game — the one thing a rating log cannot be asked to undo — for a result
 	// that was then never stored.
+	// The accepted record supplies the rating's verifiable replay identity.
 	var problems []string
-	if err := s.save(true); err != nil {
+	rec, err := s.save(true)
+	if err != nil {
 		problems = append(problems, "the game was not saved, so it was not rated either: "+err.Error())
-	} else if err := s.record(res); err != nil {
+	} else if err := s.record(res, rec); err != nil {
 		problems = append(problems, "the leaderboard was not updated: "+err.Error())
 	}
 	if len(problems) > 0 {
@@ -1394,8 +1396,19 @@ func (s *gameScreen) finish() tea.Cmd {
 // from that one row by reading it backwards, so a hotseat game recorded once
 // per player would be counted twice. A hotseat game is written from the
 // vertical seat's point of view.
-func (s *gameScreen) record(res game.Result) error {
+//
+// The saved ID and digest tie the row to its accepted record and make repeated
+// rating writes idempotent at the leaderboard.
+func (s *gameScreen) record(res game.Result, rec game.Record) error {
 	if s.deps.Board == nil {
+		return nil
+	}
+	if s.cfg.Kind == gamestore.Imported {
+		// Imported records establish no local participant identity.
+		return nil
+	}
+	if s.storeID == "" || rec.Digest == "" {
+		// Never credit a result without an accepted saved-record identity.
 		return nil
 	}
 	player, side, opponent := s.rowSides()
@@ -1412,14 +1425,16 @@ func (s *gameScreen) record(res game.Result) error {
 	}
 	now := s.deps.Clock()
 	return s.deps.Board.Record(leaderboard.Result{
-		Played:   now,
-		Player:   player,
-		Opponent: opponent,
-		Outcome:  outcome,
-		Side:     side.String(),
-		Moves:    s.g.Ply(),
-		Ruleset:  s.g.Rules().Canonical(),
-		Duration: now.Sub(s.started),
+		Played:       now,
+		Player:       player,
+		Opponent:     opponent,
+		Outcome:      outcome,
+		Side:         side.String(),
+		Moves:        s.g.Ply(),
+		Ruleset:      s.g.Rules().Canonical(),
+		Duration:     now.Sub(s.started),
+		GameID:       s.storeID,
+		RecordDigest: rec.Digest,
 	})
 }
 
@@ -1431,9 +1446,11 @@ func (s *gameScreen) rowSides() (player string, side game.Player, opponent strin
 	return s.cfg.Seats[game.Vertical].Profile, game.Vertical, s.cfg.Seats[game.Horizontal].Profile
 }
 
-func (s *gameScreen) save(finished bool) error {
+// save returns the canonical record after the store accepts it.
+// A zero record with no error means game storage is disabled.
+func (s *gameScreen) save(finished bool) (game.Record, error) {
 	if s.deps.Games == nil {
-		return nil
+		return game.Record{}, nil
 	}
 	position := s.g
 	staged := s.g.Staged()
@@ -1447,19 +1464,26 @@ func (s *gameScreen) save(finished bool) error {
 	}
 	rec, err := position.Record()
 	if err != nil {
-		return err
+		return game.Record{}, err
+	}
+	encoded, err := rec.EncodeCanonical()
+	if err != nil {
+		return game.Record{}, err
 	}
 	player, side, opponent := s.rowSides()
-	return s.deps.Games.Put(gamestore.Saved{
+	if err := s.deps.Games.Put(gamestore.Saved{
 		ID:       s.storeID,
 		Kind:     s.cfg.Kind,
 		Created:  s.created,
 		Player:   player,
 		Side:     side.String(),
 		Opponent: opponent,
-		Record:   rec.Encode(),
+		Record:   encoded,
 		Finished: finished,
-	})
+	}); err != nil {
+		return game.Record{}, err
+	}
+	return rec, nil
 }
 
 // depart is the tidying every way out of this screen shares: the searches are
@@ -1481,7 +1505,7 @@ func (s *gameScreen) depart() error {
 	s.g.AbortTurn()
 	var err error
 	if !s.g.Result().Over() {
-		err = s.save(false)
+		_, err = s.save(false)
 		if err == nil {
 			// Say so where the player will actually see it. Which place that
 			// is depends on what happens next: a departure that ends the

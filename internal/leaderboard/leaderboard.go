@@ -20,16 +20,16 @@ import (
 	"time"
 
 	"github.com/BAKocska/twixtui/internal/game"
+	"github.com/BAKocska/twixtui/internal/gamestore"
 )
 
 // fileName is the board's file within the configuration directory.
 const fileName = "leaderboard.json"
 
-// boardVersion is the on-disk schema version. A file written by a newer twixtui
-// is refused rather than parsed on a best-effort basis, so an older binary
-// cannot silently drop fields it does not understand when it writes the file
-// back.
-const boardVersion = 1
+// boardVersion 2 adds optional saved-game identity. Legacy rows are retained
+// without inventing links; the first write stamps the new version.
+// Newer schemas are refused so older binaries cannot silently strip fields.
+const boardVersion = 2
 
 // Recording errors. Callers match these with errors.Is.
 var (
@@ -38,6 +38,10 @@ var (
 	ErrBadOutcome    = errors.New("result has an unknown outcome")
 	ErrBadSide       = errors.New("result has an unknown side")
 	ErrNegativeMoves = errors.New("result has a negative move count")
+	// ErrBadIdentity reports an incomplete or malformed ID/digest pair.
+	ErrBadIdentity = errors.New("result has a malformed saved-game identity")
+	// ErrIdentityConflict reports contradictory results for one saved game.
+	ErrIdentityConflict = errors.New("a different result is already recorded for this game")
 )
 
 // Outcome is a game's result from the recording player's point of view.
@@ -79,6 +83,11 @@ type Result struct {
 	Moves    int           `json:"moves"`
 	Ruleset  string        `json:"ruleset"` // game.Ruleset.Canonical()
 	Duration time.Duration `json:"duration"`
+	// GameID and RecordDigest identify the saved game and its canonical record.
+	// Both or neither must be set. Missing identity is never recovered by
+	// guessing from participant names or timestamps.
+	GameID       string `json:"game_id,omitempty"`
+	RecordDigest string `json:"record_digest,omitempty"`
 }
 
 // reversed is the same game as the other side played it: the two names swap,
@@ -101,6 +110,12 @@ func (r Result) reversed() Result {
 		r.Side = side.Opponent().String()
 	}
 	return r
+}
+
+// HasIdentity reports whether both identity fields are syntactically valid.
+// It does not establish that a saved game exists or matches the digest.
+func (r Result) HasIdentity() bool {
+	return r.GameID != "" && validDigest(r.RecordDigest) && gamestore.ValidateID(r.GameID) == nil
 }
 
 // Standing is one participant's line on the board.
@@ -223,6 +238,9 @@ func (b *Board) refresh() {
 	_ = b.loadShared()
 }
 
+// errUnchanged makes mutate succeed without rewriting the file.
+var errUnchanged = errors.New("leaderboard: the stored results already say this")
+
 // mutate applies fn to the stored results and writes the result. The reload
 // inside the lock is what makes concurrent writers additive instead of
 // last-write-wins.
@@ -239,6 +257,9 @@ func (b *Board) mutate(fn func(*[]Result) error) error {
 	}
 	results := append([]Result(nil), b.results...)
 	if err := fn(&results); err != nil {
+		if errors.Is(err, errUnchanged) {
+			return nil
+		}
 		return err
 	}
 	data, err := marshal(results)
@@ -265,12 +286,25 @@ func marshal(results []Result) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// Record appends one finished game. Call it once per game, not once per player.
+// Record stores a finished game. Identityless results append as legacy history.
+// An identified retry with the same semantic fields writes nothing and preserves
+// the original Played/Duration; a contradiction returns ErrIdentityConflict.
 func (b *Board) Record(r Result) error {
 	if err := normalise(&r); err != nil {
 		return err
 	}
 	return b.mutate(func(rs *[]Result) error {
+		if r.GameID != "" {
+			for _, stored := range *rs {
+				if stored.GameID != r.GameID {
+					continue
+				}
+				if stored.RecordDigest != r.RecordDigest || !sameGame(stored, r) {
+					return fmt.Errorf("game %s: %w", r.GameID, ErrIdentityConflict)
+				}
+				return errUnchanged
+			}
+		}
 		*rs = append(*rs, r)
 		return nil
 	})
@@ -300,11 +334,64 @@ func normalise(r *Result) error {
 	if r.Moves < 0 {
 		return fmt.Errorf("%d moves: %w", r.Moves, ErrNegativeMoves)
 	}
+	if err := checkIdentity(r.GameID, r.RecordDigest); err != nil {
+		return err
+	}
 	if r.Played.IsZero() {
 		r.Played = time.Now()
 	}
 	r.Played = r.Played.UTC()
 	return nil
+}
+
+// digestLen is the length of a game record's digest as internal/game writes it:
+// the leading 16 characters of a hexadecimal SHA-256.
+const digestLen = 16
+
+// checkIdentity requires both fields or neither, using the game store's ID
+// syntax. Digest shape is checked here; replay callers must verify its contents.
+func checkIdentity(id, digest string) error {
+	if id == "" && digest == "" {
+		return nil
+	}
+	if id == "" || digest == "" {
+		return fmt.Errorf("game %q with record digest %q needs both or neither: %w", id, digest, ErrBadIdentity)
+	}
+	if err := gamestore.ValidateID(id); err != nil {
+		return fmt.Errorf("%w: %w", ErrBadIdentity, err)
+	}
+	if !validDigest(digest) {
+		return fmt.Errorf("record digest %q is not %d lower-case hexadecimal characters: %w", digest, digestLen, ErrBadIdentity)
+	}
+	return nil
+}
+
+// validDigest reports whether a digest has the shape internal/game produces.
+// Lower case only: the digest is compared with a stored record's digest by
+// value, and accepting two spellings of one hash would make that comparison
+// depend on which spelling was written.
+func validDigest(digest string) bool {
+	if len(digest) != digestLen {
+		return false
+	}
+	for _, r := range digest {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// sameGame compares semantic result fields, using the board's case-insensitive
+// participant identities. Retry timestamps and durations do not replace the
+// original row's values.
+func sameGame(a, b Result) bool {
+	return foldKey(a.Player) == foldKey(b.Player) &&
+		foldKey(a.Opponent) == foldKey(b.Opponent) &&
+		a.Outcome == b.Outcome && a.Side == b.Side &&
+		a.Moves == b.Moves && a.Ruleset == b.Ruleset
 }
 
 // Reset discards every recorded result.
