@@ -184,7 +184,7 @@ somebody does the thing rather than by the mechanism behind it:
 | `Continue a saved game` | Games still waiting for a move. A disconnected network game offers reconnection setup and keeps its saved identity. Imported games are listed for reference but cannot be played on; the row explains why. |
 | `Watch a finished game` | Review a finished or imported game with a numbered entry list, direct entry jump and final winning-chain highlights. |
 | `Learn to play` | The tutorial, the written rules, and the introduction again. |
-| `Leaderboard` | The standings. For one player's history, use `twixtui leaderboard show --player NAME` on the command line. |
+| `Leaderboard` | Select a player to browse their results, then open a linked saved-game replay. Escape returns through the history and standings without losing your selection. |
 | `Settings` | Colours, the default ruleset, the default board size, whether hints are offered, and which profile is playing. Set once and forgotten; kept per machine, as the colour scheme is. |
 | `Quit` | Leave. `q` does the same from the front screen. |
 
@@ -767,10 +767,8 @@ to a game in a single command.
 
 ## The leaderboard
 
-Every game finished on this machine is recorded: who played, which side they took,
-the ruleset, how many moves, how long it took and how it ended. A record read in
-with `game import` is not, since nobody here played it: it is kept to be shown and
-replayed, and it does not reach the standings.
+The result log records participants, sides, rulesets, move counts, durations and
+outcomes. Imported game records are kept for review, not rated.
 
 ```
 twixtui leaderboard show --limit 20      # standings, best first
@@ -782,6 +780,30 @@ twixtui leaderboard reset --yes          # clear ratings/results, not saved game
 deleted without deleting its historical results: `leaderboard show --player
 NAME` and its completion still find participants retained in the result log.
 Remote players remain distinct from local profiles with the same visible name.
+
+In the menu, **Leaderboard** is a browsable list. Use `up`/`down` or `k`/`j`
+to choose a player, then `enter` to open their results, most recent first.
+Each history is read from that participant's side: their opponent, outcome and
+axis, even when the other participant originally recorded the game. Bots remain
+separate, unranked opponents rather than player-history choices. Colliding local
+and remote display names are labelled with their distinct identities.
+
+Press `enter` on a linked result to open its saved-game replay. The game ID and
+record digest are checked again when opening it; a deleted, unreadable or changed
+record cannot silently become a different replay. Old results without a link
+remain readable, with replay unavailable. Names and timestamps are never used
+to guess a link.
+
+`esc` returns from replay to history, history to standings, and standings to the
+menu, preserving each selection. `ctrl+c` ends the program. Shared keybindings
+also apply here, and the hints follow remapped keys. Narrow layouts hide secondary
+columns and abbreviate dates, but retain the selected result and action/back keys.
+
+**History format:** the first leaderboard write upgrades the file to schema 2,
+preserving existing rows without inventing identities or removing old duplicates.
+Browsing alone does not rewrite a schema-1 log. Version 0.5.0 and older refuse the
+upgraded leaderboard rather than silently stripping its links; keep a pre-upgrade
+copy if you need to downgrade. The canonical exported game-record format is unchanged.
 
 Saved games are kept too, and can be moved between machines:
 
@@ -810,18 +832,23 @@ and its replay. They are not signatures or anti-cheat protection. Local labels
 such as player names and storage metadata live outside that record check and
 remain trusted local state.
 
-A finished game keeps its result. The store refuses to reopen it and refuses a
-different finished record for the same game, and both checks are made under a
-lock on that game, so when the same game is open in two windows the first
-result written is the one kept: the second window is told its game was neither
-saved nor rated. The labels beside an unchanged finished record can still be
-corrected.
+A finished saved game cannot be reopened or given a different record. These
+checks run under its own lock; a conflicting finish from another window is
+refused and not rated. Repeating an identical finish may save the same record
+again, but its game ID, record digest and result fields prevent a second credit.
+The original result's timestamp and duration are retained. A separate game,
+including a rematch played identically, still receives its own credit.
+
+Saving and rating are separate operations: a save failure prevents rating, and a
+rating failure is reported. Idempotent result writes do not add automatic retry
+or crash recovery. Labels beside an unchanged saved record can still be corrected.
 
 ### Reviewing saved games
 
 `twixtui game replay <id>` opens at the record's final entry. The menu's
-**Watch a finished game** opens the same viewer. Its numbered list follows the
-selected entry; `0` is the initial empty board. These are **record entries, not
+**Watch a finished game** and linked results in **Leaderboard** open the same
+viewer. Its numbered list follows the selected entry; `0` is the initial empty board.
+These are **record entries, not
 plies**: a draw offer has an entry of its own without placing a peg. The panel
 shows both the entry counter and the number of moves played.
 

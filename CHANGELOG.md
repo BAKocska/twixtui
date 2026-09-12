@@ -7,6 +7,32 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Selectable standings and player histories in **Leaderboard**. Enter opens a
+  participant's results, then a linked saved-game replay; Escape returns through
+  the lists without losing selection. Local/remote name collisions are visibly
+  distinguished, and bots remain separate and unranked.
+- Replay links checked against the exact saved-game ID and record digest on
+  activation. Legacy, missing, unreadable and changed records remain readable
+  history without guessed links. Compact layouts retain the selected result,
+  rating and action/back keys at the supported 20-column minimum.
+
+### Changed
+
+- Leaderboard schema 2 stores optional game/record identities. Existing rows are
+  preserved on the first write, with no retroactive linking or deduplication;
+  read-only browsing leaves version-1 logs untouched. Older releases refuse the
+  upgraded leaderboard rather than stripping its identity fields. Exported game
+  records and wire formats are unchanged.
+
+### Fixed
+
+- Identical finalization attempts from another window or process no longer
+  award duplicate credit. Conflicting results under one game ID are refused;
+  separate games with identical records still count separately. Saving still
+  precedes rating, and failures remain visible rather than being retried silently.
+
 ## [0.5.0] - 2026-09-12
 
 ### Added

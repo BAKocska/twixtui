@@ -1,6 +1,7 @@
 package gamestore
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,28 @@ func newStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func TestMissingGamesAreDistinguishedFromUnreadableGames(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.Get("missing-game"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get missing game: %v, want ErrNotFound", err)
+	}
+	if err := s.Delete("missing-game"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete missing game: %v, want ErrNotFound", err)
+	}
+	if err := os.MkdirAll(s.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir(), "broken-game.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get("broken-game"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get unreadable game: %v, want a non-absence error", err)
+	}
+	if _, err := s.Get("../outside"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get invalid identifier: %v, want an identifier error", err)
+	}
 }
 
 func TestPutGetRoundTrip(t *testing.T) {

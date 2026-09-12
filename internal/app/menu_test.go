@@ -317,9 +317,19 @@ func TestMenuEveryEntryIsReachable(t *testing.T) {
 			}
 		}},
 		{[]string{"Learn to play", "The introduction"}, mnOpensScreen},
-		{[]string{"Leaderboard"}, func(t *testing.T, m *Menu, _ tea.Cmd) {
-			if _, ok := m.form.(*scrollForm); !ok {
-				t.Errorf("opened %T, want a scrolling panel", m.form)
+		{[]string{"Leaderboard"}, func(t *testing.T, m *Menu, cmd tea.Cmd) {
+			if cmd == nil {
+				t.Fatal("no command")
+			}
+			open, ok := cmd().(OpenMsg)
+			if !ok {
+				t.Fatalf("produced %T, want the standings opened on top of the menu", cmd())
+			}
+			if _, ok := open.Screen.(*LeaderboardScreen); !ok {
+				t.Errorf("opened %T, want the leaderboard screen", open.Screen)
+			}
+			if m.form != nil {
+				t.Errorf("the menu is also showing %T underneath, so escape would land on a stale panel", m.form)
 			}
 		}},
 		{[]string{"Settings"}, mnFormTitle("Settings")},
@@ -750,43 +760,6 @@ func TestMenuOffersANetworkGameItsConnectionBack(t *testing.T) {
 	}
 }
 
-// TestMenuLeaderboardLabelsTheRateAsScore: the rate counts half of every draw,
-// so calling it a win rate would be wrong.
-func TestMenuLeaderboardLabelsTheRateAsScore(t *testing.T) {
-	d := shellTestDeps(t)
-	if err := d.Board.Record(leaderboard.Result{
-		Played:   time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC),
-		Player:   "Balint",
-		Opponent: leaderboard.BotName("pro"),
-		Outcome:  leaderboard.DrawOutcome,
-		Side:     "vertical",
-		Moves:    40,
-		Ruleset:  game.Std.Canonical(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Leaderboard")
-
-	frame := m.View().Content
-	if !strings.Contains(frame, "score") {
-		t.Errorf("the rate column is not labelled score:\n%s", frame)
-	}
-	if strings.Contains(frame, "wins") || strings.Contains(frame, "win rate") {
-		t.Errorf("the rate column is labelled as wins, but it counts half of every draw:\n%s", frame)
-	}
-	if !strings.Contains(frame, "Balint") || !strings.Contains(frame, leaderboard.DisplayName(leaderboard.BotName("pro"))) {
-		t.Errorf("the participants are not listed:\n%s", frame)
-	}
-	if !strings.Contains(frame, "50%") {
-		t.Errorf("a single draw is not shown as a 50%% score:\n%s", frame)
-	}
-	shellSend(t, m, "esc")
-	if m.form != nil {
-		t.Error("escape did not close the leaderboard")
-	}
-}
-
 // mnRecordLoss records one finished game the local player lost.
 func mnRecordLoss(t *testing.T, d Deps, player, opponent string, played time.Time) {
 	t.Helper()
@@ -797,108 +770,6 @@ func mnRecordLoss(t *testing.T, d Deps, player, opponent string, played time.Tim
 	}); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// mnRow finds the standings line naming want.
-func mnRow(t *testing.T, lines []string, want string) (int, string) {
-	t.Helper()
-	for i, l := range lines {
-		if strings.Contains(l, want) {
-			return i, l
-		}
-	}
-	t.Fatalf("no standings row for %q in:\n%s", want, strings.Join(lines, "\n"))
-	return 0, ""
-}
-
-// TestMenuLeaderboardDoesNotCallALoserTheBest is F4: a bot's rating is a fixed
-// number, so ranking it with people made a player who had lost their only game
-// come out first, above the bot that had just beaten them. The player must not
-// be given a position at all while they are the only one, and the bot must be
-// below the ranking under a line saying it is not part of it.
-func TestMenuLeaderboardDoesNotCallALoserTheBest(t *testing.T) {
-	d := shellTestDeps(t)
-	beginner := leaderboard.BotName("beginner")
-	mnRecordLoss(t, d, "Balint", beginner, time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC))
-
-	lines := standingsLines(d)
-	playerAt, playerRow := mnRow(t, lines, "Balint")
-	botAt, _ := mnRow(t, lines, leaderboard.DisplayName(beginner))
-	if playerAt > botAt {
-		t.Errorf("the bot is listed above the player it beat:\n%s", strings.Join(lines, "\n"))
-	}
-	if fields := strings.Fields(playerRow); fields[0] != "Balint" {
-		t.Errorf("the only player is given the position %q on a board of one:\n%s", fields[0], playerRow)
-	}
-	unranked := -1
-	for i, l := range lines {
-		if strings.Contains(l, "not ranked") {
-			unranked = i
-		}
-	}
-	if unranked < 0 || unranked < playerAt || unranked > botAt {
-		t.Errorf("nothing between the player and the bot says the bot is not ranked:\n%s", strings.Join(lines, "\n"))
-	}
-
-	// The rating the player lost their way to must not be presented as a score
-	// worth being first for.
-	frame := mnLeaderboardFrame(t, d)
-	if !strings.Contains(frame, "0%") {
-		t.Errorf("the lost game is not shown as a 0%% score:\n%s", frame)
-	}
-}
-
-// TestMenuLeaderboardNumbersPlayersOnceThereAreTwo: the position column is
-// withheld only while it would be vacuous. With two people it is a ranking
-// again, and it must agree with the ratings.
-func TestMenuLeaderboardNumbersPlayersOnceThereAreTwo(t *testing.T) {
-	d := shellTestDeps(t)
-	mnRecordLoss(t, d, "Balint", "Reka", time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC))
-
-	lines := standingsLines(d)
-	rekaAt, rekaRow := mnRow(t, lines, "Reka")
-	balintAt, balintRow := mnRow(t, lines, "Balint")
-	if rekaAt > balintAt {
-		t.Errorf("the winner is listed below the loser:\n%s", strings.Join(lines, "\n"))
-	}
-	if got := strings.Fields(rekaRow)[0]; got != "1" {
-		t.Errorf("the winner's position is %q, want 1:\n%s", got, rekaRow)
-	}
-	if got := strings.Fields(balintRow)[0]; got != "2" {
-		t.Errorf("the loser's position is %q, want 2:\n%s", got, balintRow)
-	}
-}
-
-// TestMenuLeaderboardShowsNoTierAsHavingGainedRating is the second half of F4:
-// the anchors are constants, so however many games are played against a tier
-// its rating must be exactly the same number every time it is shown.
-func TestMenuLeaderboardShowsNoTierAsHavingGainedRating(t *testing.T) {
-	d := shellTestDeps(t)
-	intermediate := leaderboard.BotName("intermediate")
-	mnRecordLoss(t, d, "Balint", intermediate, time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC))
-	first := d.Board.Standings().Bots
-	mnRecordLoss(t, d, "Balint", intermediate, time.Date(2026, 2, 2, 9, 0, 0, 0, time.UTC))
-	mnRecordLoss(t, d, "Reka", intermediate, time.Date(2026, 2, 3, 9, 0, 0, 0, time.UTC))
-	second := d.Board.Standings().Bots
-
-	if len(first) != 1 || len(second) != 1 {
-		t.Fatalf("one tier was played, listed as %+v then %+v", first, second)
-	}
-	if first[0].Rating != second[0].Rating {
-		t.Errorf("the tier's rating moved from %d to %d over three games it was never rated for",
-			first[0].Rating, second[0].Rating)
-	}
-	if second[0].Played != 3 {
-		t.Errorf("the tier played %d games, want 3", second[0].Played)
-	}
-}
-
-// mnLeaderboardFrame opens the standings and returns what is on screen.
-func mnLeaderboardFrame(t *testing.T, d Deps) string {
-	t.Helper()
-	m := mnMenu(t, d, 100, 30)
-	mnPick(t, m, "Leaderboard")
-	return m.View().Content
 }
 
 // TestMenuTellsTwoSavesOfTheSamePairingApart is F16: the listing used to show
@@ -1221,7 +1092,8 @@ func TestMenuFitsEverySize(t *testing.T) {
 		{"Watch a finished game"},
 		{"Learn to play"},
 		{"Learn to play", "The rules"},
-		{"Leaderboard"},
+		// The standings are a screen of their own now, and are sized at every
+		// terminal size by TestLeaderboardFitsEverySize.
 		{"Settings"},
 		{"Settings", "Colours"},
 		{"Settings", "Rules"},
@@ -1418,30 +1290,19 @@ func TestMenuListsMoveWithTheBoardsLetters(t *testing.T) {
 }
 
 // TestMenuScrollingPanelMovesWithTheBoardsLetters covers the other list shape on
-// this screen: the standings, which scroll rather than select. The assertion is
-// on the frame, so it is about what the panel shows and not about the field that
+// this screen: the rules, which scroll rather than select. The assertion is on
+// the frame, so it is about what the panel shows and not about the field that
 // remembers where it is.
 func TestMenuScrollingPanelMovesWithTheBoardsLetters(t *testing.T) {
 	d := shellTestDeps(t)
-	for i, name := range []string{
-		"Anna", "Bernadett", "Csilla", "Dora", "Emese", "Fanni",
-		"Gabor", "Hajni", "Ildi", "Jozsef", "Kati", "Laci",
-	} {
-		if err := d.Board.Record(leaderboard.Result{
-			Played: time.Date(2026, 2, 1, 9, i, 0, 0, time.UTC), Player: name,
-			Opponent: leaderboard.BotName("pro"), Outcome: leaderboard.Win,
-			Side: "vertical", Moves: 40, Ruleset: game.Std.Canonical(),
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// Short enough that the standings cannot all fit, which is what makes
+	// Short enough that the document cannot all fit, which is what makes
 	// scrolling visible at all.
 	m := mnMenu(t, d, 80, 14)
-	mnPick(t, m, "Leaderboard")
+	mnPick(t, m, "Learn to play")
+	mnPick(t, m, "The rules")
 	f, ok := m.form.(*scrollForm)
 	if !ok {
-		t.Fatalf("the leaderboard opened %T, not a scrolling panel", m.form)
+		t.Fatalf("the rules opened %T, not a scrolling panel", m.form)
 	}
 	top := m.View().Content
 
@@ -1458,13 +1319,13 @@ func TestMenuScrollingPanelMovesWithTheBoardsLetters(t *testing.T) {
 		}
 	}
 	if scrolled == top {
-		t.Fatalf("j never scrolled the standings in %d presses:\n%s", presses, top)
+		t.Fatalf("j never scrolled the rules in %d presses:\n%s", presses, top)
 	}
 	for range presses {
 		shellSend(t, m, "k")
 	}
 	if back := m.View().Content; back != top {
-		t.Errorf("k did not scroll back to the top of the standings:\n%s", back)
+		t.Errorf("k did not scroll back to the top of the rules:\n%s", back)
 	}
 }
 
@@ -1772,7 +1633,7 @@ func TestMenuFrontScreenAt120x40ShowsTheArtwork(t *testing.T) {
 	}
 
 	// The cover decorates the front door, not the rooms behind it.
-	mnPick(t, m, "Leaderboard")
+	mnPick(t, m, "Learn to play")
 	if got := m.View().Content; strings.Contains(got, mnCoverMark) {
 		t.Errorf("the artwork is drawn over an open panel:\n%s", got)
 	}

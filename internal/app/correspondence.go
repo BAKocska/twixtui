@@ -209,7 +209,7 @@ func (s *gameScreen) codeForLastEntry(what string) bool {
 	s.corr.open = true
 	if !s.g.Result().Over() {
 		// A finished game is saved by finish, with its result.
-		if err := s.save(false); err != nil {
+		if _, err := s.save(false); err != nil {
 			s.corr.note = "the game was not saved: " + err.Error()
 		}
 	}
@@ -258,7 +258,7 @@ func (s *gameScreen) applyPastedCode() tea.Cmd {
 	if s.g.Result().Over() {
 		return s.finish()
 	}
-	if err := s.save(false); err != nil {
+	if _, err := s.save(false); err != nil {
 		s.corr.note = "the game was not saved: " + err.Error()
 	}
 	return nil
