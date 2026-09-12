@@ -30,7 +30,9 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
+            go.work.sum
 
       - uses: goreleaser/goreleaser-action@v7
         with:
@@ -38,3 +40,55 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Exercise what users download, not a freshly rebuilt substitute. Source CI
+  # already ran natively before publication; this checks the actual ZIP,
+  # stamped version/commit and terminal workflow on both Windows architectures.
+  verify-windows-artifact:
+    needs: release
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: amd64
+          - os: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.work.sum
+
+      - name: Download and verify the published Windows archive
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          $name = "twixtui_${version}_windows_$($env:RELEASE_ARCH).zip"
+          $destination = Join-Path $env:RUNNER_TEMP 'published Windows artifact'
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern $name --pattern checksums.txt --dir $destination
+          if ($LASTEXITCODE -ne 0) { throw 'Published artifact download failed.' }
+          ./.github/scripts/test-windows-archive.ps1 -ExpectedArch $env:RELEASE_ARCH -ExpectedVersion $version -ExpectedCommit $env:EXPECTED_COMMIT -Archive (Join-Path $destination $name) -Checksums (Join-Path $destination 'checksums.txt')
+
+      - name: Keep artifact execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-windows-${{ matrix.arch }}
+          path: ${{ runner.temp }}/windows-archive-tests
+          if-no-files-found: error

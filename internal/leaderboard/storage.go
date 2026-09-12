@@ -68,7 +68,7 @@ func statStamp(path string) stamp {
 // descriptor, so taking both from it pairs the old contents with the old
 // file's stamp, which the next stat of the path disagrees with.
 func readFile(path string) ([]byte, stamp, error) {
-	f, err := os.Open(path)
+	f, err := openRead(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, stamp{}, nil
 	}
@@ -93,9 +93,10 @@ func readFile(path string) ([]byte, stamp, error) {
 
 // atomicWrite replaces path with data, or leaves the previous contents intact.
 // The data goes to a temporary file in the same directory, is flushed to the
-// device, and is then renamed over the target: rename within a directory is
-// atomic, so a crash partway through recording a result cannot truncate the
-// history that was already there.
+// device, and is then put in the target's place: a replacement within a
+// directory takes effect all at once, so a crash partway through recording a
+// result cannot truncate the history that was already there. What each
+// platform needs for that is in replaceFile.
 func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	prefix := filepath.Base(path) + ".tmp-"
@@ -121,18 +122,11 @@ func atomicWrite(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing %s: %w", name, err)
 	}
-	if err := os.Rename(name, path); err != nil {
+	if err := replaceFile(name, path); err != nil {
 		return fmt.Errorf("replacing %s: %w", path, err)
 	}
 	name = ""
-	// Flushing the directory entry makes the rename itself durable across a
-	// power loss. Not every filesystem permits fsync on a directory handle,
-	// and the rename has already succeeded either way, so a failure here is
-	// not worth failing the write over.
-	if d, err := os.Open(dir); err == nil {
-		d.Sync()
-		d.Close()
-	}
+	syncDir(dir)
 	return nil
 }
 

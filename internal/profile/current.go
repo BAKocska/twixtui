@@ -27,7 +27,7 @@ func (s *Store) currentPath() string {
 // A name that no longer matches a profile reports as no choice rather than as an
 // error: a deleted profile is an ordinary thing to find here, not a fault.
 func (s *Store) Current() (Profile, bool) {
-	raw, err := os.ReadFile(s.currentPath())
+	raw, err := readWholeFile(s.currentPath())
 	if err != nil {
 		return Profile{}, false
 	}

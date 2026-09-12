@@ -1,10 +1,12 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -25,16 +27,33 @@ var (
 	buildErr  error
 )
 
-// binary compiles twixtui once for the whole package and returns its path.
+// binaryEnv names an already-built twixtui to test instead of building one.
+// Verifying a release means driving the artefact that was published, not a
+// fresh build of the same source: a build made here would test the toolchain
+// on this machine and say nothing about what was downloaded.
+const binaryEnv = "TWIXTUI_E2E_BINARY"
+
+// binary returns the twixtui under test, compiling one once for the whole
+// package unless binaryEnv names one.
+//
+// A binaryEnv that cannot be used is a failure and never a quiet fall back to
+// building: a release verification that silently tested a local build instead
+// of the artefact would report a pass for something nobody shipped.
 func binary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
+		if named, present := os.LookupEnv(binaryEnv); present {
+			binPath, buildErr = prebuiltBinary(named)
+			return
+		}
 		dir, err := os.MkdirTemp("", "twixtui-e2e-bin-*")
 		if err != nil {
 			buildErr = err
 			return
 		}
-		binPath = filepath.Join(dir, "twixtui")
+		// Windows will not execute a file without the extension, and the go
+		// tool does not add one to an explicit -o.
+		binPath = filepath.Join(dir, "twixtui"+exeSuffix)
 		cmd := exec.Command("go", "build", "-o", binPath, "./cmd/twixtui")
 		cmd.Dir = repoRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -42,9 +61,42 @@ func binary(t *testing.T) string {
 		}
 	})
 	if buildErr != nil {
-		t.Fatalf("building twixtui: %v", buildErr)
+		t.Fatalf("the twixtui under test is not usable: %v", buildErr)
 	}
 	return binPath
+}
+
+// exeSuffix is what an executable is called on this platform.
+var exeSuffix = func() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}()
+
+// prebuiltBinary resolves and checks the binary binaryEnv names. The path is
+// made absolute because the terminal starts the program from the module root
+// rather than from wherever the suite was invoked.
+func prebuiltBinary(named string) (string, error) {
+	abs, err := filepath.Abs(named)
+	if err != nil {
+		return "", fmt.Errorf("%s names %q, which has no absolute path: %w", binaryEnv, named, err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", fmt.Errorf("%s names %s, which cannot be read: %w", binaryEnv, abs, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s names %s, which is not a file", binaryEnv, abs)
+	}
+	// LookPath is the executable test rather than a mode bit: on Windows what
+	// makes a file runnable is its extension, so an artefact unpacked without
+	// one is refused here with a name rather than at the terminal with a
+	// failure to start.
+	if _, err := exec.LookPath(abs); err != nil {
+		return "", fmt.Errorf("%s names %s, which cannot be executed: %w", binaryEnv, abs, err)
+	}
+	return abs, nil
 }
 
 type buildFailure struct {
@@ -75,7 +127,12 @@ func repoRoot(t *testing.T) string {
 
 // session starts the binary with an isolated configuration directory and a
 // profile already chosen, so a test lands on the screen it is interested in.
-func session(t *testing.T, args string, width, height int) *Terminal {
+//
+// The arguments are an argument vector rather than a command line. Nothing
+// here is handed to a shell, so a configuration directory with a space in its
+// path — which is where Windows puts a temporary directory — needs no quoting
+// and cannot be split.
+func session(t *testing.T, width, height int, args ...string) *Terminal {
 	t.Helper()
 	bin := binary(t)
 	cfg := t.TempDir()
@@ -88,25 +145,25 @@ func session(t *testing.T, args string, width, height int) *Terminal {
 		t.Fatalf("creating the test profile: %v\n%s", err, out)
 	}
 
-	return startIn(t, cfg, args, width, height)
+	return startIn(t, cfg, width, height, args...)
 }
 
 // sessionIn is session with a configuration directory the caller keeps, so two
 // launches can share one machine's state. The introduction is shown once per
 // profile, and proving that needs a second launch against the first one's store.
-func sessionIn(t *testing.T, cfg, args string, width, height int) *Terminal {
+func sessionIn(t *testing.T, cfg string, width, height int, args ...string) *Terminal {
 	t.Helper()
 	bin := binary(t)
 	setup := exec.Command(bin, "--config", cfg, "profile", "create", "Tester")
 	setup.Env = append(os.Environ(), "TWIXTUI_CONFIG_DIR="+cfg, "NO_COLOR=1")
 	// A second launch finds the profile already there, which is not an error.
 	_ = setup.Run()
-	return startIn(t, cfg, args, width, height)
+	return startIn(t, cfg, width, height, args...)
 }
 
-func startIn(t *testing.T, cfg, args string, width, height int) *Terminal {
+func startIn(t *testing.T, cfg string, width, height int, args ...string) *Terminal {
 	t.Helper()
-	command := binary(t) + " --config " + cfg + " --profile Tester " + args
+	command := append([]string{binary(t), "--config", cfg, "--profile", "Tester"}, args...)
 	return Start(t, command, Options{
 		Width:  width,
 		Height: height,
@@ -115,11 +172,15 @@ func startIn(t *testing.T, cfg, args string, width, height int) *Terminal {
 	})
 }
 
+// hotseatGame is the game the resize tests drive: one fixed board, so a frame
+// captured at one size can be compared with the frame at another.
+var hotseatGame = []string{"play", "local", "--size", "12", "--side", "vertical"}
+
 // TestBinaryShowsTheMenu is the baseline: without it, a later assertion could
 // pass against an empty screen from a program that never started.
 func TestBinaryShowsTheMenu(t *testing.T) {
 	t.Parallel()
-	tm := session(t, "", 90, 30)
+	tm := session(t, 90, 30)
 
 	// A brand-new machine meets the introduction before the menu, which is the
 	// point of the introduction, so this walks the path a first-time player
@@ -152,7 +213,7 @@ func TestBinaryShowsTheMenu(t *testing.T) {
 func TestTheIntroductionIsNotShownTwice(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	first := sessionIn(t, dir, "", 90, 30)
+	first := sessionIn(t, dir, 90, 30)
 	first.MustWaitFor("skip", 20*time.Second)
 	first.SendKeys("q")
 	first.MustWaitFor("Play", 20*time.Second)
@@ -164,7 +225,7 @@ func TestTheIntroductionIsNotShownTwice(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	second := sessionIn(t, dir, "", 90, 30)
+	second := sessionIn(t, dir, 90, 30)
 	screen := second.MustWaitFor("Play", 20*time.Second)
 	if strings.Contains(screen, "skip") {
 		t.Fatalf("the introduction came back on the second launch:\n%s", screen)
@@ -182,7 +243,7 @@ func TestTheIntroductionIsNotShownTwice(t *testing.T) {
 // which is the precondition for every resize assertion below.
 func TestHotseatGameDrawsTheBoard(t *testing.T) {
 	t.Parallel()
-	tm := session(t, "play local --size 12 --side vertical", 90, 34)
+	tm := session(t, 90, 34, hotseatGame...)
 	tm.MustWaitFor("A", 20*time.Second)
 	screen := tm.WaitSettled(10 * time.Second)
 	if !strings.Contains(screen, "·") {
@@ -215,7 +276,7 @@ func boardColumnLabels(screen string) string {
 // impossible unless the new size arrived.
 func TestResizeIsDeliveredToTheGame(t *testing.T) {
 	t.Parallel()
-	tm := session(t, "play local --size 12 --side vertical", 60, 20)
+	tm := session(t, 60, 20, hotseatGame...)
 	tm.MustWaitFor("A", 20*time.Second)
 	small := tm.WaitSettled(10 * time.Second)
 	smallLabels := boardColumnLabels(small)
@@ -281,7 +342,7 @@ func TestResizeMatrixKeepsTheFrameIntact(t *testing.T) {
 		{120, 46}, // grown again, to prove it recovers
 		{80, 24},  // back to where it started
 	}
-	tm := session(t, "play local --size 12 --side vertical", sizes[0][0], sizes[0][1])
+	tm := session(t, sizes[0][0], sizes[0][1], hotseatGame...)
 	tm.MustWaitFor("A", 20*time.Second)
 
 	for _, size := range sizes {
@@ -322,18 +383,22 @@ func TestGameSurvivesResizeWithStateIntact(t *testing.T) {
 	const (
 		w, h = 100, 34
 	)
-	tm := session(t, "play local --size 12 --side vertical", w, h)
+	tm := session(t, w, h, hotseatGame...)
 	tm.MustWaitFor("A", 20*time.Second)
-	tm.WaitSettled(10 * time.Second)
+	frame := tm.WaitSettled(10 * time.Second)
 
 	// Play a move so there is state to lose, and move the cursor off it so the
 	// cursor position is part of what has to survive.
-	tm.SendKeys("space")
-	tm.WaitSettled(10 * time.Second)
-	tm.SendKeys("enter")
-	tm.WaitSettled(10 * time.Second)
-	tm.SendKeys("l", "j")
-	before := tm.WaitSettled(10 * time.Second)
+	//
+	// Each key is waited out with the frame it produced. Settling alone would
+	// not do: a screen that has not received the key yet is as still as one
+	// that has finished redrawing, so on a slow machine the next key would go
+	// to the frame before it and the sequence would come apart.
+	for _, key := range []string{"space", "enter", "l", "j"} {
+		tm.SendKeys(key)
+		frame = tm.WaitChanged(frame, 20*time.Second)
+	}
+	before := frame
 	if !strings.Contains(before, "last ") {
 		t.Fatalf("no committed move reported:\n%s", before)
 	}
@@ -353,19 +418,17 @@ func TestGameSurvivesResizeWithStateIntact(t *testing.T) {
 			before, after)
 	}
 
-	// And the game is still playable.
+	// And the game is still playable: the key has to reach it and change the
+	// screen, which is what WaitChanged fails on if it does not.
 	tm.SendKeys("space")
-	staged := tm.WaitSettled(10 * time.Second)
-	if staged == after {
-		t.Error("the game stopped responding to the keyboard after the resize")
-	}
+	tm.WaitChanged(after, 20*time.Second)
 }
 
 // TestTooSmallStateIsExplicit checks that a terminal below the supported size
 // says so rather than drawing a broken board.
 func TestTooSmallStateIsExplicit(t *testing.T) {
 	t.Parallel()
-	tm := session(t, "play local --size 12 --side vertical", 80, 24)
+	tm := session(t, 80, 24, hotseatGame...)
 	tm.MustWaitFor("A", 20*time.Second)
 	screen := tm.ResizeAndWait(18, 5, 20*time.Second)
 	if !tm.Alive() {
@@ -390,7 +453,7 @@ func TestTooSmallStateIsExplicit(t *testing.T) {
 // holds wrapped prose and so has a different failure mode from the game's.
 func TestTutorialResizes(t *testing.T) {
 	t.Parallel()
-	tm := session(t, "learn board", 100, 34)
+	tm := session(t, 100, 34, "learn", "board")
 	tm.MustWaitFor("A", 20*time.Second)
 	tm.WaitSettled(10 * time.Second)
 	for _, size := range [][2]int{{60, 20}, {40, 14}, {20, 8}, {100, 34}} {
@@ -410,7 +473,7 @@ func TestTutorialResizes(t *testing.T) {
 // status here would mean it fell over instead of exiting.
 func TestQuitEndsTheProgramCleanly(t *testing.T) {
 	t.Parallel()
-	tm := session(t, "play local --size 12 --side vertical", 80, 24)
+	tm := session(t, 80, 24, hotseatGame...)
 	tm.MustWaitFor("A", 20*time.Second)
 	tm.WaitSettled(10 * time.Second)
 	if !tm.Alive() {
@@ -431,7 +494,7 @@ func TestQuitEndsTheProgramCleanly(t *testing.T) {
 // restore the terminal rather than leaving it in the alternate screen.
 func TestCtrlCEndsTheProgramCleanly(t *testing.T) {
 	t.Parallel()
-	tm := session(t, "play local --size 12 --side vertical", 80, 24)
+	tm := session(t, 80, 24, hotseatGame...)
 	tm.MustWaitFor("A", 20*time.Second)
 	tm.WaitSettled(10 * time.Second)
 
@@ -446,7 +509,7 @@ func TestCtrlCEndsTheProgramCleanly(t *testing.T) {
 // into the rendered screen cannot satisfy this regression.
 func TestFinishedBoardHelpAndInspectionSurviveResize(t *testing.T) {
 	t.Parallel()
-	tm := session(t, "play local --size 12 --side vertical", 140, 44)
+	tm := session(t, 140, 44, hotseatGame...)
 	tm.MustWaitFor("vertical to move", 20*time.Second)
 	before := tm.WaitSettled(10 * time.Second)
 	mutationKeys := regexp.MustCompile(`(?m)(?:^| {2,})(?:space|x|a|d|r|\?)\s+\S`)
@@ -541,7 +604,7 @@ digest 58bd5b8fa99be99f
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tm := sessionIn(t, cfg, "", 120, 36)
+	tm := sessionIn(t, cfg, 120, 36)
 	tm.MustWaitFor("introduction", 20*time.Second)
 	tm.SendKeys("q")
 	tm.MustWaitFor("Continue a saved game", 10*time.Second)
@@ -621,7 +684,7 @@ func TestReplayEntryJumpPreservesRecordAcrossResize(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tm := sessionIn(t, cfg, "game replay "+id, 120, 30)
+	tm := sessionIn(t, cfg, 120, 30, "game", "replay", id)
 	tm.MustWaitFor("step 17 of 17", 20*time.Second)
 	end := tm.WaitSettled(10 * time.Second)
 	entry := regexp.MustCompile(`>\s*17\s+B6`)
