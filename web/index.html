@@ -154,7 +154,7 @@
         <div class="wrap">
           <h2>Install</h2>
 
-          <h3>With Go 1.26 or newer</h3>
+          <h3>With Go 1.26 or newer (macOS and Linux)</h3>
           <pre class="cmd">go install github.com/BAKocska/twixtui/cmd/twixtui@latest</pre>
 
           <h3>Or download a binary</h3>
@@ -177,6 +177,18 @@ twixtui version</pre
             <code>curl -LO</code>, which does not set it.
           </p>
           <pre class="cmd">xattr -d com.apple.quarantine ./twixtui</pre>
+
+          <h3>Windows (unreleased)</h3>
+          <p class="note">
+            Native x64 and ARM64 support is available from the source checkout;
+            the current v0.4.0 release has no Windows ZIPs. Keep the checkout's
+            <code>go.work</code> input-decoder fix: versioned
+            <code>go install ...@version</code> does not use it.
+            See the
+            <a href="https://github.com/BAKocska/twixtui/blob/main/docs/MANUAL.md#on-windows"
+              >Windows build instructions</a
+            > for the source build and terminal requirements.
+          </p>
 
           <h3>Then</h3>
           <ul class="cmdlist">

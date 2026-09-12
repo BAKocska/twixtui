@@ -83,6 +83,7 @@ func TestAReplacementIsRefusedWhileDeletionIsForbidden(t *testing.T) {
 	if err == nil {
 		t.Fatal("a file was replaced while another handle forbade deleting it")
 	}
+	t.Logf("held-reader refusal: %v; elapsed %s", err, waited)
 	if waited > 5*time.Second {
 		t.Errorf("the refusal took %v, which is not a wait anyone should sit through", waited)
 	}

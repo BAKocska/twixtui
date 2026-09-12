@@ -28,6 +28,11 @@ func TestPowerShellCompletesTiersAndProfiles(t *testing.T) {
 	script := `param([string]$Exe, [string]$Config, [string]$Fallback)
 $ErrorActionPreference = 'Stop'
 $env:PATH = (Split-Path -Parent $Exe) + [IO.Path]::PathSeparator + $env:PATH
+# The generated completer invokes twixtui from PATH, not the $Exe used to generate it.
+$resolved = Get-Command twixtui -ErrorAction Stop
+if ($resolved.CommandType -ne 'Application' -or [IO.Path]::GetFullPath($resolved.Source) -ne [IO.Path]::GetFullPath($Exe)) {
+  throw 'Completion would invoke a different executable than the selected binary.'
+}
 $env:TWIXTUI_CONFIG_DIR = $Fallback
 $generated = & $Exe completion powershell
 if ($LASTEXITCODE -ne 0) { throw 'completion generation failed' }

@@ -84,11 +84,11 @@ func ReadFile(path string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// replaceAttempts and replaceMaxDelay bound the wait for a destination another
-// program has open: eight attempts, doubling from a millisecond and capped, so
-// the whole loop gives up after about a tenth of a second. Somebody is waiting
-// for the interface at the other end of this, so a replacement that cannot
-// happen has to be reported rather than waited out.
+// replaceAttempts and replaceMaxDelay bound retries for explicit sharing or lock
+// violations: eight attempts, doubling from a millisecond and capped, so the
+// whole loop gives up after about a tenth of a second. Other refusals return
+// immediately; Windows does not identify every held-reader refusal as a sharing
+// violation.
 const (
 	replaceAttempts = 8
 	replaceMaxDelay = 32 * time.Millisecond
@@ -108,12 +108,11 @@ const (
 // temporary files in the destination directory, inheriting that directory's
 // ACL rather than preserving any separately customized destination-file ACL.
 //
-// A replacement can fail because something else has dst open without allowing
-// deletion: a scanner mid-scan, an editor, an older twixtui build whose reads
-// did not allow it. That passes, so it is retried a few times before it is
-// reported. Access control does not pass, so a refusal that is not about
-// sharing is reported at once. Either way the write fails with dst's previous
-// contents intact, which is what unix does when a rename cannot happen.
+// Explicit sharing and lock violations are retried briefly. Windows can also
+// report a destination held open without delete sharing as ERROR_ACCESS_DENIED,
+// indistinguishable from an access-control refusal. Those errors return at once
+// rather than retrying permission failures. Either way a refused replacement
+// leaves dst's previous contents intact.
 //
 // https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
@@ -175,9 +174,8 @@ func Replace(src, dst string) error {
 	}
 }
 
-// shared reports a refusal that came from somebody else having the file open,
-// which is the transient one: the other program closes its handle and the
-// replacement then lands.
+// shared reports explicit sharing or lock violations. Access-denied errors are
+// ambiguous (a held reader or permissions) and deliberately not retried.
 func shared(err error) bool {
 	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_LOCK_VIOLATION)
 }

@@ -93,7 +93,7 @@ releases page has no `windows_*` archive on it. So on Windows, build this checko
 PowerShell:
 
 ```
-git clone --branch feat/windows --single-branch https://github.com/BAKocska/twixtui
+git clone https://github.com/BAKocska/twixtui
 cd twixtui
 go build -o twixtui.exe ./cmd/twixtui
 .\twixtui.exe
