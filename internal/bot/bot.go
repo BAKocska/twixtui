@@ -14,6 +14,11 @@
 // Limits and NewWithLimits replace a tier's guards with the caller's own, which
 // is how a measurement asks for work rather than for wall-clock time, and
 // StatsOf reports what the last search actually spent.
+//
+// Analyze reads one position outside a game and outside the Bot interface: one
+// bounded search, the candidates it kept with what it established about each,
+// and the explanation a hint carries. Hint is that same analysis under the
+// hint's own guards.
 package bot
 
 import (
@@ -453,13 +458,7 @@ func (e *engine) Stats() SearchStats {
 	if e.play == nil {
 		return SearchStats{}
 	}
-	return SearchStats{
-		Nodes:       e.play.nodes,
-		Evaluations: e.play.evaluations,
-		Depth:       e.play.lastDepth,
-		Elapsed:     e.play.elapsed,
-		StopReason:  e.play.stopReason,
-	}
+	return e.play.stats()
 }
 
 func (e *engine) Move(ctx context.Context, g *game.Game) (game.Point, error) {

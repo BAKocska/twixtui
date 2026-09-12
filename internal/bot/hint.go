@@ -622,82 +622,27 @@ func linkedNeighbours(a *analysis, pl game.Player, move game.Point) []game.Point
 	return out
 }
 
+// Hint is the analysis path answering the question a player asks: one move,
+// with the explanation the search's own numbers support. It refuses a finished
+// game rather than describing one, which is what separates it from Analyze.
 func (e *engine) Hint(ctx context.Context, g *game.Game) (Hint, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if g == nil {
-		return Hint{}, errors.New("bot: no game")
-	}
-	if g.Result().Over() {
+	if g != nil && g.Result().Over() {
 		return Hint{}, game.ErrGameOver
 	}
-	if staged(g) {
-		// Advice about a position the player is halfway through editing would
-		// be advice about a position that does not exist yet, and the search
-		// would take the staged edits back on its first trial move.
-		return Hint{}, ErrStagedTurn
+	res, _, _, err := analyzeOn(ctx, e.hintSearcher(), g, nil)
+	if err != nil {
+		return Hint{}, err
 	}
-	if !g.HasLegalPlacement(g.Turn()) {
-		return Hint{}, ErrNoMove
-	}
-	h, _, _, err := e.explain(ctx, g)
-	return h, err
+	return res.hint(), nil
 }
 
-// explain is Hint with the working parts exposed, so that a test can compare
-// the prose against the decomposition it claims to describe.
-func (e *engine) explain(ctx context.Context, g *game.Game) (Hint, reason, deltas, error) {
+// hintSearcher is the searcher hints run on, kept between requests like the
+// playing searcher: a hint is asked for repeatedly in one game. Its levers are
+// the same whatever tier is playing, so it is built on demand and not per
+// tier.
+func (e *engine) hintSearcher() *searcher {
 	if e.hint == nil {
 		e.hint = newSearcher(hintParams())
 	}
-	res, err := e.hint.root(ctx, g)
-	if err != nil {
-		return Hint{}, reasonBalanced, deltas{}, err
-	}
-	me := g.Turn()
-
-	next := g.Clone()
-	// The result of the move is read back off the game the move produces. It is
-	// the only thing that may put a finished game in the prose: the evaluation
-	// answers a question about walks on the board and cannot end a game.
-	outcome, err := next.PlayPeg(res.best)
-	if err != nil {
-		return Hint{}, reasonBalanced, deltas{}, fmt.Errorf("bot: hint move %v is not playable: %w", res.best, err)
-	}
-	// The decomposition after the move has to be read the same way the search
-	// read the one before it, or the hint would compare two different
-	// evaluations and report the difference as the move's doing.
-	var after analysis
-	after.templates = e.hint.p.templates
-	after.load(next)
-
-	d := deltas{
-		Before:     res.terms,
-		After:      after.terms(me),
-		Threatened: res.threatened,
-		Defences:   res.defences,
-		Close:      len(res.moves) > 1 && res.moves[0].exact && res.moves[1].exact && res.moves[0].score-res.moves[1].score < distWeight,
-		Won:        outcome.Winner() == me,
-		OwnPegs:    g.PegCount(me),
-	}
-	if partner, carriers, gap, ok := findSetup(&after, me, res.best); ok {
-		d.Partner, d.Carriers, d.Gap, d.HasSetup = partner, carriers, gap, true
-	}
-
-	r := chooseReason(d)
-	if err := verifyReason(r, d); err != nil {
-		// The priority order and the templates have drifted apart. Say the one
-		// thing that is true of every position rather than a specific claim the
-		// numbers do not support.
-		r = reasonBalanced
-	}
-	headline, detail := describe(r, d, me, res.best)
-	return Hint{
-		Move:      res.best,
-		Headline:  headline,
-		Detail:    detail,
-		Highlight: highlightFor(r, d, res.an, &after, me, res.best),
-		Policy:    PlacementOnlyPolicy(),
-	}, r, d, nil
+	return e.hint
 }

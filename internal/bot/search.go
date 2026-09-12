@@ -241,6 +241,14 @@ type searcher struct {
 	// past and only one of them ended the search.
 	stopReason string
 
+	// onDepth, when set, is called at the end of every root iteration that
+	// finished, with the result as it then stands and the search time so far.
+	// An iteration that was cut short, the ordering fallback and a win taken
+	// without searching do not reach it: what it reports is completed work.
+	// The result it is handed is the root's own, so a hook that needs to keep
+	// anything copies it.
+	onDepth func(res *rootResult, elapsed time.Duration)
+
 	// One analysis and one move buffer per ply: a node needs its own view of
 	// the position to survive the recursion into its children.
 	perPly []plyState
@@ -1105,6 +1113,9 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 		// an interrupted iteration has scored some moves at the new depth and
 		// the rest at the old one, and the loop leaves before reaching here.
 		prev, havePrev = out.score, true
+		if s.onDepth != nil {
+			s.onDepth(&out, time.Since(start))
+		}
 		if out.score >= decidedScore {
 			// A forced win inside the moves the search looked at, and a forced
 			// win does not get better with depth, so deepening this same
@@ -1129,4 +1140,16 @@ func (s *searcher) root(ctx context.Context, g *game.Game) (rootResult, error) {
 func (s *searcher) keep(moves []scoredMove) []scoredMove {
 	s.rootMoves = append(s.rootMoves[:0], moves...)
 	return s.rootMoves
+}
+
+// stats is what the most recent search on s spent, and the zero value before
+// the first one.
+func (s *searcher) stats() SearchStats {
+	return SearchStats{
+		Nodes:       s.nodes,
+		Evaluations: s.evaluations,
+		Depth:       s.lastDepth,
+		Elapsed:     s.elapsed,
+		StopReason:  s.stopReason,
+	}
 }
