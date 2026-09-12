@@ -45,7 +45,7 @@ func TestHelpNamesEveryCommandWithItsPurpose(t *testing.T) {
 	text := out.String()
 
 	for _, name := range []string{
-		"play", "learn", "profile", "leaderboard", "game", "rules", "serve", "theme",
+		"play", "learn", "profile", "leaderboard", "game", "analyze", "rules", "serve", "theme",
 		"completion", "version",
 	} {
 		if !strings.Contains(text, name) {

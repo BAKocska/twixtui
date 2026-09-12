@@ -97,6 +97,7 @@ twixtui help                                          # every command, with what
 | [Learn it](docs/MANUAL.md#the-tutorial) | Seven lessons taught by playing them, and a five-step introduction on [first run](docs/MANUAL.md#the-first-run). |
 | [Profiles & standings](docs/MANUAL.md#profiles) | Local names with no passwords, selectable [standings and player histories](docs/MANUAL.md#the-leaderboard), and verified links back to saved-game replays. |
 | [Review a game](docs/MANUAL.md#reviewing-saved-games) | A numbered entry list, `:` to jump to an entry, and the winning chain highlighted at the final position. Read-only, including imported records. |
+| [Analyse a position](docs/MANUAL.md#position-analysis) | Read-only analysis of a saved game, record or move list, with time/node budgets, explicit score bounds, and text or JSON output. |
 | [Honest rulesets](docs/MANUAL.md#rulesets) | `std`, `pp` and `classic` make each historical disagreement an explicit setting; boards from 6×6 to 48×48. |
 | [Themes & cover art](docs/MANUAL.md#themes) | Four colour schemes, and the [1962 box lid](docs/MANUAL.md#the-cover) drawn beside the menu in character cells. |
 | [Shell completion](docs/MANUAL.md#shell-completion) | `bash`, `zsh`, `fish` and `powershell`, each value carrying its own one-line explanation. |

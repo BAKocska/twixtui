@@ -392,6 +392,17 @@ func (s *Store) Resolve(prefix string) (Saved, error) {
 		return Saved{}, errors.New("no game identifier given")
 	}
 	prefix = strings.ToLower(prefix)
+	// A broken exact match must not redirect a request to a longer ID.
+	// Some valid abbreviations (such as "con" on Windows) are not valid IDs.
+	if ValidateID(prefix) == nil {
+		exact, err := s.Get(prefix)
+		if err == nil {
+			return exact, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return Saved{}, err
+		}
+	}
 	var found []Saved
 	for _, sv := range s.List() {
 		if sv.ID == prefix {

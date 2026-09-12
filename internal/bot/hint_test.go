@@ -33,10 +33,11 @@ func TestHintReasonMatchesDecomposition(t *testing.T) {
 			continue
 		}
 		me := g.Turn()
-		h, r, d, err := e.explain(ctx, g)
+		ar, r, d, err := analyzeOn(ctx, e.hintSearcher(), g, nil)
 		if err != nil {
-			t.Fatalf("explain: %v\n%s", err, g)
+			t.Fatalf("analyze: %v\n%s", err, g)
 		}
+		h := ar.hint()
 		seen[r]++
 
 		if err := g.CanPlace(me, h.Move); err != nil {
@@ -287,10 +288,11 @@ func TestChooseReasonAlwaysVerifies(t *testing.T) {
 func TestHintOnAWinCallsItAWin(t *testing.T) {
 	g := winThreat(t)
 	e := hintEngine(200 * time.Millisecond)
-	h, r, d, err := e.explain(context.Background(), g)
+	ar, r, d, err := analyzeOn(context.Background(), e.hintSearcher(), g, nil)
 	if err != nil {
-		t.Fatalf("explain: %v", err)
+		t.Fatalf("analyze: %v", err)
 	}
+	h := ar.hint()
 	if r != reasonWin {
 		t.Fatalf("reason = %v, want win (deltas %+v)", r, d)
 	}
@@ -326,10 +328,11 @@ func TestHintOnAThreatCallsItTheOnlyDefence(t *testing.T) {
 		t.Fatalf("expected Horizontal to move, got %s", g.Turn())
 	}
 	e := hintEngine(300 * time.Millisecond)
-	h, r, d, err := e.explain(context.Background(), g)
+	ar, r, d, err := analyzeOn(context.Background(), e.hintSearcher(), g, nil)
 	if err != nil {
-		t.Fatalf("explain: %v", err)
+		t.Fatalf("analyze: %v", err)
 	}
+	h := ar.hint()
 	if r != reasonOnlyDefence && r != reasonDefence {
 		t.Fatalf("reason = %v, want a defence (deltas %+v)", r, d)
 	}
@@ -374,10 +377,11 @@ func TestHintOnAFirstPegSaysStartARoute(t *testing.T) {
 			if n := g.PegCount(c.me); n != 0 {
 				t.Fatalf("the fixture gives %s %d pegs, so this is not a first peg", c.me, n)
 			}
-			h, r, d, err := hintEngine(200*time.Millisecond).explain(context.Background(), g)
+			ar, r, d, err := analyzeOn(context.Background(), hintEngine(200*time.Millisecond).hintSearcher(), g, nil)
 			if err != nil {
-				t.Fatalf("explain: %v", err)
+				t.Fatalf("analyze: %v", err)
 			}
+			h := ar.hint()
 			if d.OwnPegs != 0 {
 				t.Fatalf("the decomposition claims %d own pegs on a board with none", d.OwnPegs)
 			}
@@ -422,10 +426,11 @@ func TestHintOnAnEstablishedChainNeverSaysOpening(t *testing.T) {
 	if n := g.PegCount(me); n < 2 {
 		t.Fatalf("the fixture leaves %s with %d pegs, so there is no chain to control for", me, n)
 	}
-	h, r, d, err := hintEngine(200*time.Millisecond).explain(context.Background(), g)
+	ar, r, d, err := analyzeOn(context.Background(), hintEngine(200*time.Millisecond).hintSearcher(), g, nil)
 	if err != nil {
-		t.Fatalf("explain: %v", err)
+		t.Fatalf("analyze: %v", err)
 	}
+	h := ar.hint()
 	if got := g.PegCount(me); d.OwnPegs != got {
 		t.Fatalf("the decomposition claims %d own pegs, the board has %d", d.OwnPegs, got)
 	}
@@ -596,10 +601,11 @@ func TestHintOnASealedPositionSaysSo(t *testing.T) {
 	}
 
 	e := hintEngine(200 * time.Millisecond)
-	h, r, d, err := e.explain(context.Background(), g)
+	ar, r, d, err := analyzeOn(context.Background(), e.hintSearcher(), g, nil)
 	if err != nil {
-		t.Fatalf("explain: %v", err)
+		t.Fatalf("analyze: %v", err)
 	}
+	h := ar.hint()
 	if r != reasonSealedOut {
 		t.Errorf("reason = %v, want sealed-out (deltas %+v)", r, d)
 	}
@@ -663,10 +669,11 @@ func TestHintDoesNotCountAnInterruptedDefencePrefix(t *testing.T) {
 	ctx := &hintCancelOnPoll{Context: parent, cancel: cancel}
 	e := New(Pro, 1).(*engine)
 	before := game.PositionDigest(g)
-	h, r, d, err := e.explain(ctx, g)
+	ar, r, d, err := analyzeOn(ctx, e.hintSearcher(), g, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	h := ar.hint()
 	if game.PositionDigest(g) != before {
 		t.Fatal("hint changed position")
 	}
@@ -806,10 +813,11 @@ func TestHintDoesNotCallAPlacementDeadlockADraw(t *testing.T) {
 	if _, err := e.Hint(ctx, g); err != nil {
 		t.Fatalf("Hint refused a committed hand-linked position: %v", err)
 	}
-	h, r, d, err := e.explain(ctx, g)
+	ar, r, d, err := analyzeOn(ctx, e.hintSearcher(), g, nil)
 	if err != nil {
-		t.Fatalf("explain: %v", err)
+		t.Fatalf("analyze: %v", err)
 	}
+	h := ar.hint()
 	after, err := g.Record()
 	if err != nil {
 		t.Fatalf("record: %v", err)
@@ -865,10 +873,11 @@ func TestHintDoesNotDenyAnActualDraw(t *testing.T) {
 	if _, err := g.PlayPeg(hintPoint(t, "E2")); err != nil {
 		t.Fatal(err)
 	}
-	h, r, _, err := New(Max, 1).(*engine).explain(context.Background(), g)
+	ar, r, _, err := analyzeOn(context.Background(), New(Max, 1).(*engine).hintSearcher(), g, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	h := ar.hint()
 	if r != reasonDeadlock {
 		t.Fatalf("fixture missed the no-route explanation: %v", r)
 	}
@@ -891,10 +900,11 @@ func TestPPDefenceAdviceDoesNotOfferForbiddenLinkEdits(t *testing.T) {
 		t.Fatal("the PP advice fixture permits deliberate link edits")
 	}
 	playMoves(t, g, "B1", "G2", "B5", "G3", "C7", "G4", "E8", "G5", "F1")
-	h, r, _, err := New(Max, 1).(*engine).explain(context.Background(), g)
+	ar, r, _, err := analyzeOn(context.Background(), New(Max, 1).(*engine).hintSearcher(), g, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	h := ar.hint()
 	if r != reasonOnlyDefence {
 		t.Fatalf("fixture missed the only-defence explanation: %v", r)
 	}
