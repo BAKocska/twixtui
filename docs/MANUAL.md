@@ -325,7 +325,7 @@ none of those.
 | `1`-`8` | Only in link mode: toggle the link in that direction. |
 | `esc` | Leave link mode. |
 | `a` | Abort the turn: the board goes back to how it stood when your turn began. |
-| `?` | In a bot game: the move the bot would play, and why. |
+| `?` | In a bot game: the move the bot would play, and why. In a saved-game replay: the engine's reading of the entry on screen (see [Reviewing saved games](#reviewing-saved-games)). |
 | `s` | Take the swap option, while it is on offer. |
 | `d` | Offer a draw, or accept the one on offer. |
 | `r` | Resign. |
@@ -861,6 +861,7 @@ shows both the entry counter and the number of moves played.
 | `k` / `up`, `j` / `down` | Back or forward five entries. |
 | `g` / `G` | Initial position / final entry. |
 | `:` | Type an entry number; `enter` jumps and `esc` cancels the input. |
+| `?` | Analyse the entry on screen; while that analysis runs, cancel it; once it is shown, put it away. |
 | `q` / `esc` | Leave the viewer when not editing the entry number. |
 | `ctrl+c` | End the program. |
 
@@ -879,14 +880,55 @@ Replay validates the whole record before opening and retains one mutable board,
 not a board snapshot per entry. Small backward steps use undo; longer backward
 seeks rebuild the requested prefix to avoid repeatedly scanning draw-offer
 history. Reviewing never changes the stored record or ratings. Notes and
-variations are not part of this viewer; engine analysis is available through the
-separate `analyze` commands below, not as an interactive replay action.
+variations are not part of this viewer.
+
+`?` asks the engine about the position at the selected entry, in the
+background: the keys keep working, and the panel shows a running indicator and,
+once a search iteration has finished, the depth and nodes of that completed
+work. The analysis is the same one `twixtui analyze` runs with its default
+two-second guard (see [Position analysis](#position-analysis)), and the panel
+reports it in the same terms, most important first, so a short panel keeps the
+badge and the choice and drops the end of the block. The badge and the choice,
+or the running indicator, are given rows before the record's own details, so a
+panel with only a few rows to spare still shows them. The bottom line says
+where the analysis stands as well — `analysing` and the time so far, the chosen
+hole with its `placement-only` badge and `not proven`, or that it was canceled,
+failed or has no move to advise — and on a terminal too small for a panel it is
+the only place the analysis appears. The block reads, in order:
+
+- the `placement-only` policy badge, and the recommended hole as **the engine's
+  choice under a bounded search, not a proven best move**;
+- the engine's own headline and detail for that choice;
+- up to four candidates with their scores in search units, each marked `exact`,
+  `at most`/`at least` for a bound, or `unscored` with no number at all;
+- the completed work — depth, nodes, elapsed time — and why the search stopped.
+  A search stopped by the time guard or an interruption is marked not
+  reproducible.
+
+The recommended hole and the holes the explanation refers to are marked on the
+board, only while the entry they were read from is on screen. Any movement —
+stepping, jumping five, the ends, or a typed entry number — cancels a search
+still running and discards a result already shown, and so does leaving the
+viewer; a result that arrives after that is dropped, so an analysis is never
+shown against a position it was not computed for. Pressing `?` again stops a
+running search (the panel says it was canceled) or puts a shown result away.
+A finished position, such as the final entry of a won game, gets no
+recommendation: the panel says the game is over at that entry.
+
+Replay analysis is an explicit review action. It works on finished and imported
+games alike, whether or not hints were offered when the game was played and
+whatever the machine's hint setting is, analyses a copy of the position, and
+writes nothing to disk.
+It is not run in the background while stepping; results are not kept between
+seeks.
 
 ## Position analysis
 
 Analyse a saved game, a record file (or standard input), or a position written in
 the game's notation. No profile is required, and analysis does not write games,
-ratings, profiles or configuration.
+ratings, profiles or configuration. The same analysis, under the default
+two-second guard, is available interactively with `?` in the replay viewer (see
+[Reviewing saved games](#reviewing-saved-games)).
 
 ```
 twixtui analyze position --size 12 --moves 'B1; L2; C3' --nodes 10000

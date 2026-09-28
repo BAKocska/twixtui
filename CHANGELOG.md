@@ -7,6 +7,18 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `?` in the saved-game replay analyses the entry on screen in the background:
+  the placement-only badge, the recommended hole as the engine's choice under a
+  bounded search (never a proven best move), its explanation, up to four
+  candidates with exact/upper/lower/unscored scores, and the completed work with
+  its stop reason. Time and cancellation stops are marked not reproducible, and
+  a finished position gets no recommendation. Any seek or leaving cancels the
+  search and discards its result, `?` again cancels or dismisses, the analysed
+  position is a copy, and nothing is written. It works regardless of hint
+  settings, for finished and imported games alike.
+
 ## [0.7.0] - 2026-09-12
 
 ### Added
