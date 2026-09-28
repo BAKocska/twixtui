@@ -539,19 +539,28 @@ one finishes the line shows the time alone. In a terminal too small for the
 panel, the status line leads with `esc play now` and a short form of the same
 line — the time and the completed depth, as in `2.4s d4`, or the depth alone
 when the two do not fit — ahead of whose turn it is. Press `esc` to have the
-bot play now. The search stops and the bot plays the best move of its last
-completed iteration or, if none had finished, the legal move its ordering
-heuristic puts first; the line announcing the move says it was played early
-and at what completed depth. The move is played once, like any other. Leaving
-the game still discards a search in progress, and a rematch never plays a move
-from, or shows the progress of, a search the previous game left running. Once
-the bot has moved, `i` shows that search's figures as `bot.StatsOf` reports
-them: the depth it completed, its nodes and time in all, and why it stopped —
-out of time, stopped by play now, and so on. The nodes in all include work on
-an iteration the search did not finish, so they can be more than the thinking
-line last showed beside the same depth. A search that stopped because it found
-a winning line has found one among the moves it searched, which is not a
-proof. A full principal variation is not shown.
+bot play now. The search stops and the bot makes its tier's ordinary choice
+from the work it has finished: from the moves as its last completed iteration
+scored them or, if none had finished, as its ordering heuristic ranks them. The
+beginner tier still picks among its near-best candidates, as it does on every
+move; the other tiers play the move that ranking puts first. The line
+announcing the move says it was played early and at what completed depth. The
+move is played once, like any other. Leaving the game still discards a search
+in progress, and a rematch never plays a move from, or shows the progress of,
+a search the previous game left running. Once the bot has moved, `i` shows
+that search's figures as `bot.StatsOf` reports them: the depth it completed,
+its nodes and time in all, and why it stopped — out of time, stopped by play
+now, and so on.
+The nodes in all include work on an iteration the search did not finish, so
+they can be more than the thinking line last showed beside the same depth. A
+search that stopped because it found a winning line has found one among the
+moves it searched, which is not a proof. A full principal variation is not
+shown. Where the status line is too narrow for the whole sentence, it gives up
+whole items rather than cutting one: the opening words first, then why the
+search stopped, then the long wording of the depth, which becomes `d4`, then
+the time and the nodes. The move and its completed depth always show, at the
+least as `E3: d4`, and nodes or time, wherever they show, are still given as in
+all.
 
 Asking for a hint runs the same search with the highest-effort settings the package
 has, whichever tier you are playing, and gives you the move it would play, a line on

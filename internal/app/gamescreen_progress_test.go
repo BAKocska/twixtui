@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/BAKocska/twixtui/internal/bot"
 	"github.com/BAKocska/twixtui/internal/game"
@@ -829,5 +830,55 @@ func TestSearchFiguresAreOfferedOnlyOnceASearchHasFinished(t *testing.T) {
 	}
 	if !regexp.MustCompile(`\bdepth 2\b`).MatchString(msg) {
 		t.Errorf("the search's figures %q do not give the depth it completed", msg)
+	}
+}
+
+// TestTheSearchFiguresShowAtEverySize asks for a finished search's figures at
+// every supported size and reads them where the player does, on the status row
+// of the composed frame. They used to be one sentence cut to the width, whose
+// opening words alone filled the minimum width, so neither the move nor any
+// figure showed there, and at forty columns the nodes and the time were cut off.
+// The move and its completed depth have to show at every size, the nodes and
+// the time from forty columns up, nothing may be cut part way through, and
+// nodes shown at all are still said to be the whole search's.
+func TestTheSearchFiguresShowAtEverySize(t *testing.T) {
+	for _, size := range shellSizes {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			engine := newGPBot(t)
+			engine.final = bot.SearchStats{Nodes: 210304, Evaluations: 400000, Depth: 5, Elapsed: 4600 * time.Millisecond}
+			h := newGSHarness(t, gsTestDeps(t), gsVersusBot(6, engine), size[0], size[1])
+			h.playTurn(game.Point{Col: 1, Row: 0})
+			gpEntered(t, engine)
+
+			// Play now, the way the cut sentence was found: its figures carry
+			// a stop reason as well as the rest.
+			best := game.Point{Col: 4, Row: 2}
+			engine.complete(5, 4321, best)
+			h.press("esc")
+			h.waitFor("the search's move", func() bool { return h.s.g.At(best) == game.Horizontal })
+			h.pump()
+
+			h.press("i")
+			frame := h.frame()
+			gsCheckFrame(t, "the search's figures", frame, h.width, h.height)
+			rows := strings.Split(frame, "\n")
+			status := ansi.Strip(rows[len(rows)-1])
+			if !strings.Contains(status, best.String()) || !gpClaimsDepth(status, 5) {
+				t.Errorf("the status row %q does not give the move %v and its completed depth 5", status, best)
+			}
+			if h.width >= 40 {
+				for _, want := range []string{`\b210304 nodes\b`, `\b4\.6s\b`} {
+					if !regexp.MustCompile(want).MatchString(status) {
+						t.Errorf("the status row %q does not match %s at %d columns", status, want, h.width)
+					}
+				}
+			}
+			if strings.Contains(status, ellipsis) {
+				t.Errorf("the status row %q was cut rather than shortened by whole items", status)
+			}
+			if strings.Contains(status, "nodes") && !strings.Contains(status, "in all") {
+				t.Errorf("the status row %q gives the nodes without saying they are the whole search's", status)
+			}
+		})
 	}
 }

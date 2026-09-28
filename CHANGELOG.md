@@ -14,12 +14,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   search behind the coming move is shown, and it is read without waiting for
   the search. In a terminal too small for the panel, the status line leads
   with `esc play now` and the time and completed depth.
-- `esc` while the bot is searching plays now: the bot plays the best move of
-  its last completed iteration, or its legal ordering pick before one, exactly
-  once, and the announcement names the completed depth. Leaving still discards
-  the search.
+- `esc` while the bot is searching plays now, exactly once: the bot makes its
+  tier's ordinary choice from the work it has finished — the ranking of its
+  last completed iteration, or its move ordering before one — and the
+  announcement names the completed depth. The beginner tier still picks among
+  its near-best candidates. Leaving still discards the search.
 - `i` in a bot game shows the figures of the search behind the bot's last
-  move: completed depth, nodes and time in all, and stop reason.
+  move: completed depth, nodes and time in all, and stop reason. A status line
+  too narrow for all of them gives up whole items, the stop reason before the
+  time and the nodes, and always keeps the move and its completed depth.
 
 ### Fixed
 

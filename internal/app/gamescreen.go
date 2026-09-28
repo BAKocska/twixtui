@@ -262,6 +262,10 @@ type gameScreen struct {
 	// divergence — things that stay true until the player leaves.
 	message string
 	notice  string
+	// figures are the finished search's figures as the search key last
+	// showed them, in every form the status line may use, widest first;
+	// fitMessage says when they stand.
+	figures []string
 	// stopped means no further play is possible on this screen: the game ended,
 	// the connection dropped, or the two ends disagree about the position.
 	stopped bool
@@ -1360,10 +1364,10 @@ func (s *gameScreen) searchProgressShort(room int) string {
 
 // playNow asks the engine for its move without waiting for the rest of the
 // search. The search's context is cancelled and nothing else: its generation
-// is still the one the screen is waiting on, so the move it returns, the best
-// of its last completed iteration or the ordering heuristic's legal pick when
-// none has completed, is played exactly as a move that ran its course would
-// be. Leaving and a rematch are still what drop a search's move.
+// is still the one the screen is waiting on, so the move it returns, the
+// tier's ordinary choice from the work the search had finished, is played
+// exactly as a move that ran its course would be. Leaving and a rematch are
+// still what drop a search's move.
 //
 // Escape did nothing on this board before it meant play now, and it goes on
 // doing nothing when the engine is not thinking: it is the key players press
@@ -1379,7 +1383,7 @@ func (s *gameScreen) playNow() {
 
 // playedEarlyText says a move came early, and from how much search. The depth
 // is the engine's own last completed iteration; with none completed the move
-// was the ordering heuristic's legal pick, and the line says so rather than
+// came from the ordering heuristic alone, and the line says so rather than
 // calling that a depth of nought. A search that had already ended on its own
 // terms when the request reached it, out of time or on a win it needed no
 // search for, played the move it would have played anyway and is reported as
@@ -1399,7 +1403,9 @@ func (s *gameScreen) playedEarlyText(who string, move game.Point) string {
 }
 
 // showLastSearch answers the search key with the figures of the search behind
-// the engine's last move, as the engine reported them when Move returned.
+// the engine's last move, as the engine reported them when Move returned. The
+// message is the whole sentence; the status line shows the widest of its forms
+// that fits, which fitMessage picks.
 func (s *gameScreen) showLastSearch() {
 	switch {
 	case s.cfg.Seats[game.Vertical].Bot == nil && s.cfg.Seats[game.Horizontal].Bot == nil:
@@ -1409,11 +1415,12 @@ func (s *gameScreen) showLastSearch() {
 	case s.lastSearch.Generation == 0:
 		s.message = "no engine move in this game has search figures to show yet"
 	default:
-		s.message = s.lastSearchText()
+		s.figures = s.lastSearchForms()
+		s.message = s.figures[0]
 	}
 }
 
-// lastSearchText is the finished search in one line, every figure from the
+// lastSearchForms is the finished search in one line, every figure from the
 // engine's final account: the deepest iteration it completed, never a depth of
 // nought presented as one, then its work and its time, and why it stopped. The
 // nodes and the time are the whole search's, the iteration it was part way
@@ -1421,18 +1428,57 @@ func (s *gameScreen) showLastSearch() {
 // the thinking line's nodes were the completed iterations' alone, and a larger
 // figure here beside the same depth is the unfinished one's work, not a
 // discrepancy.
-func (s *gameScreen) lastSearchText() string {
+//
+// That sentence is the first of several forms, widest first, because the
+// status line is the only place the figures are shown, and cut to the width
+// the sentence gave them up: at the minimum width its opening words alone
+// filled the line, and at forty columns the nodes and the time were cut off.
+// Each shorter form leaves out whole items rather than part of one: the opening
+// words, which say nothing the key did not, then the reason, then the long
+// wording of the depth, then the time and then the nodes, though the time is
+// kept on its own where it fits and the nodes do not. The move and its
+// completed depth are the last to go. Every form that gives nodes or time
+// still says they are in all, so that none of them passes the whole search's
+// work off as the completed iteration's.
+func (s *gameScreen) lastSearchForms() []string {
 	st := s.lastSearch.Stats
-	depth := "no depth completed"
+	move := s.lastSearchMove.String()
+	depth, short := "no depth completed", "no depth"
 	if st.Depth > 0 {
-		depth = fmt.Sprintf("depth %d completed", st.Depth)
+		depth, short = fmt.Sprintf("depth %d completed", st.Depth), fmt.Sprintf("d%d", st.Depth)
 	}
-	text := fmt.Sprintf("the search behind %s: %s · %d nodes and %s in all",
-		s.lastSearchMove, depth, st.Nodes, gsSeconds(st.Elapsed))
-	if why := searchStopText(st.StopReason); why != "" {
-		text += " · " + why
+	nodes, secs := fmt.Sprintf("%d nodes", st.Nodes), gsSeconds(st.Elapsed)
+	figures := fmt.Sprintf("%s: %s · %s and %s in all", move, depth, nodes, secs)
+	why := ""
+	if text := searchStopText(st.StopReason); text != "" {
+		why = " · " + text
 	}
-	return text
+	return []string{
+		"the search behind " + figures + why,
+		figures + why,
+		figures,
+		fmt.Sprintf("%s: %s · %s, %s in all", move, short, nodes, secs),
+		fmt.Sprintf("%s: %s · %s in all", move, short, nodes),
+		fmt.Sprintf("%s: %s · %s in all", move, short, secs),
+		move + ": " + short,
+	}
+}
+
+// fitMessage is the message as a status line width cells wide can show it.
+// The finished search's figures are the one message with shorter forms of its
+// own, and the forms stand only while the message is still the sentence they
+// were made with: whatever writes the message next replaces the sentence, and
+// so retires the forms without having to know they exist.
+func (s *gameScreen) fitMessage(width int) string {
+	if len(s.figures) == 0 || s.message != s.figures[0] {
+		return s.message
+	}
+	for _, form := range s.figures {
+		if ansi.StringWidth(form) <= width {
+			return form
+		}
+	}
+	return s.figures[len(s.figures)-1]
 }
 
 // searchStopText puts one of bot.SearchStats's stop reasons as a player would.
@@ -2541,7 +2587,7 @@ func (s *gameScreen) openingPeg() string {
 // that.
 func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 	if s.message != "" {
-		return s.style(s.styles.Status, gsTruncate(s.message, arr.Width))
+		return s.style(s.styles.Status, gsTruncate(s.fitMessage(arr.Width), arr.Width))
 	}
 	phase := s.keyPhase()
 	if phase == phasePlay && s.hint.shown && s.notice == "" {
