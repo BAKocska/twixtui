@@ -247,6 +247,12 @@ type searcher struct {
 	// without searching do not reach it: what it reports is completed work.
 	// The result it is handed is the root's own, so a hook that needs to keep
 	// anything copies it.
+	//
+	// It runs on the search's own goroutine before the next iteration starts,
+	// so the counters it reads are the finished iteration's and nothing more.
+	// Analyze reports its iterations through it and Move publishes its
+	// progress through it; either way it is set for one request and taken off
+	// when that request ends.
 	onDepth func(res *rootResult, elapsed time.Duration)
 
 	// One analysis and one move buffer per ply: a node needs its own view of
