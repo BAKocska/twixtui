@@ -9,6 +9,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A live line while the bot thinks: time since its search began, then the
+  deepest completed iteration and its node count. Only completed work of the
+  search behind the coming move is shown, and it is read without waiting for
+  the search. In a terminal too small for the panel, the status line leads
+  with `esc play now` and the time and completed depth.
+- `esc` while the bot is searching plays now, exactly once: the bot makes its
+  tier's ordinary choice from the work it has finished — the ranking of its
+  last completed iteration, or its move ordering before one — and the
+  announcement names the completed depth. The beginner tier still picks among
+  its near-best candidates. Leaving still discards the search.
+- `i` in a bot game shows the figures of the search behind the bot's last
+  move: completed depth, nodes and time in all, and stop reason. A status line
+  too narrow for all of them gives up whole items, the stop reason before the
+  time and the nodes, and always keeps the move and its completed depth.
 - Study notes and bookmarks in the replay viewer: `m` bookmarks the selected
   entry and `e` writes a one-line note on it, shown in the panel and marked in
   the entry list with `*` and `#`. They are kept per game, record digest and
@@ -16,10 +30,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   canonical record is never rewritten. Notes are bounded to 8 KiB of UTF-8 and
   study files to 1 MiB, and stored text is drawn inert.
 - Saves are checked against the revision the viewer loaded: a save another
-  window has overtaken is refused with both versions on screen and the typed
-  note kept, and nothing is written until it is confirmed again. A changed
+  window has overtaken is refused with the typed note kept, and it can replace
+  the stored note only once the viewer has shown that version whole. A changed
   record, a newer or damaged study file and unfinished games refuse edits
   visibly and leave the file as it was.
+
+### Fixed
+
+- A search left running by a finished bot game can no longer have its move
+  played in the rematch.
 
 ## [0.7.0] - 2026-09-12
 

@@ -2564,7 +2564,9 @@ func TestNewGameScreenRefusesImpossibleConfigurations(t *testing.T) {
 // TestGameKeysDoNotShadowTheBoardKeymap keeps the two tables disjoint where it
 // matters. A confirmation intercepts the keyboard before the board keymap is
 // consulted, so its keys may repeat a board key; a key live on a board in any
-// other phase would silently take a board action away.
+// other phase would silently take a board action away. A game key that
+// gameKeyContexts keeps out of a context may repeat a board key there, since in
+// that context the board is what answers it.
 func TestGameKeysDoNotShadowTheBoardKeymap(t *testing.T) {
 	km := ui.DefaultKeymap()
 	boardPhases := phasePlay | phaseFinished | phaseStopped
@@ -2574,6 +2576,9 @@ func TestGameKeysDoNotShadowTheBoardKeymap(t *testing.T) {
 		}
 		for _, key := range b.keys {
 			for _, ctx := range []ui.Context{ui.CtxBoard, ui.CtxLink} {
+				if gameKeyContexts(b.action)&ctx == 0 {
+					continue
+				}
 				if existing, ok := km.Lookup(ctx, key); ok {
 					t.Errorf("game key %q also drives board action %v", key, existing.Action)
 				}

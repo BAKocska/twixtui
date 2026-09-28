@@ -74,6 +74,7 @@ $required = @(
     'TestAnalyzeTerminalAndUnsearchedResultsAreExplicit',
     'TestAnalyzeRefusalsDoNotWriteState',
     'TestAnalyzeDoesNotRedirectAnUnreadableExactGame',
+    'TestPlayNowCutsAMaxSearchShort',
     'TestStudyNoteSurvivesLeavingAndResizing'
 )
 $missing = @($required | Where-Object { -not $passes.ContainsKey($_) })

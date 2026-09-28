@@ -323,9 +323,10 @@ none of those.
 | `enter` | Places the peg when none is staged yet, and commits the turn once one is. |
 | `x` | Enter or leave link mode. |
 | `1`-`8` | Only in link mode: toggle the link in that direction. |
-| `esc` | Leave link mode. |
+| `esc` | Leave link mode. Otherwise, while a bot is searching for its move: play now, with the search it has finished. |
 | `a` | Abort the turn: the board goes back to how it stood when your turn began. |
 | `?` | In a bot game: the move the bot would play, and why. |
+| `i` | In a bot game: the figures of the search behind the bot's last move. Offered once the bot has moved, and not while it is searching. |
 | `s` | Take the swap option, while it is on offer. |
 | `d` | Offer a draw, or accept the one on offer. |
 | `r` | Resign. |
@@ -535,6 +536,37 @@ overrides the chosen guards (zero inherits the preset). `bot.StatsOf` reports
 recursive nodes, all position analyses including tactical probes, completed
 depth, elapsed search time and the actual stop reason. Nodes and analyses are
 different quantities; neither is an MCTS simulation count.
+
+While the bot searches, the panel's thinking line shows how long it has been at
+it and, once its first iteration has finished, the deepest iteration it has
+completed and the nodes that work took. Those two figures are completed work
+only: they hold still while an iteration is in progress, and before the first
+one finishes the line shows the time alone. In a terminal too small for the
+panel, the status line leads with `esc play now` and a short form of the same
+line — the time and the completed depth, as in `2.4s d4`, or the depth alone
+when the two do not fit — ahead of whose turn it is. Press `esc` to have the
+bot play now. The search stops and the bot makes its tier's ordinary choice
+from the work it has finished: from the moves as its last completed iteration
+scored them or, if none had finished, as its ordering heuristic ranks them. The
+beginner tier still picks among its near-best candidates, as it does on every
+move; the other tiers play the move that ranking puts first. The line
+announcing the move says it was played early and at what completed depth. The
+move is played once, like any other. Leaving the game still discards a search
+in progress, and a rematch never plays a move from, or shows the progress of,
+a search the previous game left running. Once the bot has moved, `i` shows
+that search's figures as `bot.StatsOf` reports them: the depth it completed,
+its nodes and time in all, and why it stopped — out of time, stopped by play
+now, and so on.
+The nodes in all include work on an iteration the search did not finish, so
+they can be more than the thinking line last showed beside the same depth. A
+search that stopped because it found a winning line has found one among the
+moves it searched, which is not a proof. A full principal variation is not
+shown. Where the status line is too narrow for the whole sentence, it gives up
+whole items rather than cutting one: the opening words first, then why the
+search stopped, then the long wording of the depth, which becomes `d4`, then
+the time and the nodes. The move and its completed depth always show, at the
+least as `E3: d4`, and nodes or time, wherever they show, are still given as in
+all.
 
 Asking for a hint runs the same search with the highest-effort settings the package
 has, whichever tier you are playing, and gives you the move it would play, a line on

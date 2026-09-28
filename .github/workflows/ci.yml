@@ -196,9 +196,12 @@ jobs:
   # search enough to change what they measure: on a 24x24 board at the
   # measurement budgets the depths reached fall from beginner 1, intermediate 3,
   # pro 4 to 1, 2 and 2, so the tiers stop being distinguishable and a strength
-  # number produced under the detector is not the engine's. The Unix terminal
-  # harness delegates its PTY to tmux; the concurrent ConPTY implementation is
-  # covered separately by the native Windows amd64 race job below.
+  # number produced under the detector is not the engine's. The progress tests
+  # are the exception and run under it by name: they measure no strength, and
+  # their subject is a snapshot read from another goroutine while a search
+  # publishes it. The Unix terminal harness delegates its PTY to tmux; the
+  # concurrent ConPTY implementation is covered separately by the native
+  # Windows amd64 race job below.
   race:
     runs-on: ubuntu-latest
     steps:
@@ -219,6 +222,7 @@ jobs:
         run: |
           go test -race -count=1 ./internal/netplay/ ./internal/app/ ./internal/cli/ \
             ./internal/leaderboard/ ./internal/profile/ ./internal/study/
+          go test -race -count=1 -run '^TestProgress' ./internal/bot/
 
   # Native Windows executes the same product scenarios through ConPTY. The
   # script fails if any terminal test skips or if its positive controls did
