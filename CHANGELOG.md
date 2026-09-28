@@ -7,6 +7,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A live line while the bot thinks: time since its search began, then the
+  deepest completed iteration and its node count. Only completed work of the
+  search behind the coming move is shown, and it is read without waiting for
+  the search. In a terminal too small for the panel, the status line leads
+  with `esc play now` and the time and completed depth.
+- `esc` while the bot is searching plays now: the bot plays the best move of
+  its last completed iteration, or its legal ordering pick before one, exactly
+  once, and the announcement names the completed depth. Leaving still discards
+  the search.
+- `i` in a bot game shows the figures of the search behind the bot's last
+  move: completed depth, nodes and time in all, and stop reason.
+
+### Fixed
+
+- A search left running by a finished bot game can no longer have its move
+  played in the rematch.
+
 ## [0.7.0] - 2026-09-12
 
 ### Added
