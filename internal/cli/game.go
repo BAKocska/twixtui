@@ -167,7 +167,9 @@ Opens at the final entry with a scrolling entry list. Use h/l (or left/right)
 to step, k/j (or up/down) to move five entries, and g/G for the ends.
 Press : to enter an entry number: 0 is the initial position, enter jumps and
 escape cancels. Draw offers count as entries, not moves. A winning connection
-is highlighted only at the final entry. Review never changes the saved record.`,
+is highlighted only at the final entry. Press ? to analyse the entry on screen
+under the placement-only policy; moving on or pressing ? again cancels it.
+Review never changes the saved record.`,
 		Args:              exactArgs(1),
 		ValidArgsFunction: opts.gameIDCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {

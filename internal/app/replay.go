@@ -34,6 +34,11 @@ type ReplayScreen struct {
 	stuck string
 	// jump is the entry-number input, open only while a number is being typed.
 	jump entryJump
+	// analysis is the engine's reading of the entry on screen, once the player
+	// has asked for one, and analyser is what reads it: bot.Analyze unless a
+	// test has put something else in its place.
+	analysis replayAnalysis
+	analyser replayAnalyser
 	// winning is the run of pegs that won the game, worked out once when the
 	// screen opens: it cannot change, and it belongs to one position — the last
 	// one, where the chain the record ends in is actually on the board.
@@ -196,7 +201,8 @@ var replayKeys = []replayKey{
 	{ui.ActMoveUp, nil, "five", func(s *ReplayScreen) tea.Cmd { s.seek(s.step() - replayJump); return nil }},
 	{ui.ActEdgeTop, nil, "ends", func(s *ReplayScreen) tea.Cmd { s.seek(0); return nil }},
 	{ui.ActEdgeBottom, nil, "ends", func(s *ReplayScreen) tea.Cmd { s.seek(s.entries()); return nil }},
-	{ui.ActQuit, []string{"esc"}, "leaves", func(*ReplayScreen) tea.Cmd { return Back() }},
+	{ui.ActNone, []string{"?"}, "analyse", func(s *ReplayScreen) tea.Cmd { return s.toggleAnalysis() }},
+	{ui.ActQuit, []string{"esc"}, "leaves", func(s *ReplayScreen) tea.Cmd { s.analysis.drop(); return Back() }},
 }
 
 // replayHints renders the footer's key parts, taking the labels from the keymap
@@ -269,6 +275,10 @@ func NewReplayScreen(d Deps, saved gamestore.Saved) (Screen, error) {
 // Init satisfies tea.Model.
 func (s *ReplayScreen) Init() tea.Cmd { return nil }
 
+// Depart stops an analysis still running when the program ends with the review
+// open: the engine would be working for a screen that is no longer there.
+func (s *ReplayScreen) Depart() { s.analysis.drop() }
+
 // Update satisfies tea.Model.
 func (s *ReplayScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
@@ -288,6 +298,10 @@ func (s *ReplayScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s.jump.insert(strings.TrimSpace(m.Content))
 			}
 		}
+	case replayAnalysisDoneMsg:
+		s.analysis.finish(m)
+	case replayAnalysisTickMsg:
+		return s, s.analysis.tick(m)
 	}
 	return s, nil
 }
@@ -371,6 +385,10 @@ func (s *ReplayScreen) jumpToEntry() {
 // says so in the panel, rather than leaving a board that is neither where the
 // player was nor where they asked to be.
 func (s *ReplayScreen) seek(to int) {
+	// An analysis belongs to the position it was asked about. Moving through the
+	// record cancels one still running and puts away one already shown, so that
+	// neither can be read against a position it was not computed for.
+	s.analysis.drop()
 	if err := s.cursor.seek(to); err != nil {
 		s.stuck = err.Error()
 		return
@@ -414,6 +432,12 @@ func (s *ReplayScreen) View() tea.View {
 	if s.step() == s.entries() {
 		s.board.Highlights = s.winning
 	}
+	// An analysis marks the holes it refers to, but only on the position it
+	// read: anywhere else they would be advice about a different board. A
+	// finished position has nothing to advise, so the chain stays where it is.
+	if marks := s.analysis.highlights(s.step()); len(marks) > 0 {
+		s.board.Highlights = marks
+	}
 	board := s.board.Render(s.current(), st, arr.BoardAvailW, arr.BoardAvailH)
 	panel := s.panel(arr.PanelW, arr.PanelH)
 	status := s.status(arr.Width)
@@ -435,25 +459,34 @@ func (s *ReplayScreen) focus() (game.Point, bool) {
 	return game.Point{}, false
 }
 
-// status is the bottom row: where in the record the player is, then what the
-// keys do, dropped from the end when the terminal is too narrow for all of it.
+// status is the bottom row: what the player is doing, then where in the record
+// they are, then what the keys do, dropped from the end when the terminal is
+// too narrow for all of it.
 //
 // At the widths that have no room for a panel it is the whole of the interface,
-// so the entry input is drawn here as well as there, and what is wrong with a
-// number comes before the keys that would fix it.
+// so the entry input and the analysis are drawn here as well as there, and what
+// is wrong with a number comes before the keys that would fix it.
 func (s *ReplayScreen) status(width int) string {
 	// These are record entries rather than moves: a draw offer is an entry that
 	// changes nothing on the board, so counting them as moves disagreed with
 	// every other surface's move count.
 	counter := fmt.Sprintf("step %d of %d", s.step(), s.entries())
+	parts := make([]string, 0, len(s.hints)+3)
 	if s.jump.open {
 		note := s.jump.note()
 		fieldWidth := max(3, width-ansi.StringWidth(note)-1)
-		input := note + " " + s.jump.edit.render(shellStyles(s.deps), fieldWidth)
-		return hintLine(width, input, counter, keyLabel(s.confirm...)+" jump", "esc cancel")
+		parts = append(parts, note+" "+s.jump.edit.render(shellStyles(s.deps), fieldWidth))
 	}
-	parts := make([]string, 0, len(s.hints)+1)
+	// A part wider than the row is shortened here, with a mark, rather than
+	// clipped at the edge of the frame: the frame pulls a marked cut back to a
+	// whole word, and an unmarked one ends wherever the edge fell.
+	if a := s.analysisStatus(); a != "" {
+		parts = append(parts, truncateText(a, width))
+	}
 	parts = append(parts, counter)
+	if s.jump.open {
+		return hintLine(width, append(parts, keyLabel(s.confirm...)+" jump", "esc cancel")...)
+	}
 	return hintLine(width, append(parts, s.hints...)...)
 }
 
@@ -462,7 +495,10 @@ func (s *ReplayScreen) status(width int) string {
 //
 // The list is promised its share of the rows before the prose is given any. The
 // panel below a board is four rows at its smallest, and one that spent every row
-// on titles and results would leave a review with nothing to review.
+// on titles and results would leave a review with nothing to review. An
+// analysis the player has asked for is promised its lead next, ahead of the
+// record's details: a panel that spent its last rows on those showed nothing
+// at all after ?, not even that a search was running.
 func (s *ReplayScreen) panel(width, height int) []string {
 	if width <= 0 || height <= 0 {
 		return nil
@@ -471,9 +507,26 @@ func (s *ReplayScreen) panel(width, height int) []string {
 	// The input goes first because it is what the player is doing.
 	out = append(out, clampLines(s.jump.lines(shellStyles(s.deps), width), height)...)
 	list := min(s.entries()+1, max(1, height/2))
-	if room := height - len(out) - list; room > 1 {
+	// The analysis's lead is set aside with the blank line that closes it.
+	lead := s.analysisLead(width)
+	reserve := 0
+	if lead > 0 {
+		reserve = lead + 1
+	}
+	if room := height - len(out) - list - reserve; room > 1 {
 		out = append(out, clampLines(s.describe(width), room-1)...)
 		out = append(out, "")
+	}
+	if room := height - len(out) - list; room > 0 {
+		// The closing blank line is given up before any of the lead is: in the
+		// smallest panel the badge and the state of the search sit directly on
+		// the list, which beats a badge that says nothing about the search.
+		if block := s.analysisLines(width, max(room-1, min(room, lead))); len(block) > 0 {
+			out = append(out, block...)
+			if len(out) < height-list {
+				out = append(out, "")
+			}
+		}
 	}
 	return append(out, s.entryList(width, height-len(out))...)
 }
