@@ -53,7 +53,12 @@ func TestStudyNoteSurvivesLeavingAndResizing(t *testing.T) {
 		t.Fatalf("two steps down did not reach Watch a finished game:\n%s", screen)
 	}
 	tm.SendKeys("Enter")
-	chooser := tm.MustWaitFor("Tester vs Rival", 20*time.Second)
+	// The frame a marker first appears in can be one the terminal has only
+	// part of: the rows the repaint has not reached yet still hold the screen
+	// before it. A marker says the new screen has begun, and what else is or is
+	// not on it is read once the screen has settled.
+	tm.MustWaitFor("Tester vs Rival", 20*time.Second)
+	chooser := tm.WaitSettled(10 * time.Second)
 	if strings.Contains(chooser, "step 17 of 17") {
 		t.Fatalf("the watch list was skipped:\n%s", chooser)
 	}
@@ -76,17 +81,20 @@ func TestStudyNoteSurvivesLeavingAndResizing(t *testing.T) {
 	tm.SendKeys("e")
 	tm.MustWaitFor("note on entry 4", 10*time.Second)
 	tm.SendText(snNote)
-	typed := tm.MustWaitFor(snNote, 10*time.Second)
+	tm.MustWaitFor(snNote, 10*time.Second)
+	typed := tm.WaitSettled(10 * time.Second)
 	if !strings.Contains(typed, "step 4 of 17") || !tm.Alive() {
 		t.Fatalf("typing the note moved or left the review:\n%s", typed)
 	}
 	tm.SendKeys("Enter")
-	noted := tm.MustWaitFor("note: "+snNote, 10*time.Second)
+	tm.MustWaitFor("note: "+snNote, 10*time.Second)
+	noted := tm.WaitSettled(10 * time.Second)
 	if strings.Contains(noted, "note on entry 4") {
 		t.Fatalf("the note input is still open after saving:\n%s", noted)
 	}
 	tm.SendKeys("m")
-	marked := tm.MustWaitFor("bookmarked", 10*time.Second)
+	tm.MustWaitFor("bookmarked", 10*time.Second)
+	marked := tm.WaitSettled(10 * time.Second)
 	row := regexp.MustCompile(`>\s*4\s+\*#\s+h:draw\?`)
 	if !row.MatchString(marked) {
 		t.Fatalf("the list does not mark entry 4 with its bookmark and note:\n%s", marked)
@@ -98,19 +106,18 @@ func TestStudyNoteSurvivesLeavingAndResizing(t *testing.T) {
 	// Leaving a screen opened from the menu drops the menu's open form, so
 	// escape lands on the front list with Watch still highlighted, and the
 	// list of finished games is chosen again from there.
-	tm.WaitSettled(10 * time.Second)
 	tm.SendKeys("Escape")
-	menu := tm.MustWaitFor("> Watch a finished game", 10*time.Second)
+	tm.MustWaitFor("> Watch a finished game", 10*time.Second)
+	menu := tm.WaitSettled(10 * time.Second)
 	if strings.Contains(menu, "step 4 of 17") {
 		t.Fatalf("escape did not leave the review:\n%s", menu)
 	}
-	tm.WaitSettled(10 * time.Second)
 	tm.SendKeys("Enter")
-	chooser = tm.MustWaitFor("Tester vs Rival", 20*time.Second)
+	tm.MustWaitFor("Tester vs Rival", 20*time.Second)
+	chooser = tm.WaitSettled(10 * time.Second)
 	if strings.Contains(chooser, "step 17 of 17") {
 		t.Fatalf("the watch list was skipped on the way back:\n%s", chooser)
 	}
-	tm.WaitSettled(10 * time.Second)
 	tm.SendKeys("Enter")
 	tm.MustWaitFor("step 17 of 17", 20*time.Second)
 	reopened := tm.WaitSettled(10 * time.Second)

@@ -106,7 +106,11 @@ func TestPlayNowCutsAMaxSearchShort(t *testing.T) {
 	case shown == 0:
 		t.Logf("no completed depth showed within %s; the move was announced as %q", maxBudget*2/5, found[0])
 	}
-	after := tm.MustWaitFor("vertical to move", 10*time.Second)
+	// The frame the turn line first appears in can be one the terminal has
+	// only part of, with the thinking line still on the rows the repaint has
+	// not reached, so the engine is looked for once the screen has settled.
+	tm.MustWaitFor("vertical to move", 10*time.Second)
+	after := tm.WaitSettled(10 * time.Second)
 	if strings.Contains(after, "is thinking") {
 		t.Fatalf("the engine is still thinking after its move was played:\n%s", after)
 	}
@@ -116,7 +120,8 @@ func TestPlayNowCutsAMaxSearchShort(t *testing.T) {
 	// arrive as one alt-modified key, which is why the move was waited for
 	// first.
 	tm.SendKeys("i")
-	stats := tm.MustWaitFor("nodes", 10*time.Second)
+	tm.MustWaitFor("nodes", 10*time.Second)
+	stats := tm.WaitSettled(10 * time.Second)
 	var line string
 	for _, l := range strings.Split(stats, "\n") {
 		if strings.Contains(l, "nodes") {

@@ -57,7 +57,12 @@ func TestReplayAnalysisFromTheMenu(t *testing.T) {
 	tm.SendKeys("Enter")
 	tm.MustWaitFor("Tester vs max bot", 20*time.Second)
 	tm.SendKeys("Enter")
-	end := tm.MustWaitFor("step 7 of 7", 20*time.Second)
+	// The frame a marker first appears in can be one the terminal has only
+	// part of: the rows the repaint has not reached yet still hold the screen
+	// before it. A marker says the new screen has begun, and what else is on it
+	// is read once the screen has settled.
+	tm.MustWaitFor("step 7 of 7", 20*time.Second)
+	end := tm.WaitSettled(10 * time.Second)
 	if status := lbStatusLine(end); !strings.Contains(status, "? analyse") {
 		t.Fatalf("the replay's status line %q does not offer the analysis key:\n%s", status, end)
 	}
@@ -104,7 +109,8 @@ func TestReplayAnalysisFromTheMenu(t *testing.T) {
 	}
 
 	tm.SendKeys("q")
-	back := tm.MustWaitFor("Watch a finished game", 20*time.Second)
+	tm.MustWaitFor("Watch a finished game", 20*time.Second)
+	back := tm.WaitSettled(10 * time.Second)
 	if strings.Contains(back, "step 5 of 7") {
 		t.Fatalf("q did not leave the replay:\n%s", back)
 	}
