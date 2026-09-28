@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-28
+
 ### Added
 
 - A live line while the bot thinks: time since its search began, then the
@@ -729,7 +731,8 @@ First release.
   succeeding silently, and the tutorial's prose is set to a readable measure on a wide
   terminal.
 
-[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/BAKocska/twixtui/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/BAKocska/twixtui/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/BAKocska/twixtui/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/BAKocska/twixtui/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/BAKocska/twixtui/compare/v0.4.0...v0.5.0
