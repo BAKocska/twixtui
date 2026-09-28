@@ -56,9 +56,11 @@ type replayNotes struct {
 }
 
 // openNotes finds the study of the game being replayed. Nothing about it stops
-// the replay: a study that cannot be read leaves the review as it was and the
-// notes read-only, with the reason in the panel, and the file exactly as it was
-// found, so the program that can read it still finds it there.
+// the replay: a study that cannot be read leaves the review as it was, shows
+// none of its notes, since they belong to another record or cannot be read,
+// and takes no bookmark or note in their place. The reason is in the panel, and
+// the file is left exactly as it was found, so the program that can read it
+// still finds it there.
 func openNotes(store *study.Store, saved gamestore.Saved, record game.Record, entries int) replayNotes {
 	n := replayNotes{
 		store: store,
@@ -156,6 +158,27 @@ func studyRefusal(err error) studyNotice {
 	return studyNotice{replayLabel(why), brief}
 }
 
+// staleBookmark is the refusal of a bookmark pressed against notes another
+// window has saved since. The next press toggles what is stored now, which
+// need not be what this window showed when the player pressed, so every form
+// of the refusal says what it is: whether the entry is bookmarked. The brief
+// form fits the narrowest status line whole, because at the sizes without a
+// panel that line is the only place it can be read.
+func staleBookmark(marked bool) studyNotice {
+	if marked {
+		return studyNotice{
+			"the notes were changed elsewhere and are shown as they are now: " +
+				"this entry is bookmarked, and pressing again unmarks it",
+			"marked elsewhere",
+		}.of("bookmark unchanged")
+	}
+	return studyNotice{
+		"the notes were changed elsewhere and are shown as they are now: " +
+			"this entry is not bookmarked, and pressing again marks it",
+		"unmarked elsewhere",
+	}.of("bookmark unchanged")
+}
+
 // refuse records what a request on entry ran into.
 func (n *replayNotes) refuse(entry int, why studyNotice) { n.problem, n.problemAt = why, entry }
 
@@ -181,11 +204,27 @@ func (n *replayNotes) flags(entry int) string {
 // toggleBookmark puts a bookmark on the entry on screen, or takes it off, and
 // saves at once: a bookmark is one keypress, and a second one to confirm it
 // would be a form around a single bit.
+//
+// A press refused because the notes changed elsewhere is where that bit needs
+// care. The next press toggles what is stored now, and the other window may
+// have made it what this press was about to, so a player who presses again
+// without being told undoes the change they meant to make. The refusal says
+// whether the entry is bookmarked now (staleBookmark), and a press on an entry
+// is not taken while the refusal standing on it is off screen, so the next one
+// is a decision about the state the player has read. A stale note needs a
+// measure of the panel for the same guarantee (storedOnScreen); a bookmark's
+// state is a word, which the status line carries whole in every frame that has
+// a board, so only a terminal too small for one keeps it off screen.
 func (s *ReplayScreen) toggleBookmark() {
 	n := &s.notes
 	entry := s.step()
 	if n.locked != nil {
 		n.refuse(entry, n.locked.of("bookmark unchanged"))
+		return
+	}
+	if n.problem != nil && n.problemAt == entry && !s.refusalOnScreen() {
+		// Nothing is written, and the refusal stands until the terminal is
+		// large enough for it to be read.
 		return
 	}
 	// The note travels with the bookmark because a mark is saved whole. It is
@@ -198,13 +237,10 @@ func (s *ReplayScreen) toggleBookmark() {
 	switch {
 	case errors.Is(err, study.ErrStale):
 		// The press is not repeated on the player's behalf. What is stored
-		// now is shown, and the player decides whether it still wants the
-		// change.
+		// now is shown, the refusal says whether this entry is bookmarked in
+		// it, and the player decides whether it still wants the change.
 		n.doc = doc
-		n.refuse(entry, studyNotice{
-			"the notes were changed elsewhere and are shown as they are now; press again to change it",
-			"changed elsewhere",
-		}.of("bookmark unchanged"))
+		n.refuse(entry, staleBookmark(doc.At(entry).Bookmark))
 	case err != nil:
 		n.refuse(entry, studyRefusal(err).of("bookmark unchanged"))
 	default:
@@ -431,6 +467,17 @@ func (s *ReplayScreen) storedOnScreen() bool {
 		return false
 	}
 	return s.notes.storedFits(arr.PanelW, s.studyRoom(arr.PanelW, arr.PanelH))
+}
+
+// refusalOnScreen reports whether the frame the terminal's size gives draws
+// the refusal standing on the entry on screen. The status line of every frame
+// that has a board draws it first, ahead of everything a narrow line gives up,
+// and whole, since every brief form fits the narrowest such line; a terminal
+// too small for a board is drawn as the notice saying so and nothing else.
+// Like storedOnScreen, it is judged on the size the screen was last given, so
+// a press is judged on the frame the player is looking at.
+func (s *ReplayScreen) refusalOnScreen() bool {
+	return !ui.Arrange(s.width, s.height, s.current().Size()).TooSmall
 }
 
 // noteInput is the note input as the status line draws it. At the widths that

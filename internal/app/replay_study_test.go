@@ -381,6 +381,95 @@ func TestReplayStaleSaveKeepsBothVersions(t *testing.T) {
 	}
 }
 
+// TestReplayStaleBookmarkIsToggledOnlyOnceShown is a bookmark pressed in a
+// window that another window has saved past, at the sizes a player may press
+// it in. The press is refused, and the next one toggles what is stored now,
+// which the other window may have made what this press was about to: a player
+// who presses again without being told undoes the change they meant to make.
+// So the frame after the refusal has to say whether the entry is bookmarked
+// now, and the next press has to make it the other. Both directions are tried
+// — stored bookmarked after this window saw the entry bare, and stored bare
+// after it saw a bookmark — at each supported size, the smallest of which has
+// no panel, only the status line to say it on. A terminal too small for a
+// board says nothing at all, so there the next press writes nothing, and the
+// press after the terminal is enlarged is the decision.
+func TestReplayStaleBookmarkIsToggledOnlyOnceShown(t *testing.T) {
+	sv := rpConnectionRecord(t)
+	target := snTarget(t, sv)
+	// stated is whether a frame says the entry is bookmarked, and whether it
+	// says either. The words are read whole, since one is inside the other,
+	// and a frame that says both has said neither.
+	stated := func(frame string) (marked, said bool) {
+		words := strings.FieldsFunc(ansi.Strip(frame), func(r rune) bool { return !unicode.IsLetter(r) })
+		marked = slices.Contains(words, "marked")
+		return marked, marked != slices.Contains(words, "unmarked")
+	}
+	tooSmall := [2]int{ui.MinWidth - 1, ui.MinHeight}
+	for _, size := range append(slices.Clone(shellSizes), tooSmall) {
+		for _, stored := range []bool{true, false} {
+			w, h := size[0], size[1]
+			d := snDeps(t)
+			path := snFile(d, sv.ID)
+			other := study.Open(d.ConfigDir)
+			// This window reads the entry as the opposite of what the other
+			// one then stores, so its press is the one the other has made.
+			base := int64(0)
+			if !stored {
+				doc, err := other.Set(target, 0, study.Mark{Entry: 9, Bookmark: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				base = doc.Revision
+			}
+			s := rpSized(t, d, sv, w, h)
+			rpJump(t, s, "9")
+			theirs, err := other.Set(target, base, study.Mark{Entry: 9, Bookmark: stored})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := snBytes(t, path)
+
+			s.Update(tutorialKeyMsg("m"))
+			if after := snBytes(t, path); !bytes.Equal(after, before) {
+				t.Fatalf("at %dx%d a stale bookmark rewrote the study:\nbefore: %s\nafter:  %s", w, h, before, after)
+			}
+			frame := s.View().Content
+			shellAssertFits(t, "a bookmark refused as stale", frame, w, h)
+			if ui.Arrange(w, h, s.current().Size()).TooSmall {
+				// The frame is the notice that the terminal is too small, so
+				// pressing again is not a decision about anything on it.
+				s.Update(tutorialKeyMsg("m"))
+				if after := snBytes(t, path); !bytes.Equal(after, before) {
+					t.Errorf("at %dx%d only the too-small notice is drawn, and a second m toggled the bookmark stored elsewhere:\n%s",
+						w, h, after)
+					continue
+				}
+				w, h = shellSizes[0][0], shellSizes[0][1]
+				s.Update(tea.WindowSizeMsg{Width: w, Height: h})
+				frame = s.View().Content
+			}
+			shown, said := stated(frame)
+			if !said || shown != stored {
+				t.Errorf("at %dx%d entry 9 is stored bookmarked=%v, and after the refused m the frame says bookmarked=%v, said=%v:\n%s",
+					w, h, stored, shown, said, frame)
+				continue
+			}
+
+			// Pressing again is a decision about what was shown, made against
+			// the revision the other window stored.
+			s.Update(tutorialKeyMsg("m"))
+			var want []study.Mark
+			if !shown {
+				want = []study.Mark{{Entry: 9, Bookmark: true}}
+			}
+			if doc := snLoad(t, d, target); !slices.Equal(doc.Marks, want) || doc.Revision != theirs.Revision+1 {
+				t.Errorf("at %dx%d the frame said bookmarked=%v, and m left the study at revision %d holding %+v, want %+v at revision %d",
+					w, h, shown, doc.Revision, doc.Marks, want, theirs.Revision+1)
+			}
+		}
+	}
+}
+
 // TestReplayStaleNoteIsReplacedOnlyWhenShownWhole is the refused save at the
 // sizes a player may be reading it in. A second confirm is a choice between
 // two versions only while both are on screen, so at each size either every
