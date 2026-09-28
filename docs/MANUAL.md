@@ -990,11 +990,13 @@ another program keeps them unless you edit them away.
 Notes are attached to the record's digest as well as to the game ID, and the
 file is limited to 1 MiB. If the record has changed since the notes were
 written, or the file was written by a newer twixtui or is damaged, the viewer
-says so and the notes are read-only; the file is left exactly as it was, never
-moved onto the new record or rewritten. Notes can be saved on finished games
-only, so an unfinished imported game can be watched but `m` and `e` explain why
-they do nothing. In a terminal with no room for the panel, the status line
-gives the reason for a refused `m`, `e` or save in a few words.
+does not show those notes — they belong to another record or cannot be read —
+and says why instead. They cannot be edited either, so `m` and `e` change
+nothing, and the file is left exactly as it was, never moved onto the new
+record or rewritten. Notes can be saved on finished games only, so an
+unfinished imported game can be watched but `m` and `e` explain why they do
+nothing. In a terminal with no room for the panel, the status line gives the
+reason for a refused `m`, `e` or save in a few words.
 
 Every save is checked against the revision the viewer last read, and a
 successful save advances it. If another window saved first, the save is refused
@@ -1004,10 +1006,15 @@ stored one. Saving again is taken only while the whole stored note is on
 screen. In a terminal too small to show it — with no panel, or a panel too
 short or narrow for all of it — the save is refused again and nothing is
 written until the terminal is enlarged; `esc` still keeps the stored note. A
-bookmark refused the same way shows what is stored, and pressing `m` again
-decides. A file another program has left at the highest revision there is
-still shows its notes but can take no further save: saving is refused as for a
-damaged file, and the file is left as it was.
+bookmark refused the same way changes nothing either: the viewer shows what is
+stored, and the refusal says whether the entry is bookmarked now, on the status
+line (`marked elsewhere` or `unmarked elsewhere`) as well as in the panel, so
+pressing `m` again is a decision about the state you have read. In a terminal
+too small to draw the board, where the refusal cannot be shown, `m` on that
+entry does nothing until the terminal is enlarged. A file another program has
+left at the highest revision there is still shows its notes but can take no
+further save: saving is refused as for a damaged file, and the file is left as
+it was.
 
 ## Position analysis
 

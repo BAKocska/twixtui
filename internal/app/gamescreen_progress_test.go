@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/BAKocska/twixtui/internal/bot"
 	"github.com/BAKocska/twixtui/internal/game"
 	"github.com/BAKocska/twixtui/internal/gamestore"
+	"github.com/BAKocska/twixtui/internal/ui"
 )
 
 // --- a search the test runs by hand -----------------------------------------
@@ -241,6 +243,17 @@ func gpClaimsDepth(frame string, depth int) bool {
 // included.
 var gpDepthClaim = regexp.MustCompile(`\bdepth \d`)
 
+// gpCompactDepth2 is the completed depth 2 in the short form a status line
+// with no panel gives it.
+var gpCompactDepth2 = regexp.MustCompile(`\bd2\b`)
+
+// gpBottom is the bottom row of a composed frame, where ui.Compose pins the
+// status line, as the player reads it.
+func gpBottom(frame string) string {
+	lines := strings.Split(frame, "\n")
+	return ansi.Strip(lines[len(lines)-1])
+}
+
 // --- the thinking line --------------------------------------------------------
 
 // TestTheThinkingLineShowsOnlyThisSearchsFinishedWork reads the engine while
@@ -385,8 +398,10 @@ func TestPlayNowAndTheSearchShowAtEverySize(t *testing.T) {
 			h := newGSHarness(t, gsTestDeps(t), gsVersusBot(6, engine), size[0], size[1])
 			h.playTurn(game.Point{Col: 1, Row: 0})
 			gpEntered(t, engine)
-			// The commit's own line answers the key that made it, and holds
-			// the status line until the next key.
+			// The commit's own line answers the key that made it, and where
+			// there is a panel it holds the status line until the next key.
+			// TestPlayNowLeadsTheMovesAnnouncementWithoutAPanel looks before
+			// any such key.
 			h.press("j")
 			key := h.s.gameKeyLabel(gaPlayNow) + " play now"
 
@@ -407,6 +422,87 @@ func TestPlayNowAndTheSearchShowAtEverySize(t *testing.T) {
 			}
 			gsCheckFrame(t, "thinking", frame, h.width, h.height)
 		})
+	}
+}
+
+// TestPlayNowLeadsTheMovesAnnouncementWithoutAPanel commits a move from the
+// keyboard and then only lets the search run. Nothing else is pressed, so the
+// commit's announcement stays the status line's message for the whole search,
+// as it does for a player who sits back and waits for the engine. Without a
+// panel that line is the only place for the play-now key and the search, and
+// the announcement used to take all of it: neither was on screen until some
+// other key cleared the message. TestPlayNowAndTheSearchShowAtEverySize
+// presses such a key before it looks, which is why it never saw this. With a
+// panel the announcement keeps the line to itself, as it always has, and once
+// the move arrives its own announcement takes the line at every size.
+//
+// Both boards are played because the layouts differ: at 40x12 the six-hole
+// board leaves room for a panel below it and the full-size board does not.
+// 70x12 is added to the supported sizes as a line with no panel beside the
+// full-size board that is wide enough for the announcement to follow the key
+// and the search whole, which is where it can be seen not to have been lost.
+func TestPlayNowLeadsTheMovesAnnouncementWithoutAPanel(t *testing.T) {
+	sizes := append(slices.Clone(shellSizes), [2]int{70, 12})
+	var panelless, paneled, followed int
+	for _, n := range []int{6, 24} {
+		for _, size := range sizes {
+			w, ht := size[0], size[1]
+			panel := ui.Arrange(w, ht, n).Panel
+			if panel == ui.PanelNone {
+				panelless++
+			} else {
+				paneled++
+			}
+			t.Run(fmt.Sprintf("board %d at %dx%d", n, w, ht), func(t *testing.T) {
+				engine := newGPBot(t)
+				h := newGSHarness(t, gsTestDeps(t), gsVersusBot(n, engine), w, ht)
+				h.playTurn(game.Point{Col: 1, Row: 0})
+				gpEntered(t, engine)
+				key := h.s.gameKeyLabel(gaPlayNow) + " play now"
+				announced := h.s.toMoveText()
+
+				gpTick(t, h, engine.started.Add(1500*time.Millisecond))
+				bottom := gpBottom(h.frame())
+				if panel == ui.PanelNone {
+					if !strings.HasPrefix(bottom, key+" · 1.5s") {
+						t.Errorf("with the move's announcement standing, the bottom row %q does not lead with %q and the search's time", bottom, key)
+					}
+				} else if bottom != announced {
+					t.Errorf("with a panel, the bottom row %q is not the move's announcement %q alone", bottom, announced)
+				}
+
+				engine.complete(2, 4321, game.Point{Col: 4, Row: 2})
+				gpTick(t, h, engine.started.Add(2500*time.Millisecond))
+				frame := h.frame()
+				bottom = gpBottom(frame)
+				if panel == ui.PanelNone {
+					if !strings.HasPrefix(bottom, key) || !gpCompactDepth2.MatchString(bottom) {
+						t.Errorf("with the move's announcement standing, the bottom row %q does not lead with %q and the completed depth d2", bottom, key)
+					}
+					if whole := key + " · 2.5s d2 · " + announced; ansi.StringWidth(whole) <= w {
+						if bottom != whole {
+							t.Errorf("the bottom row %q has room for the announcement after the key and the search, want %q", bottom, whole)
+						}
+						followed++
+					}
+				} else if bottom != announced {
+					t.Errorf("with a panel, the bottom row %q is not the move's announcement %q alone", bottom, announced)
+				}
+				gsCheckFrame(t, "thinking with the announcement standing", frame, w, ht)
+
+				move := game.Point{Col: 4, Row: 2}
+				engine.release <- move
+				h.waitFor("the engine's move", func() bool { return h.s.g.At(move) == game.Horizontal })
+				bottom = gpBottom(h.frame())
+				if strings.Contains(bottom, key) || !strings.Contains(bottom, "played "+move.String()) {
+					t.Errorf("once the move has arrived, the bottom row %q is not its announcement", bottom)
+				}
+			})
+		}
+	}
+	if panelless == 0 || paneled == 0 || followed == 0 {
+		t.Fatalf("the sizes covered %d layouts with no panel, %d with one, and %d with room for the announcement after the search; each needs one",
+			panelless, paneled, followed)
 	}
 }
 

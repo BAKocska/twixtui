@@ -7,6 +7,19 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- In a terminal too small for the panel, `esc play now` and the search's time
+  and completed depth were hidden for the whole search behind the announcement
+  of the move just played, until another key was pressed. They now lead the
+  status line, and the announcement follows them.
+- In a terminal too small for the panel, pressing `m` again after a bookmark
+  change refused because another window had saved first toggled a stored state
+  that had never been shown. The refusal now says whether the entry is
+  bookmarked now, at every size.
+- The manual described notes attached to a changed record, or kept in a newer
+  or damaged file, as read-only; they are not shown at all.
+
 ## [0.8.0] - 2026-09-28
 
 ### Added
