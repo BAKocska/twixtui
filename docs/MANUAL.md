@@ -347,6 +347,12 @@ Correspondence keeps `c` available to retrieve the final code, including after
 reopening the saved game. `ctrl+c` still ends the whole program, even when
 `enter` or `q` would return to the menu.
 
+The replay viewer reuses the movement keys above for stepping through a record
+and adds keys of its own, listed under [Reviewing saved games](#reviewing-saved-games):
+`:` jumps to an entry, `m` bookmarks the selected entry and `e` writes a note on
+it. While a note is being written every printable key is text, and the key
+bound to `enter` above is the one that saves it.
+
 ## Playing a bot
 
 ```
@@ -893,7 +899,9 @@ shows both the entry counter and the number of moves played.
 | `k` / `up`, `j` / `down` | Back or forward five entries. |
 | `g` / `G` | Initial position / final entry. |
 | `:` | Type an entry number; `enter` jumps and `esc` cancels the input. |
-| `q` / `esc` | Leave the viewer when not editing the entry number. |
+| `m` | Bookmark the selected entry, or take its bookmark off. Saved at once. |
+| `e` | Write or edit the selected entry's note; `enter` saves and `esc` cancels without saving. |
+| `q` / `esc` | Leave the viewer when not editing the entry number or a note. |
 | `ctrl+c` | End the program. |
 
 Numbers outside `0..last entry`, non-digits and oversized input are refused,
@@ -910,9 +918,49 @@ remains the record's result while stepping through earlier positions.
 Replay validates the whole record before opening and retains one mutable board,
 not a board snapshot per entry. Small backward steps use undo; longer backward
 seeks rebuild the requested prefix to avoid repeatedly scanning draw-offer
-history. Reviewing never changes the stored record or ratings. Notes and
-variations are not part of this viewer; engine analysis is available through the
+history. Reviewing never changes the stored record or ratings. Variations
+are not part of this viewer; engine analysis is available through the
 separate `analyze` commands below, not as an interactive replay action.
+
+#### Notes and bookmarks
+
+A finished game can carry a note and a bookmark on any entry, including `0`.
+They are kept in `study/<game id>.json` in the configuration directory, beside
+the saved game rather than in it: the canonical record is never rewritten, and
+an exported record carries no notes. An imported game can have notes of its own
+on this machine while its record stays exactly as it was imported.
+
+The panel shows the selected entry's bookmark and note. The entry list gives
+marked entries a column of their own once any exist: `*` for a bookmark and `#`
+for a note, as characters rather than colours. A note is one line of at most
+8 KiB of UTF-8; a longer paste is refused whole rather than cut, and line
+breaks in a paste become spaces. While the note input is open every printable
+key is text, so `q`, `h` or `:` are typed rather than acted on. Text read from
+the file is drawn inert: control characters and escape sequences are shown as
+plain text or dropped, never obeyed, and a note written with line breaks by
+another program keeps them unless you edit them away.
+
+Notes are attached to the record's digest as well as to the game ID, and the
+file is limited to 1 MiB. If the record has changed since the notes were
+written, or the file was written by a newer twixtui or is damaged, the viewer
+says so and the notes are read-only; the file is left exactly as it was, never
+moved onto the new record or rewritten. Notes can be saved on finished games
+only, so an unfinished imported game can be watched but `m` and `e` explain why
+they do nothing. In a terminal with no room for the panel, the status line
+gives the reason for a refused `m`, `e` or save in a few words.
+
+Every save is checked against the revision the viewer last read, and a
+successful save advances it. If another window saved first, the save is refused
+instead of overwriting it: the input stays open with your text, the stored
+note is shown beneath it, and saving again replaces it while `esc` keeps the
+stored one. Saving again is taken only while the whole stored note is on
+screen. In a terminal too small to show it — with no panel, or a panel too
+short or narrow for all of it — the save is refused again and nothing is
+written until the terminal is enlarged; `esc` still keeps the stored note. A
+bookmark refused the same way shows what is stored, and pressing `m` again
+decides. A file another program has left at the highest revision there is
+still shows its notes but can take no further save: saving is refused as for a
+damaged file, and the file is left as it was.
 
 ## Position analysis
 

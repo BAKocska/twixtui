@@ -23,6 +23,17 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   move: completed depth, nodes and time in all, and stop reason. A status line
   too narrow for all of them gives up whole items, the stop reason before the
   time and the nodes, and always keeps the move and its completed depth.
+- Study notes and bookmarks in the replay viewer: `m` bookmarks the selected
+  entry and `e` writes a one-line note on it, shown in the panel and marked in
+  the entry list with `*` and `#`. They are kept per game, record digest and
+  entry in `study/<game id>.json` beside the saved game (study format 1); the
+  canonical record is never rewritten. Notes are bounded to 8 KiB of UTF-8 and
+  study files to 1 MiB, and stored text is drawn inert.
+- Saves are checked against the revision the viewer loaded: a save another
+  window has overtaken is refused with the typed note kept, and it can replace
+  the stored note only once the viewer has shown that version whole. A changed
+  record, a newer or damaged study file and unfinished games refuse edits
+  visibly and leave the file as it was.
 
 ### Fixed
 

@@ -15,6 +15,7 @@ import (
 	"github.com/BAKocska/twixtui/internal/leaderboard"
 	"github.com/BAKocska/twixtui/internal/netplay"
 	"github.com/BAKocska/twixtui/internal/profile"
+	"github.com/BAKocska/twixtui/internal/study"
 	"github.com/BAKocska/twixtui/internal/theme"
 	"github.com/BAKocska/twixtui/internal/ui"
 )
@@ -28,6 +29,11 @@ type Deps struct {
 	Profiles *profile.Store
 	Board    *leaderboard.Board
 	Games    *gamestore.Store
+	// Study keeps the notes and bookmarks a player writes on the entries of a
+	// replayed game, in a file beside the game rather than in its record. Nil
+	// means notes are not kept: the replay still opens, and says so when it
+	// is asked for one.
+	Study *study.Store
 
 	Theme  theme.Theme
 	Styles *ui.Styles
