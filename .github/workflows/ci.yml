@@ -218,7 +218,7 @@ jobs:
         # job nobody reads.
         run: |
           go test -race -count=1 ./internal/netplay/ ./internal/app/ ./internal/cli/ \
-            ./internal/leaderboard/ ./internal/profile/
+            ./internal/leaderboard/ ./internal/profile/ ./internal/study/
 
   # Native Windows executes the same product scenarios through ConPTY. The
   # script fails if any terminal test skips or if its positive controls did
