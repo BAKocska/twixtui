@@ -926,7 +926,9 @@ screen. In a terminal too small to show it — with no panel, or a panel too
 short or narrow for all of it — the save is refused again and nothing is
 written until the terminal is enlarged; `esc` still keeps the stored note. A
 bookmark refused the same way shows what is stored, and pressing `m` again
-decides.
+decides. A file another program has left at the highest revision there is
+still shows its notes but can take no further save: saving is refused as for a
+damaged file, and the file is left as it was.
 
 ## Position analysis
 

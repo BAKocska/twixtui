@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,7 +61,8 @@ var (
 	// ErrNewerVersion reports a study document written in a format newer than
 	// this build knows.
 	ErrNewerVersion = errors.New("study was written by a newer version of twixtui")
-	// ErrCorrupt reports a study document that cannot be read as one.
+	// ErrCorrupt reports a study document that cannot be read as one, or, from
+	// Set, one that can be read but can take no further save.
 	ErrCorrupt = errors.New("study file is damaged")
 	// ErrUnfinished reports a save for a game that has no result yet.
 	ErrUnfinished = errors.New("game is not finished")
@@ -242,6 +244,15 @@ func (st *Store) read(t Target) (Study, error) {
 // text. Otherwise the revision advances by one and the study is replaced
 // atomically. A save that would make the study larger than MaxFileBytes is
 // refused with ErrInvalid, since the file could not be loaded again.
+//
+// A stored study already at revision math.MaxInt64 is refused with ErrCorrupt
+// and left as it is. No run of saves gets a study that far, so something else
+// wrote the number, and there is no next revision to give it: one more would
+// wrap around to a negative revision that Load refuses, and a save reporting
+// success would have made every note in the file unavailable. Refused, the file
+// still loads with its notes. The check comes before the revisions are
+// compared, because a stale refusal would invite the caller to try again
+// against a study that can take no save at all.
 func (st *Store) Set(t Target, baseRevision int64, m Mark) (Study, error) {
 	if err := t.validate(); err != nil {
 		return Study{}, err
@@ -264,6 +275,10 @@ func (st *Store) Set(t Target, baseRevision int64, m Mark) (Study, error) {
 	cur, err := st.read(t)
 	if err != nil {
 		return Study{}, err
+	}
+	if cur.Revision == math.MaxInt64 {
+		return Study{}, fmt.Errorf("%w: game %s is at revision %d, and no save can follow it",
+			ErrCorrupt, t.GameID, cur.Revision)
 	}
 	if cur.Revision != baseRevision {
 		return cur, fmt.Errorf("%w: game %s is at revision %d, and this edit was made against revision %d",

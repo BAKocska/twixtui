@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -450,6 +451,44 @@ func TestSaveThatWouldOutgrowTheFileIsRefused(t *testing.T) {
 		t.Fatalf("saving a note the file has no room for = %v, want ErrInvalid", err)
 	}
 	assertUnchanged(t, st, data, "a save the file has no room for")
+}
+
+func TestStudyAtTheLastRevisionTakesNoSave(t *testing.T) {
+	// storedDoc at another revision, with a note to show the study survives.
+	at := func(rev int64) []byte {
+		return []byte(strings.Replace(storedDoc(`[{"entry": 2, "note": "kept"}]`),
+			`"revision": 3`, fmt.Sprintf(`"revision": %d`, rev), 1))
+	}
+
+	// No run of saves gets this far, but a file written by something else can,
+	// and it loads: the revision is a valid one. Advancing it would wrap around
+	// to a negative revision that the next Load refuses along with every note.
+	st := Open(t.TempDir())
+	data := at(math.MaxInt64)
+	writeStored(t, st, testGame, data)
+	loaded := mustLoad(t, st, finished())
+	if loaded.Revision != math.MaxInt64 {
+		t.Fatalf("the study loaded at revision %d, want %d", loaded.Revision, int64(math.MaxInt64))
+	}
+	if _, err := st.Set(finished(), loaded.Revision, Mark{Entry: 1, Note: "new"}); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("saving over a study at revision MaxInt64 = %v, want ErrCorrupt", err)
+	}
+	assertUnchanged(t, st, data, "a save over a study at the last revision")
+	if got := mustLoad(t, st, finished()); got.Revision != math.MaxInt64 || got.At(2).Note != "kept" {
+		t.Fatalf("after the refused save the study loads as %+v, want revision %d still holding its note", got, int64(math.MaxInt64))
+	}
+
+	// One revision short, the save is still taken, and the study it leaves at
+	// the last revision loads.
+	st = Open(t.TempDir())
+	writeStored(t, st, testGame, at(math.MaxInt64-1))
+	saved := mustSet(t, st, finished(), math.MaxInt64-1, Mark{Entry: 1, Note: "new"})
+	if saved.Revision != math.MaxInt64 {
+		t.Fatalf("the save one revision short of the last reached revision %d, want %d", saved.Revision, int64(math.MaxInt64))
+	}
+	if got := mustLoad(t, st, finished()); !reflect.DeepEqual(got, saved) {
+		t.Fatalf("the study saved at the last revision loaded as %+v, want %+v", got, saved)
+	}
 }
 
 func TestUnusableTargetsAreRefused(t *testing.T) {
