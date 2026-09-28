@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Study notes and bookmarks in the replay viewer: `m` bookmarks the selected
+  entry and `e` writes a one-line note on it, shown in the panel and marked in
+  the entry list with `*` and `#`. They are kept per game, record digest and
+  entry in `study/<game id>.json` beside the saved game (study format 1); the
+  canonical record is never rewritten. Notes are bounded to 8 KiB of UTF-8 and
+  study files to 1 MiB, and stored text is drawn inert.
+- Saves are checked against the revision the viewer loaded: a save another
+  window has overtaken is refused with both versions on screen and the typed
+  note kept, and nothing is written until it is confirmed again. A changed
+  record, a newer or damaged study file and unfinished games refuse edits
+  visibly and leave the file as it was.
+
 ## [0.7.0] - 2026-09-12
 
 ### Added
