@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"math/bits"
 	"os"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -53,6 +55,8 @@ const (
 	gaRematch
 	gaYes
 	gaNo
+	gaSearchInfo
+	gaPlayNow
 )
 
 // gamePhase is the screen state a key applies in. A finished game and a game
@@ -79,8 +83,8 @@ type gameBinding struct {
 }
 
 // gameBindings are the keys the game adds to the board keymap. Keys used while
-// a board is active may not collide with ui.DefaultKeymap;
-// TestGameKeysDoNotShadowTheBoardKeymap holds that line.
+// a board is active may not collide with ui.DefaultKeymap in a context the game
+// key acts in; TestGameKeysDoNotShadowTheBoardKeymap holds that line.
 var gameBindings = []gameBinding{
 	{gaHint, []string{"?"}, phasePlay, "?", "hint: what to play and why"},
 	{gaSwap, []string{"s"}, phasePlay, "s", "take the swap option"},
@@ -88,6 +92,10 @@ var gameBindings = []gameBinding{
 	{gaResign, []string{"r"}, phasePlay, "r", "resign"},
 	{gaLiftPeg, []string{"p"}, phasePlay, "p", "lift one of your pegs"},
 	{gaCode, []string{"c"}, phasePlay | phaseFinished | phaseStopped, "c", "the exchange: your code and theirs"},
+	// The figures of the search behind the engine's last move. A finished game
+	// keeps the key, because the move that ended it is the one most worth
+	// asking about.
+	{gaSearchInfo, []string{"i"}, phasePlay | phaseFinished | phaseStopped, "i", "stats of the engine's last search"},
 	// Upper case, because the obvious mnemonic is taken by resign and the two
 	// would be one slip apart on a screen where resign is refused anyway. The
 	// board already uses the shifted letters for its own second family of
@@ -95,17 +103,45 @@ var gameBindings = []gameBinding{
 	{gaRematch, []string{"R"}, phaseFinished, "R", "rematch: another game, sides swapped"},
 	{gaYes, []string{"y"}, phaseConfirm, "y", "yes"},
 	{gaNo, []string{"n", "esc"}, phaseConfirm, "n", "no, carry on"},
+	// Escape is also no to a question, above, and leaves link mode on the
+	// board. gameKeyLookup gives the question its row and gameKeyContexts gives
+	// link mode the key. This row comes second so that a phase in which neither
+	// game meaning applies finds the question's row first and passes the key on
+	// to the board, as it did before escape meant play now.
+	{gaPlayNow, []string{"esc"}, phasePlay, "esc", "play now, from the search so far"},
 }
 
-func gameKeyLookup(key string) (gameBinding, bool) {
+// gameKeyLookup finds the binding a key has in a phase. Escape is the one key
+// with two game meanings, no to a question and play now while the engine
+// thinks, so the binding live in the phase wins. Otherwise the first binding
+// holding the key is returned, which is what lets a key pressed outside its
+// phase still be refused with its own reason.
+func gameKeyLookup(key string, phase gamePhase) (gameBinding, bool) {
+	var first gameBinding
+	found := false
 	for _, b := range gameBindings {
-		for _, k := range b.keys {
-			if k == key {
-				return b, true
-			}
+		if !slices.Contains(b.keys, key) {
+			continue
+		}
+		if b.phases&phase != 0 {
+			return b, true
+		}
+		if !found {
+			first, found = b, true
 		}
 	}
-	return gameBinding{}, false
+	return first, found
+}
+
+// gameKeyContexts are the board contexts a game key may act in. Every game key
+// works in both except play now, whose key also leaves link mode: a player
+// editing links who presses escape means to stop editing rather than to hurry
+// the engine, so in link mode the board keeps the key.
+func gameKeyContexts(a gameAction) ui.Context {
+	if a == gaPlayNow {
+		return ui.CtxBoard
+	}
+	return ui.CtxBoard | ui.CtxLink
 }
 
 // keyPhase names the mutually exclusive state whose actions are live. A result
@@ -141,6 +177,13 @@ func (s *gameScreen) actionAvailable(phase gamePhase, ga gameAction, board ui.Ac
 		if phases&phase == 0 {
 			return false
 		}
+		ctx := ui.CtxBoard
+		if s.linkMode {
+			ctx = ui.CtxLink
+		}
+		if gameKeyContexts(ga)&ctx == 0 {
+			return false
+		}
 		switch ga {
 		case gaHint:
 			return s.cfg.Hints && s.cfg.HintFor != nil
@@ -152,6 +195,12 @@ func (s *gameScreen) actionAvailable(phase gamePhase, ga gameAction, board ui.Ac
 			return s.corr != nil
 		case gaRematch:
 			return s.rematchOffered()
+		case gaSearchInfo:
+			// While a search runs, the last one's figures would read as this
+			// one's.
+			return !s.botThinking && s.lastSearch.Generation != 0
+		case gaPlayNow:
+			return s.botThinking && !s.search.early
 		default:
 			return true
 		}
@@ -173,15 +222,19 @@ func (s *gameScreen) actionAvailable(phase gamePhase, ga gameAction, board ui.Ac
 }
 
 // botMoveMsg is a move the opponent engine chose. gen names the search it
-// answers so a move from a search the screen has moved past is dropped.
+// answers so a move from a search the screen has moved past is dropped. final
+// is the engine's own account of that search, taken as it ended and before any
+// other search could replace it; a zero Generation means the engine gave none.
 type botMoveMsg struct {
-	gen  int
-	move game.Point
-	err  error
+	gen   int
+	move  game.Point
+	final bot.SearchProgress
+	err   error
 }
 
-// botTickMsg advances the thinking indicator.
-type botTickMsg struct{}
+// botTickMsg advances the thinking indicator. at is when the tick fired, which
+// is the clock the search's elapsed time is read against.
+type botTickMsg struct{ at time.Time }
 
 // netEventMsg is one thing the remote opponent or the connection did.
 type netEventMsg struct{ ev netplay.Event }
@@ -209,6 +262,10 @@ type gameScreen struct {
 	// divergence — things that stay true until the player leaves.
 	message string
 	notice  string
+	// figures are the finished search's figures as the search key last
+	// showed them, in every form the status line may use, widest first;
+	// fitMessage says when they stand.
+	figures []string
 	// stopped means no further play is possible on this screen: the game ended,
 	// the connection dropped, or the two ends disagree about the position.
 	stopped bool
@@ -249,6 +306,13 @@ type gameScreen struct {
 	botThinking bool
 	botCancel   context.CancelFunc
 	spinner     int
+	// search is what the screen knows of the engine's move search in flight.
+	// lastSearch is the engine's final account of the last search whose move
+	// was played, and lastSearchMove that move; a zero Generation means there
+	// is none, since the engine numbers its searches from one.
+	search         botSearch
+	lastSearch     bot.SearchProgress
+	lastSearchMove game.Point
 
 	session netplay.Session
 	// remoteSide is the side the networked opponent plays, NoPlayer in a local
@@ -488,6 +552,7 @@ func (s *gameScreen) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case botTickMsg:
 		if s.botThinking && !s.leaving {
 			s.spinner++
+			s.watchSearch(msg.at)
 			return s, s.spinnerTick()
 		}
 	case hintMsg:
@@ -546,7 +611,9 @@ func (s *gameScreen) handleKey(m tea.KeyPressMsg) tea.Cmd {
 		return s.handleConfirm(key)
 	}
 	s.message = ""
-	if b, ok := gameKeyLookup(key); ok &&
+	// A game key its context keeps from it goes on to the board keymap, which
+	// is how escape still leaves link mode.
+	if b, ok := gameKeyLookup(key, phase); ok && gameKeyContexts(b.action)&ctx != 0 &&
 		(b.phases&phase != 0 || b.action == gaRematch ||
 			((phase == phaseFinished || phase == phaseStopped) && b.phases&phasePlay != 0)) {
 		if !s.actionAvailable(phase, b.action, ui.ActNone) {
@@ -555,7 +622,8 @@ func (s *gameScreen) handleKey(m tea.KeyPressMsg) tea.Cmd {
 			// arrange another game and a non-correspondence player why there
 			// is no exchange. Finished/stopped mutation and advice actions
 			// stop here, before they reach a mutator or engine. Confirmation
-			// keys do not claim a board key outside confirmation.
+			// keys do not claim a board key outside confirmation. Play now's
+			// refusal is silence, for the reason playNow gives.
 			if phase == phasePlay || b.action == gaRematch || b.action == gaCode {
 				return s.handleGameAction(b.action)
 			}
@@ -641,7 +709,7 @@ func (s *gameScreen) confirmKey() tea.Cmd {
 }
 
 func (s *gameScreen) handleConfirm(key string) tea.Cmd {
-	b, ok := gameKeyLookup(key)
+	b, ok := gameKeyLookup(key, phaseConfirm)
 	if !ok || !s.actionAvailable(phaseConfirm, b.action, ui.ActNone) {
 		return nil
 	}
@@ -675,6 +743,10 @@ func (s *gameScreen) handleGameAction(a gameAction) tea.Cmd {
 		} else {
 			s.corr.open = true
 		}
+	case gaSearchInfo:
+		s.showLastSearch()
+	case gaPlayNow:
+		s.playNow()
 	case gaResign:
 		if side, ok := s.actingSide(); !ok {
 			s.message = "there is nobody here to resign"
@@ -1089,7 +1161,9 @@ func (s *gameScreen) maybeBotMove() tea.Cmd {
 	if s.stopped || s.leaving || s.botThinking || s.g.Result().Over() {
 		return nil
 	}
-	engine := s.mover().Bot
+	// Every engine seat was put behind a serialBot when the screen was built,
+	// so a seat that holds none has no engine to ask.
+	engine, _ := s.mover().Bot.(*serialBot)
 	if engine == nil {
 		return nil
 	}
@@ -1100,22 +1174,34 @@ func (s *gameScreen) maybeBotMove() tea.Cmd {
 	s.botGen++
 	gen := s.botGen
 	s.spinner = 0
+	// The start comes from the wall clock rather than deps.Clock, because it
+	// stands in for the engine's own start, which the engine takes from the
+	// wall clock, and the tick times it is subtracted from are the wall
+	// clock's too.
+	began := time.Now()
+	req := new(searchRequest)
+	s.search = botSearch{engine: engine, req: req, began: began, now: began}
+	s.lastSearch, s.lastSearchMove = bot.SearchProgress{}, game.Point{}
 	pos := s.g.Clone()
 	return tea.Batch(
 		func() tea.Msg {
-			move, err := engine.Move(ctx, pos)
-			return botMoveMsg{gen: gen, move: move, err: err}
+			move, final, err := engine.move(ctx, pos, req)
+			return botMoveMsg{gen: gen, move: move, final: final, err: err}
 		},
 		s.spinnerTick(),
 	)
 }
 
 func (s *gameScreen) spinnerTick() tea.Cmd {
-	return tea.Tick(gsSpinnerInterval, func(time.Time) tea.Msg { return botTickMsg{} })
+	return tea.Tick(gsSpinnerInterval, func(at time.Time) tea.Msg { return botTickMsg{at: at} })
 }
 
 func (s *gameScreen) applyBotMove(msg botMoveMsg) tea.Cmd {
-	if msg.gen != s.botGen || s.leaving {
+	// A move is taken only from the search the screen is waiting on. Leaving
+	// drops it, and so does having no search in flight, which is how a rematch
+	// that has not started searching ignores the answer to a search the
+	// finished game left running.
+	if msg.gen != s.botGen || !s.botThinking || s.leaving {
 		return nil
 	}
 	s.botThinking = false
@@ -1133,7 +1219,18 @@ func (s *gameScreen) applyBotMove(msg botMoveMsg) tea.Cmd {
 		return nil
 	}
 	s.hint.clear()
-	s.message = fmt.Sprintf("%s played %s", s.seatName(s.g.Turn().Opponent()), msg.move)
+	// The engine's account of the search came with the move, read under the
+	// serialiser's lock as the search ended, so it is this search's even when
+	// another search has taken the engine since. An engine that reported no
+	// search for the request sent none.
+	if msg.final.Generation != 0 {
+		s.lastSearch, s.lastSearchMove = msg.final, msg.move
+	}
+	who := s.seatName(s.g.Turn().Opponent())
+	s.message = fmt.Sprintf("%s played %s", who, msg.move)
+	if s.search.early {
+		s.message = s.playedEarlyText(who, msg.move)
+	}
 	if s.g.Result().Over() {
 		return s.finish()
 	}
@@ -1145,6 +1242,270 @@ func (s *gameScreen) cancelBot() {
 		s.botCancel()
 		s.botCancel = nil
 	}
+}
+
+// botSearch is what the screen knows of one engine move search while it runs.
+type botSearch struct {
+	engine *serialBot
+	// req is the request's claim on the engine's progress: the generation its
+	// search runs under, once the search has the engine.
+	req *searchRequest
+	// began is when the screen asked, which stands in for the engine's own
+	// start until a snapshot of this search has been read, and started is
+	// that start once one has; now is the time of the latest tick.
+	began, started, now time.Time
+	// done is the latest snapshot of this search taken while it was running
+	// with an iteration finished, and zero before one. The snapshot the search
+	// publishes as it ends is left out: its counters are the whole search's,
+	// the iteration it did not finish included, and belong to the finished
+	// figures that come with the move rather than to a line about completed
+	// iterations.
+	done bot.SearchProgress
+	// early records that the player asked for the move now.
+	early bool
+}
+
+// searchRequest ties one move request to the search that answers it.
+//
+// The engine numbers its move searches, but the number a request's search
+// runs under is not known when the screen asks: requests queue at the
+// serialiser, and they need not reach the engine in the order they were made.
+// A finished game's search that had not yet reached the engine can get there
+// after the rematch's, and then the engine's latest snapshot is that one's. So
+// serialBot.move stores the number here with the engine held, just before the
+// search starts, and the screen, reading on its own goroutine, takes only
+// snapshots carrying exactly that number. Zero means the search is still
+// waiting for the engine.
+type searchRequest struct {
+	gen atomic.Uint64
+}
+
+// watchSearch reads the engine's progress on a tick. The read goes through
+// serialBot.Progress, which does not wait for the search holding the engine,
+// so the interface stays live however long the search runs. A snapshot of any
+// other search, one that ran before this one or one a finished game had
+// queued behind it, is ignored rather than shown as this one's.
+func (s *gameScreen) watchSearch(at time.Time) {
+	if !at.IsZero() {
+		s.search.now = at
+	}
+	want := s.search.req.gen.Load()
+	if want == 0 {
+		return
+	}
+	p := s.search.engine.Progress()
+	if p.Generation != want {
+		return
+	}
+	s.search.started = p.Started
+	if p.Running && p.Completed {
+		s.search.done = p
+	}
+}
+
+// searchElapsed is how long the search has been at it. It is derived from when
+// the search began rather than read from the engine, because it is the one
+// figure that moves between iterations.
+func (s *gameScreen) searchElapsed() string {
+	start := s.search.began
+	if !s.search.started.IsZero() {
+		start = s.search.started
+	}
+	return gsSeconds(s.search.now.Sub(start))
+}
+
+// searchDone is the last iteration the search has completed, and false before
+// one has: there is no finished work to show, and a depth of nought is not
+// one. A win taken without searching completes no iteration either.
+func (s *gameScreen) searchDone() (bot.SearchProgress, bool) {
+	p := s.search.done
+	if p.Completed && p.Depth > 0 {
+		return p, true
+	}
+	return bot.SearchProgress{}, false
+}
+
+// searchProgressText is the live account of the engine's search: how long it
+// has been at it and what it has finished. The depth and node count are those
+// of the last iteration the engine completed, so the line never shows work in
+// progress as work done, and before the first iteration completes it shows
+// the time alone.
+func (s *gameScreen) searchProgressText() string {
+	if !s.botThinking {
+		return ""
+	}
+	text := s.searchElapsed()
+	if p, ok := s.searchDone(); ok {
+		text += fmt.Sprintf(" · depth %d done · %d nodes", p.Depth, p.Stats.Nodes)
+	}
+	return text
+}
+
+// searchProgressShort is the live account cut down to room cells, for the
+// status line of a layout with no panel, which it shares with the play-now key.
+// It gives the time and the completed depth while both fit, and then the depth
+// alone: a player can count the seconds for themselves, but not the depth. The
+// node count is left out, as the figure a line this short can best spare.
+func (s *gameScreen) searchProgressShort(room int) string {
+	if !s.botThinking {
+		return ""
+	}
+	elapsed := s.searchElapsed()
+	p, ok := s.searchDone()
+	if !ok {
+		return elapsed
+	}
+	depth := fmt.Sprintf("d%d", p.Depth)
+	if both := elapsed + " " + depth; ansi.StringWidth(both) <= room {
+		return both
+	}
+	return depth
+}
+
+// playNow asks the engine for its move without waiting for the rest of the
+// search. The search's context is cancelled and nothing else: its generation
+// is still the one the screen is waiting on, so the move it returns, the
+// tier's ordinary choice from the work the search had finished, is played
+// exactly as a move that ran its course would be. Leaving and a rematch are
+// still what drop a search's move.
+//
+// Escape did nothing on this board before it meant play now, and it goes on
+// doing nothing when the engine is not thinking: it is the key players press
+// to back out of things, and a refusal every time would be noise.
+func (s *gameScreen) playNow() {
+	if !s.botThinking || s.search.early {
+		return
+	}
+	s.search.early = true
+	s.cancelBot()
+	s.message = fmt.Sprintf("asked %s to play now", s.seatName(s.g.Turn()))
+}
+
+// playedEarlyText says a move came early, and from how much search. The depth
+// is the engine's own last completed iteration; with none completed the move
+// came from the ordering heuristic alone, and the line says so rather than
+// calling that a depth of nought. A search that had already ended on its own
+// terms when the request reached it, out of time or on a win it needed no
+// search for, played the move it would have played anyway and is reported as
+// an ordinary move. "canceled" is bot.SearchStats's reason for a search its
+// context stopped.
+func (s *gameScreen) playedEarlyText(who string, move game.Point) string {
+	final := s.lastSearch
+	switch {
+	case final.Generation == 0:
+		return fmt.Sprintf("%s played %s early, as asked", who, move)
+	case final.Stats.StopReason != "canceled":
+		return fmt.Sprintf("%s played %s", who, move)
+	case final.Stats.Depth > 0:
+		return fmt.Sprintf("%s played %s early, from its completed depth %d", who, move, final.Stats.Depth)
+	}
+	return fmt.Sprintf("%s played %s early, before any depth was complete", who, move)
+}
+
+// showLastSearch answers the search key with the figures of the search behind
+// the engine's last move, as the engine reported them when Move returned. The
+// message is the whole sentence; the status line shows the widest of its forms
+// that fits, which fitMessage picks.
+func (s *gameScreen) showLastSearch() {
+	switch {
+	case s.cfg.Seats[game.Vertical].Bot == nil && s.cfg.Seats[game.Horizontal].Bot == nil:
+		s.message = "there is no engine in this game"
+	case s.botThinking:
+		s.message = "the engine is still searching: its figures come with its move"
+	case s.lastSearch.Generation == 0:
+		s.message = "no engine move in this game has search figures to show yet"
+	default:
+		s.figures = s.lastSearchForms()
+		s.message = s.figures[0]
+	}
+}
+
+// lastSearchForms is the finished search in one line, every figure from the
+// engine's final account: the deepest iteration it completed, never a depth of
+// nought presented as one, then its work and its time, and why it stopped. The
+// nodes and the time are the whole search's, the iteration it was part way
+// through when it stopped included, which is why they are said to be in all:
+// the thinking line's nodes were the completed iterations' alone, and a larger
+// figure here beside the same depth is the unfinished one's work, not a
+// discrepancy.
+//
+// That sentence is the first of several forms, widest first, because the
+// status line is the only place the figures are shown, and cut to the width
+// the sentence gave them up: at the minimum width its opening words alone
+// filled the line, and at forty columns the nodes and the time were cut off.
+// Each shorter form leaves out whole items rather than part of one: the opening
+// words, which say nothing the key did not, then the reason, then the long
+// wording of the depth, then the time and then the nodes, though the time is
+// kept on its own where it fits and the nodes do not. The move and its
+// completed depth are the last to go. Every form that gives nodes or time
+// still says they are in all, so that none of them passes the whole search's
+// work off as the completed iteration's.
+func (s *gameScreen) lastSearchForms() []string {
+	st := s.lastSearch.Stats
+	move := s.lastSearchMove.String()
+	depth, short := "no depth completed", "no depth"
+	if st.Depth > 0 {
+		depth, short = fmt.Sprintf("depth %d completed", st.Depth), fmt.Sprintf("d%d", st.Depth)
+	}
+	nodes, secs := fmt.Sprintf("%d nodes", st.Nodes), gsSeconds(st.Elapsed)
+	figures := fmt.Sprintf("%s: %s · %s and %s in all", move, depth, nodes, secs)
+	why := ""
+	if text := searchStopText(st.StopReason); text != "" {
+		why = " · " + text
+	}
+	return []string{
+		"the search behind " + figures + why,
+		figures + why,
+		figures,
+		fmt.Sprintf("%s: %s · %s, %s in all", move, short, nodes, secs),
+		fmt.Sprintf("%s: %s · %s in all", move, short, nodes),
+		fmt.Sprintf("%s: %s · %s in all", move, short, secs),
+		move + ": " + short,
+	}
+}
+
+// fitMessage is the message as a status line width cells wide can show it.
+// The finished search's figures are the one message with shorter forms of its
+// own, and the forms stand only while the message is still the sentence they
+// were made with: whatever writes the message next replaces the sentence, and
+// so retires the forms without having to know they exist.
+func (s *gameScreen) fitMessage(width int) string {
+	if len(s.figures) == 0 || s.message != s.figures[0] {
+		return s.message
+	}
+	for _, form := range s.figures {
+		if ansi.StringWidth(form) <= width {
+			return form
+		}
+	}
+	return s.figures[len(s.figures)-1]
+}
+
+// searchStopText puts one of bot.SearchStats's stop reasons as a player would.
+// A cancelled search is named as play now because that is the only
+// cancellation whose move this screen plays: leaving and a finished game drop
+// the move of the search they cancel.
+func searchStopText(reason string) string {
+	switch reason {
+	case "time":
+		return "out of time"
+	case "depth":
+		return "every depth searched"
+	case "decided":
+		// The search stops deepening once it finds a win among the moves its
+		// width caps let it look at. A defence the caps threw away was never
+		// searched, so this is a claim about the tree and not a proof.
+		return "found a winning line among the moves it searched, not a proof"
+	case "nodes":
+		return "node ceiling reached"
+	case "immediate":
+		return "a winning hole, no search needed"
+	case "canceled":
+		return "stopped by play now"
+	case "no-move":
+		return "nowhere to play"
+	}
+	return reason
 }
 
 // --- hints ------------------------------------------------------------------
@@ -1609,6 +1970,12 @@ func (s *gameScreen) rematch() tea.Cmd {
 	if err := s.depart(); err != nil {
 		return Fail(err)
 	}
+	// Generations carry on from this game's. A search this game left running
+	// is cancelled but not waited for, and its answer goes to whichever screen
+	// is showing when it arrives, which by then is the rematch. Counting from
+	// one again, the rematch's first search would share that answer's number
+	// and play the old game's move on the new board.
+	next.botGen = s.botGen
 	next.message = "rematch: the sides are swapped"
 	return Replace(next)
 }
@@ -1791,6 +2158,9 @@ func (s *gameScreen) panelLines(arr ui.Arrangement) []string {
 		addWrapped(s.style(s.styles.Message, s.notice))
 	} else {
 		add(s.headlineText())
+		if progress := s.searchProgressText(); progress != "" {
+			addWrapped(s.style(s.styles.PanelText, progress))
+		}
 	}
 	if s.swapOffered() {
 		blank()
@@ -1954,8 +2324,12 @@ func (s *gameScreen) headlineText() string {
 	case s.handover:
 		return s.style(s.styles.Message, s.handoverPrompt())
 	case s.botThinking:
-		return s.style(s.styles.PanelText, fmt.Sprintf("%s is thinking %s",
-			s.seatName(s.g.Turn()), gsSpinnerFrames[s.spinner%len(gsSpinnerFrames)]))
+		doing := "is thinking"
+		if s.search.early {
+			doing = "is playing now"
+		}
+		return s.style(s.styles.PanelText, fmt.Sprintf("%s %s %s",
+			s.seatName(s.g.Turn()), doing, gsSpinnerFrames[s.spinner%len(gsSpinnerFrames)]))
 	case !s.mover().Human():
 		return s.style(s.styles.PanelText, s.waitingText())
 	}
@@ -2208,10 +2582,12 @@ func (s *gameScreen) openingPeg() string {
 // last keypress when there is one, and otherwise the keys that matter now; when
 // the terminal is too narrow for a panel it also carries whose turn it is,
 // because there is nowhere else for that to go, and advice once it has been
-// asked for, which leads the line ahead of the turn.
+// asked for, which leads the line ahead of the turn. While the engine searches,
+// the key that cuts the search short and how far the search has got lead even
+// that.
 func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 	if s.message != "" {
-		return s.style(s.styles.Status, gsTruncate(s.message, arr.Width))
+		return s.style(s.styles.Status, gsTruncate(s.fitMessage(arr.Width), arr.Width))
 	}
 	phase := s.keyPhase()
 	if phase == phasePlay && s.hint.shown && s.notice == "" {
@@ -2221,9 +2597,30 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 		return s.style(s.styles.Status, s.hint.statusText(arr.Width))
 	}
 	var parts []string
+	playNow := ""
+	if s.actionAvailable(phase, gaPlayNow, ui.ActNone) {
+		playNow = s.gameKeyLabel(gaPlayNow) + " play now"
+	}
+	// lead counts the parts at the front of the line that have to reach the
+	// screen whole; see the end of this function.
+	lead := 0
 	if arr.Panel == ui.PanelNone {
 		if s.notice != "" {
 			return s.style(s.styles.Status, gsTruncate(s.notice, arr.Width))
+		}
+		if s.botThinking {
+			// With no panel this line is the only place the search and the
+			// key that cuts it short can be seen. The headline used to come
+			// first, and at the minimum width it filled the line and cut both
+			// off. The key leads now, then the search, cut down to the room
+			// the key leaves, and the headline has whatever width is left.
+			room := arr.Width
+			if playNow != "" {
+				parts = append(parts, playNow)
+				room -= ansi.StringWidth(playNow + " · ")
+			}
+			parts = append(parts, s.searchProgressShort(room))
+			lead = len(parts)
 		}
 		parts = append(parts, gsPlain(s.headlineText()))
 		if h := s.hint.statusText(arr.Width); h != "" {
@@ -2258,6 +2655,12 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 	case s.linkMode:
 		parts = append(parts, s.keymap.HintLine(ui.CtxLink, ui.ActToggleLink, ui.ActExitMode, ui.ActConfirm))
 	default:
+		if playNow != "" && arr.Panel != ui.PanelNone {
+			// The one key that does anything about a search in progress leads
+			// the line, so a narrow terminal cuts something else first. A line
+			// with no panel has already put it there, ahead of the search.
+			parts = append(parts, playNow)
+		}
 		parts = append(parts, s.keymap.HintLine(ui.CtxBoard,
 			ui.ActPlacePeg, ui.ActConfirm, ui.ActLinkMode, ui.ActAbortTurn), s.quitHint())
 		if s.actionAvailable(phase, gaCode, ui.ActNone) {
@@ -2274,7 +2677,20 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 		}
 		parts = append(parts, s.gameKeyLabel(gaDraw)+" draw", s.gameKeyLabel(gaResign)+" resign")
 	}
-	return s.style(s.styles.Status, gsTruncate(strings.Join(parts, " · "), arr.Width))
+	line := strings.Join(parts, " · ")
+	if lead > 0 && ansi.StringWidth(line) > arr.Width {
+		// A cut line ends in a mark, and ui.Compose shortens such a line to
+		// the last item it can be sure is whole: an item with the mark
+		// straight after it may have been cut through, so it goes. Where the
+		// width leaves no cell past the lead for the separator after it, the
+		// mark lands straight after the search's figures, and they would go.
+		// The lead is shown alone then, unmarked: the figures are worth more
+		// than a mark saying that the headline and the other keys did not fit.
+		if head := strings.Join(parts[:lead], " · "); ansi.StringWidth(head)+2 > arr.Width {
+			line = head
+		}
+	}
+	return s.style(s.styles.Status, gsTruncate(line, arr.Width))
 }
 
 // quitHint is the terse form of the quit key for the status line. A game opened
@@ -2462,6 +2878,13 @@ func gsPad(text string, width int) string {
 	return text
 }
 
+// gsSeconds writes a search time to a tenth of a second, as fine as a line
+// redrawn on every spinner frame can usefully show. A time before its own
+// start, a tick read against a start stamped after it, is shown as none.
+func gsSeconds(d time.Duration) string {
+	return fmt.Sprintf("%.1fs", max(d, 0).Seconds())
+}
+
 // gsTruncate and gsWrap are the panel's names for the package's one truncator
 // and wrapper. The truncator marks what it cut: a hard clip reads as though the
 // product mangled the line, where a marked one reads as a shortened line.
@@ -2490,7 +2913,7 @@ func (s *gameScreen) style(st lipgloss.Style, text string) string {
 // state of its search. The screen runs searches in commands, on their own
 // goroutines, and the same engine may be asked for a move and for a hint, so the
 // calls have to take turns. Tier is a constant of the engine and is read while
-// drawing, so it does not wait.
+// drawing, so it does not wait, and neither does Progress.
 type serialBot struct {
 	lock   *sync.Mutex
 	engine bot.Bot
@@ -2502,6 +2925,28 @@ func (s *serialBot) Move(ctx context.Context, g *game.Game) (game.Point, error) 
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	return s.engine.Move(ctx, g)
+}
+
+// move is Move for the screen's own move requests, which need to know which of
+// the engine's searches answered them. Both ends of that are settled while the
+// lock is held, because only then is the engine this request's alone. The
+// search's generation is read just before the search starts, so the search is
+// exactly the next one, and stored in req for the screen to read while the
+// search runs. The final snapshot is read as soon as the search returns,
+// before a request queued behind this one can start another. An engine that
+// reported no search under that generation, because it keeps no progress or
+// refused the request before searching, gives the zero account.
+func (s *serialBot) move(ctx context.Context, g *game.Game, req *searchRequest) (game.Point, bot.SearchProgress, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	gen := bot.ProgressOf(s.engine).Generation + 1
+	req.gen.Store(gen)
+	move, err := s.engine.Move(ctx, g)
+	final := bot.ProgressOf(s.engine)
+	if final.Generation != gen || final.Running {
+		final = bot.SearchProgress{}
+	}
+	return move, final, err
 }
 
 func (s *serialBot) Hint(ctx context.Context, g *game.Game) (bot.Hint, error) {
@@ -2521,3 +2966,10 @@ func (s *serialBot) Stats() bot.SearchStats {
 	defer s.lock.Unlock()
 	return bot.StatsOf(s.engine)
 }
+
+// Progress passes on the engine's report of its move search without taking the
+// lock. It is the one accessor that must not: it is read on every spinner tick
+// while a search holds the lock, from Update, which a wait would freeze for the
+// whole search. bot.ProgressOf promises an answer that does not wait on the
+// search, so there is nothing here to serialise.
+func (s *serialBot) Progress() bot.SearchProgress { return bot.ProgressOf(s.engine) }

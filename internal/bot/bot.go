@@ -13,7 +13,9 @@
 //
 // Limits and NewWithLimits replace a tier's guards with the caller's own, which
 // is how a measurement asks for work rather than for wall-clock time, and
-// StatsOf reports what the last search actually spent.
+// StatsOf reports what the last search actually spent. ProgressOf reports how
+// far a search has got while it is still running, and can be read from another
+// goroutine without waiting for it.
 //
 // Analyze reads one position outside a game and outside the Bot interface: one
 // bounded search, the candidates it kept with what it established about each,
@@ -29,6 +31,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/BAKocska/twixtui/internal/game"
@@ -303,6 +306,10 @@ type engine struct {
 	p    params
 	play *searcher
 	hint *searcher
+	// progress is the latest snapshot of a Move search, published by the
+	// search as it goes and read by Progress without a lock. It is the one
+	// field of the engine another goroutine may read while Move runs.
+	progress atomic.Pointer[SearchProgress]
 }
 
 // New returns a bot of the given tier. A tier that does not exist gives the
@@ -479,9 +486,17 @@ func (e *engine) Move(ctx context.Context, g *game.Game) (game.Point, error) {
 		return game.Point{}, ErrNoMove
 	}
 
+	// Progress is published from here on, once the request is one the search
+	// will run, and the deferred finish reports the search as ended on every
+	// way out of it, errors and fallbacks included.
+	run := e.startProgress()
+	defer run.finish()
 	res, err := e.play.root(ctx, g)
 	if err != nil {
 		return game.Point{}, err
+	}
+	if res.immediate {
+		run.immediate(res.best)
 	}
 	move := res.best
 	if e.p.temperature > 0 && !res.immediate {
