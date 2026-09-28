@@ -22,6 +22,7 @@ import (
 	"github.com/BAKocska/twixtui/internal/gamestore"
 	"github.com/BAKocska/twixtui/internal/leaderboard"
 	"github.com/BAKocska/twixtui/internal/netplay"
+	"github.com/BAKocska/twixtui/internal/study"
 	"github.com/BAKocska/twixtui/internal/ui"
 )
 
@@ -738,6 +739,7 @@ func (o *options) deps() (app.Deps, string, error) {
 		Profiles:  store,
 		Board:     board,
 		Games:     games,
+		Study:     study.Open(dir),
 		Theme:     th,
 		Styles:    &styles,
 		Keymap:    ui.DefaultKeymap(),

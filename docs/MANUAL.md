@@ -346,6 +346,13 @@ Correspondence keeps `c` available to retrieve the final code, including after
 reopening the saved game. `ctrl+c` still ends the whole program, even when
 `enter` or `q` would return to the menu.
 
+The replay viewer reuses the movement keys above for stepping through a record
+and adds keys of its own, listed under [Reviewing saved games](#reviewing-saved-games):
+`:` jumps to an entry, `m` bookmarks the selected entry, `e` writes a note on
+it and `?` analyses it (the `?` row above). While a note is being written every
+printable key is text, `?` included, and the key bound to `enter` above is the
+one that saves it.
+
 ## Playing a bot
 
 ```
@@ -861,8 +868,10 @@ shows both the entry counter and the number of moves played.
 | `k` / `up`, `j` / `down` | Back or forward five entries. |
 | `g` / `G` | Initial position / final entry. |
 | `:` | Type an entry number; `enter` jumps and `esc` cancels the input. |
+| `m` | Bookmark the selected entry, or take its bookmark off. Saved at once. |
+| `e` | Write or edit the selected entry's note; `enter` saves and `esc` cancels without saving. |
 | `?` | Analyse the entry on screen; while that analysis runs, cancel it; once it is shown, put it away. |
-| `q` / `esc` | Leave the viewer when not editing the entry number. |
+| `q` / `esc` | Leave the viewer when not editing the entry number or a note. |
 | `ctrl+c` | End the program. |
 
 Numbers outside `0..last entry`, non-digits and oversized input are refused,
@@ -879,8 +888,8 @@ remains the record's result while stepping through earlier positions.
 Replay validates the whole record before opening and retains one mutable board,
 not a board snapshot per entry. Small backward steps use undo; longer backward
 seeks rebuild the requested prefix to avoid repeatedly scanning draw-offer
-history. Reviewing never changes the stored record or ratings. Notes and
-variations are not part of this viewer.
+history. Reviewing never changes the stored record or ratings. Variations
+are not part of this viewer.
 
 `?` asks the engine about the position at the selected entry, in the
 background: the keys keep working, and the panel shows a running indicator and,
@@ -890,14 +899,17 @@ two-second guard (see [Position analysis](#position-analysis)), and the panel
 reports it in the same terms, most important first, so a short panel keeps the
 badge and the choice and drops the end of the block. The badge and the choice,
 or the running indicator, are given rows before the record's own details, so a
-panel with only a few rows to spare still shows them. The bottom line says
-where the analysis stands as well — `analysing` and the time so far, the chosen
-hole with its `placement-only` badge and `not proven`, or that it was canceled,
-failed or has no move to advise — and on a terminal too small for a panel it is
-the only place the analysis appears. A bottom line too narrow for all of the
-choice gives up `not proven` first and keeps the hole and its badge whole, even
-for a four-character hole such as `AA10` at twenty columns. The block reads, in
-order:
+panel with only a few rows to spare still shows them; only the notes come
+before them — an open note input, a refusal, or the first lines of the selected
+entry's bookmark and note (see [Notes and bookmarks](#notes-and-bookmarks)). The
+bottom line says where the analysis stands as well — `analysing` and the time
+so far, the chosen hole with its `placement-only` badge and `not proven`, or
+that it was canceled, failed or has no move to advise — after any refusal from
+the notes and before the entry counter and the keys, and on a terminal too
+small for a panel it is the only place the analysis appears. A bottom line too
+narrow for all of the choice gives up `not proven` first and keeps the hole and
+its badge whole, even for a four-character hole such as `AA10` at twenty
+columns. The block reads, in order:
 
 - the `placement-only` policy badge, and the recommended hole as **the engine's
   choice under a bounded search, not a proven best move**;
@@ -921,9 +933,49 @@ recommendation: the panel says the game is over at that entry.
 Replay analysis is an explicit review action. It works on finished and imported
 games alike, whether or not hints were offered when the game was played and
 whatever the machine's hint setting is, analyses a copy of the position, and
-writes nothing to disk.
+writes nothing to disk: an analysis is not kept in the notes.
 It is not run in the background while stepping; results are not kept between
 seeks.
+
+#### Notes and bookmarks
+
+A finished game can carry a note and a bookmark on any entry, including `0`.
+They are kept in `study/<game id>.json` in the configuration directory, beside
+the saved game rather than in it: the canonical record is never rewritten, and
+an exported record carries no notes. An imported game can have notes of its own
+on this machine while its record stays exactly as it was imported.
+
+The panel shows the selected entry's bookmark and note. The entry list gives
+marked entries a column of their own once any exist: `*` for a bookmark and `#`
+for a note, as characters rather than colours. A note is one line of at most
+8 KiB of UTF-8; a longer paste is refused whole rather than cut, and line
+breaks in a paste become spaces. While the note input is open every printable
+key is text, so `q`, `h`, `:` or `?` are typed rather than acted on. Text read
+from the file is drawn inert: control characters and escape sequences are shown
+as plain text or dropped, never obeyed, and a note written with line breaks by
+another program keeps them unless you edit them away.
+
+Notes are attached to the record's digest as well as to the game ID, and the
+file is limited to 1 MiB. If the record has changed since the notes were
+written, or the file was written by a newer twixtui or is damaged, the viewer
+says so and the notes are read-only; the file is left exactly as it was, never
+moved onto the new record or rewritten. Notes can be saved on finished games
+only, so an unfinished imported game can be watched but `m` and `e` explain why
+they do nothing. In a terminal with no room for the panel, the status line
+gives the reason for a refused `m`, `e` or save in a few words.
+
+Every save is checked against the revision the viewer last read, and a
+successful save advances it. If another window saved first, the save is refused
+instead of overwriting it: the input stays open with your text, the stored
+note is shown beneath it, and saving again replaces it while `esc` keeps the
+stored one. Saving again is taken only while the whole stored note is on
+screen. In a terminal too small to show it — with no panel, or a panel too
+short or narrow for all of it — the save is refused again and nothing is
+written until the terminal is enlarged; `esc` still keeps the stored note. A
+bookmark refused the same way shows what is stored, and pressing `m` again
+decides. A file another program has left at the highest revision there is
+still shows its notes but can take no further save: saving is refused as for a
+damaged file, and the file is left as it was.
 
 ## Position analysis
 
