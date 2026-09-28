@@ -91,12 +91,12 @@ twixtui help                                          # every command, with what
 
 | | |
 | --- | --- |
-| [Play a bot](docs/MANUAL.md#playing-a-bot) | Four effort tiers: `beginner`, `intermediate`, a clock-bounded `pro`, and `max`, the largest effort on offer. Hints use `max`'s placement-only search under a two-second guard: advice, not a proof of best play. |
+| [Play a bot](docs/MANUAL.md#playing-a-bot) | Four effort tiers: `beginner`, `intermediate`, a clock-bounded `pro`, and `max`, the largest effort on offer. Hints use `max`'s placement-only search under a two-second guard: advice, not a proof of best play. While the bot thinks, its completed depth is shown and `esc` makes it play now. |
 | [Hotseat](docs/MANUAL.md#hotseat) | Two players, one terminal, alternating turns. |
 | [Remote play](docs/MANUAL.md#remote-play) | Direct, through a relay you or your opponent runs, or by correspondence with no live connection at all. |
 | [Learn it](docs/MANUAL.md#the-tutorial) | Seven lessons taught by playing them, and a five-step introduction on [first run](docs/MANUAL.md#the-first-run). |
 | [Profiles & standings](docs/MANUAL.md#profiles) | Local names with no passwords, selectable [standings and player histories](docs/MANUAL.md#the-leaderboard), and verified links back to saved-game replays. |
-| [Review a game](docs/MANUAL.md#reviewing-saved-games) | A numbered entry list, `:` to jump to an entry, and the winning chain highlighted at the final position. Read-only, including imported records. |
+| [Review a game](docs/MANUAL.md#reviewing-saved-games) | A numbered entry list, `:` to jump to an entry, the winning chain at the final position, `?` for a bounded engine reading of the entry on screen, and bookmarks and one-line notes (`m`, `e`) kept beside the game. Records, including imported ones, are never changed. |
 | [Analyse a position](docs/MANUAL.md#position-analysis) | Read-only analysis of a saved game, record or move list, with time/node budgets, explicit score bounds, and text or JSON output. |
 | [Honest rulesets](docs/MANUAL.md#rulesets) | `std`, `pp` and `classic` make each historical disagreement an explicit setting; boards from 6×6 to 48×48. |
 | [Themes & cover art](docs/MANUAL.md#themes) | Four colour schemes, and the [1962 box lid](docs/MANUAL.md#the-cover) drawn beside the menu in character cells. |

@@ -102,7 +102,9 @@
                 it marks the move and explains its placement-only search,
                 keeping offered links and searching neither link edits nor
                 swaps. Route estimates are heuristic advice, not a proof of
-                a draw, an impossible win or the best legal move.
+                a draw, an impossible win or the best legal move. While the bot
+                thinks you see the depth it has completed, and
+                <code>esc</code> makes it play now.
               </p>
             </li>
             <li>
@@ -131,15 +133,17 @@
                 Follow the numbered entry list, press <code>:</code> to jump
                 directly to an entry, and see the winning chain at the final
                 position. Draw offers have their own entries; entry zero is
-                the opening board. Imported games are reviewable without
-                changing their records or ratings.
+                the opening board. Bookmark an entry with <code>m</code> and
+                write a one-line note on it with <code>e</code>; notes are kept
+                beside the game, never in its record. Imported games are
+                reviewable without changing their records or ratings.
               </p>
               <p>
-                For an engine reading, use <code>twixtui analyze</code> on a
-                saved game, record or move list. Time or node budgets keep the
-                search bounded; text and JSON output distinguish measured scores,
-                upper bounds and unscored fallbacks. This is placement-only
-                advice, not a proof of the best legal move.
+                For an engine reading, press <code>?</code> on the entry on
+                screen, or use <code>twixtui analyze</code> on a saved game,
+                record or move list. Both are bounded searches that distinguish
+                measured scores, upper bounds and unscored fallbacks; this is
+                placement-only advice, not a proof of the best legal move.
               </p>
             </li>
             <li>

@@ -23,6 +23,17 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   move: completed depth, nodes and time in all, and stop reason. A status line
   too narrow for all of them gives up whole items, the stop reason before the
   time and the nodes, and always keeps the move and its completed depth.
+- `?` in the saved-game replay analyses the entry on screen in the background:
+  the placement-only badge, the recommended hole as the engine's choice under a
+  bounded search (never a proven best move), its explanation, up to four
+  candidates with exact/upper/lower/unscored scores, and the completed work with
+  its stop reason. Time and cancellation stops are marked not reproducible, and
+  a finished position gets no recommendation. Any seek or leaving cancels the
+  search and discards its result, `?` again cancels or dismisses, the analysed
+  position is a copy, and nothing is written. It works regardless of hint
+  settings, for finished and imported games alike. The bottom line carries the
+  analysis at every size; a narrow one gives up `not proven` before the badge,
+  keeping the hole and its placement-only badge whole.
 - Study notes and bookmarks in the replay viewer: `m` bookmarks the selected
   entry and `e` writes a one-line note on it, shown in the panel and marked in
   the entry list with `*` and `#`. They are kept per game, record digest and

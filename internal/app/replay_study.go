@@ -314,9 +314,9 @@ func (s *ReplayScreen) studyReserve(width int, block []string) int {
 // studyRoom is how many rows the study block may take in a panel width cells
 // wide and height rows tall: every row above the entry list's promised share,
 // less the entry input's and the blank line that closes the block. The block
-// is given its rows before the record's prose is given any, so these are the
-// rows it is drawn in whenever it needs all of them, which is what lets a save
-// be judged on whether they hold the stored note.
+// is given its rows before the analysis's lead or the record's prose is given
+// any, so these are the rows it is drawn in whenever it needs all of them,
+// which is what lets a save be judged on whether they hold the stored note.
 func (s *ReplayScreen) studyRoom(width, height int) int {
 	return height - len(s.jump.lines(shellStyles(s.deps), width)) - s.listShare(height) - 1
 }

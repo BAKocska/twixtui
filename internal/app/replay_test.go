@@ -83,7 +83,7 @@ func rpScreen(t *testing.T, d Deps, sv gamestore.Saved, w, h int) *ReplayScreen 
 }
 
 // rpKeys is the alphabet a probe presses: everything km binds on the board, the
-// plain special keys, the one this screen adds for itself, and a spread of
+// plain special keys, the ones this screen adds for itself, and a spread of
 // letters and digits that nothing is expected to answer.
 func rpKeys(t *testing.T, km ui.Keymap) []string {
 	t.Helper()
@@ -104,7 +104,7 @@ func rpKeys(t *testing.T, km ui.Keymap) []string {
 			add(k)
 		}
 	}
-	for _, k := range []string{"left", "right", "up", "down", "enter", "space", "tab", "esc", ":"} {
+	for _, k := range []string{"left", "right", "up", "down", "enter", "space", "tab", "esc", ":", "?"} {
 		add(k)
 	}
 	for r := 'a'; r <= 'z'; r++ {
