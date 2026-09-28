@@ -34,6 +34,9 @@ type ReplayScreen struct {
 	stuck string
 	// jump is the entry-number input, open only while a number is being typed.
 	jump entryJump
+	// notes are the player's notes and bookmarks on this game's entries, and
+	// the note input while one is being written. See replay_study.go.
+	notes replayNotes
 	// winning is the run of pegs that won the game, worked out once when the
 	// screen opens: it cannot change, and it belongs to one position — the last
 	// one, where the chain the record ends in is actually on the board.
@@ -196,6 +199,8 @@ var replayKeys = []replayKey{
 	{ui.ActMoveUp, nil, "five", func(s *ReplayScreen) tea.Cmd { s.seek(s.step() - replayJump); return nil }},
 	{ui.ActEdgeTop, nil, "ends", func(s *ReplayScreen) tea.Cmd { s.seek(0); return nil }},
 	{ui.ActEdgeBottom, nil, "ends", func(s *ReplayScreen) tea.Cmd { s.seek(s.entries()); return nil }},
+	{ui.ActNone, []string{"m"}, "mark", func(s *ReplayScreen) tea.Cmd { s.toggleBookmark(); return nil }},
+	{ui.ActNone, []string{"e"}, "note", func(s *ReplayScreen) tea.Cmd { s.openNoteEditor(); return nil }},
 	{ui.ActQuit, []string{"esc"}, "leaves", func(*ReplayScreen) tea.Cmd { return Back() }},
 }
 
@@ -263,6 +268,7 @@ func NewReplayScreen(d Deps, saved gamestore.Saved) (Screen, error) {
 		// reaches. A View that looked for it per frame would walk the link
 		// graph of a 48-hole board on every keypress to draw the same holes.
 		winning: winningChain(cursor.current()),
+		notes:   openNotes(d.Study, saved, record, cursor.entries()),
 	}, nil
 }
 
@@ -277,10 +283,15 @@ func (s *ReplayScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return s, s.press(m)
 	case tea.PasteMsg:
-		// The entry input is the only field on this screen, so a paste is a
-		// number for it or nothing at all. The spaces are what a paste out of a
-		// chat window brings with it; the digits are bounded and checked before
-		// any of them are kept.
+		// A paste goes to whichever field is open. The note input bounds and
+		// cleans what it is given itself.
+		if s.notes.editor.open {
+			s.notes.editor.insert(m.Content)
+			return s, nil
+		}
+		// The entry input takes a number or nothing at all. The spaces are
+		// what a paste out of a chat window brings with it; the digits are
+		// bounded and checked before any of them are kept.
 		if s.jump.open {
 			if len(m.Content) > entryPasteMax {
 				s.jump.problem = fmt.Sprintf("max %d digits", s.jump.digits)
@@ -303,6 +314,12 @@ func (s *ReplayScreen) press(m tea.KeyPressMsg) tea.Cmd {
 	// quit key before this, so there is always a way out of the program.
 	if s.jump.open {
 		s.editEntry(m)
+		return nil
+	}
+	// The note input owns it for the same reason, and more of it: the letters
+	// of a note are every key this screen answers.
+	if s.notes.editor.open {
+		s.editNote(m)
 		return nil
 	}
 	action := ui.ActNone
@@ -439,30 +456,45 @@ func (s *ReplayScreen) focus() (game.Point, bool) {
 // keys do, dropped from the end when the terminal is too narrow for all of it.
 //
 // At the widths that have no room for a panel it is the whole of the interface,
-// so the entry input is drawn here as well as there, and what is wrong with a
-// number comes before the keys that would fix it.
+// so an open input is drawn here as well as there, and what is wrong with a
+// number, or what the notes refused, comes before the counter and the keys,
+// which are what a narrow line gives up first.
 func (s *ReplayScreen) status(width int) string {
 	// These are record entries rather than moves: a draw offer is an entry that
 	// changes nothing on the board, so counting them as moves disagreed with
 	// every other surface's move count.
 	counter := fmt.Sprintf("step %d of %d", s.step(), s.entries())
-	if s.jump.open {
+	parts := make([]string, 0, len(s.hints)+3)
+	hints := s.hints
+	switch {
+	case s.jump.open:
 		note := s.jump.note()
 		fieldWidth := max(3, width-ansi.StringWidth(note)-1)
-		input := note + " " + s.jump.edit.render(shellStyles(s.deps), fieldWidth)
-		return hintLine(width, input, counter, keyLabel(s.confirm...)+" jump", "esc cancel")
+		parts = append(parts, note+" "+s.jump.edit.render(shellStyles(s.deps), fieldWidth))
+		hints = []string{keyLabel(s.confirm...) + " jump", "esc cancel"}
+	case s.notes.editor.open:
+		parts = append(parts, s.noteInput(width))
+		hints = []string{keyLabel(s.confirm...) + " save", "esc cancel"}
 	}
-	parts := make([]string, 0, len(s.hints)+1)
+	// A part wider than the row is shortened here, with a mark, rather than
+	// clipped at the edge of the frame: the frame pulls a marked cut back to a
+	// whole word, and an unmarked one ends wherever the edge fell.
+	if note := s.studyStatus(); note != "" {
+		parts = append(parts, truncateText(note, width))
+	}
 	parts = append(parts, counter)
-	return hintLine(width, append(parts, s.hints...)...)
+	return hintLine(width, append(parts, hints...)...)
 }
 
 // panel is the record beside the board: where in it the player is, what it came
 // to, and the entries themselves as a list to move through.
 //
-// The list is promised its share of the rows before the prose is given any. The
-// panel below a board is four rows at its smallest, and one that spent every row
-// on titles and results would leave a review with nothing to review.
+// The list is promised its share of the rows before anything else is given
+// any. The panel below a board is four rows at its smallest, and one that spent
+// every row on titles and results would leave a review with nothing to review.
+// The study block comes next: it is built for every row the list leaves it and
+// sets aside the rows it needs, so an open note input or a refusal is drawn
+// whole wherever there is room for it, and the prose has what is left.
 func (s *ReplayScreen) panel(width, height int) []string {
 	if width <= 0 || height <= 0 {
 		return nil
@@ -470,13 +502,21 @@ func (s *ReplayScreen) panel(width, height int) []string {
 	out := make([]string, 0, height)
 	// The input goes first because it is what the player is doing.
 	out = append(out, clampLines(s.jump.lines(shellStyles(s.deps), width), height)...)
-	list := min(s.entries()+1, max(1, height/2))
-	if room := height - len(out) - list; room > 1 {
+	list := s.listShare(height)
+	study := s.studyLines(width, s.studyRoom(width, height))
+	if room := height - len(out) - list - s.studyReserve(width, study); room > 1 {
 		out = append(out, clampLines(s.describe(width), room-1)...)
+		out = append(out, "")
+	}
+	if room := height - len(out) - list; room > 1 && len(study) > 0 {
+		out = append(out, cutRows(study, room-1, width)...)
 		out = append(out, "")
 	}
 	return append(out, s.entryList(width, height-len(out))...)
 }
+
+// listShare is the entry list's promised share of a panel height rows tall.
+func (s *ReplayScreen) listShare(height int) int { return min(s.entries()+1, max(1, height/2)) }
 
 // describe is the panel's prose, most useful line first, because a short panel
 // keeps the beginning of it and drops the end.
@@ -520,6 +560,9 @@ func (s *ReplayScreen) entryList(width, n int) []string {
 	// they are padded on the right: the number belongs with the marker in front
 	// of it, and a marker followed by blanks reads as a gap.
 	digits := len(strconv.Itoa(s.entries()))
+	// The study's marks get a column of their own between the number and the
+	// label, and only once there is a mark to put in it.
+	flagged := s.notes.flagged()
 	rows := make([]string, 0, n)
 	for i := start; i < start+n; i++ {
 		label := "opening position"
@@ -532,7 +575,11 @@ func (s *ReplayScreen) entryList(width, n int) []string {
 		if i == s.step() {
 			marker = paint(st, &st.Cursor, "> ")
 		}
-		rows = append(rows, marker+truncateText(padTo(strconv.Itoa(i), digits)+" "+label, max(0, width-2)))
+		number := padTo(strconv.Itoa(i), digits)
+		if flagged {
+			number += " " + s.notes.flags(i)
+		}
+		rows = append(rows, marker+truncateText(number+" "+label, max(0, width-2)))
 	}
 	return rows
 }

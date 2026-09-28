@@ -73,7 +73,8 @@ $required = @(
     'TestAnalyzeInputsDescribeTheSameRecordEntry',
     'TestAnalyzeTerminalAndUnsearchedResultsAreExplicit',
     'TestAnalyzeRefusalsDoNotWriteState',
-    'TestAnalyzeDoesNotRedirectAnUnreadableExactGame'
+    'TestAnalyzeDoesNotRedirectAnUnreadableExactGame',
+    'TestStudyNoteSurvivesLeavingAndResizing'
 )
 $missing = @($required | Where-Object { -not $passes.ContainsKey($_) })
 $missingStorage = @()
@@ -108,7 +109,9 @@ if ($Scope -eq 'all') {
         'gamestore/TestOnlyOneFinishOfAGameIsStored',
         'gamestore/TestReadingAStoreNothingMayWriteTo',
         'gamestore/TestASaveThatCannotReplaceTheGameKeepsTheStoredOne',
-        'gamestore/TestWindowsDeviceGameIDsAreRejected'
+        'gamestore/TestWindowsDeviceGameIDsAreRejected',
+        'study/TestTwoProcessesSavingOneStudyLoseNothing',
+        'study/TestSaveWaitsForTheLockAndSeesTheSaveBeforeIt'
     )
     $missingStorage = @($requiredStorage | Where-Object {
         -not $allPasses.ContainsKey('github.com/BAKocska/twixtui/internal/' + $_)
