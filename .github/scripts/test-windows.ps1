@@ -75,6 +75,7 @@ $required = @(
     'TestAnalyzeRefusalsDoNotWriteState',
     'TestAnalyzeDoesNotRedirectAnUnreadableExactGame',
     'TestPlayNowCutsAMaxSearchShort',
+    'TestPlayNowIsOfferedOnTheSmallestTerminal',
     'TestReplayAnalysisFromTheMenu',
     'TestStudyNoteSurvivesLeavingAndResizing'
 )

@@ -21,6 +21,13 @@ var (
 	// playedEarly is the announcement of a move play now cut short, in both
 	// its forms: from a completed iteration, or before one had finished.
 	playedEarly = regexp.MustCompile(`played ([A-Z]{1,2}\d{1,2}) early, (?:from its completed depth (\d+)|before any depth was complete)`)
+	// playNowLead is the front of the status line of a terminal with no panel
+	// while the engine searches: the play-now key, then the search's time or,
+	// once an iteration has finished and the two do not fit, its depth alone.
+	playNowLead = regexp.MustCompile(`^esc play now · (?:\d+\.\ds|d\d+)\b`)
+	// playedMove is the engine's move as its announcement names it, which at
+	// the smallest width is all of the announcement that fits.
+	playedMove = regexp.MustCompile(`played ([A-Z]{1,2}\d{1,2})\b`)
 )
 
 // TestPlayNowCutsAMaxSearchShort plays against the max engine on a full-size
@@ -131,6 +138,110 @@ func TestPlayNowCutsAMaxSearchShort(t *testing.T) {
 	if !strings.Contains(line, move) || !strings.Contains(line, "play now") {
 		t.Errorf("the search's figures %q do not name the move %s and the play now that ended the search", line, move)
 	}
+
+	tm.SendKeys("q")
+	if code, exited := tm.WaitExit(20 * time.Second); !exited || code != 0 {
+		t.Fatalf("the program did not leave cleanly: exited=%v status=%d\n%s", exited, code, tm.Capture())
+	}
+
+	store, err := gamestore.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := store.List()
+	if len(saved) != 1 {
+		t.Fatalf("%d games stored, want 1", len(saved))
+	}
+	g, err := saved[0].Game()
+	if err != nil {
+		t.Fatalf("the stored game does not replay: %v", err)
+	}
+	if g.Entries() != 2 || g.Turn() != game.Vertical {
+		t.Fatalf("the stored game holds %d entries with %v to move, want the player's move and one reply:\n%s",
+			g.Entries(), g.Turn(), g)
+	}
+	if reply := g.History()[1]; reply.Player != game.Horizontal || reply.Peg.String() != move {
+		t.Errorf("the stored reply is %v at %s, want horizontal at %s", reply.Player, reply.Peg, move)
+	}
+}
+
+// TestPlayNowIsOfferedOnTheSmallestTerminal commits a move against the max
+// engine at the minimum size, where there is no panel and the status line is
+// the only place the play-now key can be seen, and presses nothing else. The
+// commit's announcement stands until the next key, and it used to take the
+// whole line: the key and the search stayed hidden for as long as the engine
+// searched, which is exactly when a player waiting on it has no reason to press
+// anything. TestPlayNowCutsAMaxSearchShort plays at 120x40, where the panel
+// shows the search and names the key, so it could not see this. The key and
+// the search have to lead the bottom row while the engine searches, escape has
+// to cut the search short from there, and the move's own announcement has to
+// take the row once the move is played. The stored record is the judge of the
+// move.
+func TestPlayNowIsOfferedOnTheSmallestTerminal(t *testing.T) {
+	t.Parallel()
+	cfg := t.TempDir()
+	tm := sessionIn(t, cfg, 20, 8, "play", "bot", "--tier", "max", "--side", "vertical", "--seed", "9")
+
+	// Positive control: the game is up and waiting for the player. At this
+	// width the turn line is cut to its first words.
+	frame := tm.MustWaitFor("vertical to", 20*time.Second)
+	if !tm.Alive() {
+		t.Fatalf("the program exited instead of starting the game:\n%s", frame)
+	}
+	frame = tm.WaitSettled(10 * time.Second)
+	if status := lbStatusLine(frame); strings.Contains(status, "play now") {
+		t.Fatalf("play now is offered before the engine has anything to play: %q\n%s", status, frame)
+	}
+
+	// The cursor starts on the centre hole: place there and commit, and press
+	// nothing else until play now shows.
+	tm.SendKeys("Space")
+	tm.WaitChanged(frame, 10*time.Second)
+	committed := time.Now()
+	tm.SendKeys("Enter")
+	for {
+		screen := tm.Capture()
+		if playNowLead.MatchString(lbStatusLine(screen)) {
+			break
+		}
+		if playedMove.MatchString(screen) {
+			t.Fatalf("the engine moved before the bottom row offered play now:\n%s", screen)
+		}
+		// The engine still has most of its budget left by then, so the
+		// search it was on is still running.
+		if time.Since(committed) > maxBudget*2/5 {
+			t.Fatalf("%s after the commit, with no other key pressed, the bottom row does not lead with play now and the search:\n%s",
+				maxBudget*2/5, screen)
+		}
+		time.Sleep(pollInterval)
+	}
+	tm.AssertFits()
+
+	pressed := time.Now()
+	tm.SendKeys("Escape")
+	for {
+		screen := tm.Capture()
+		if playedMove.MatchString(lbStatusLine(screen)) {
+			break
+		}
+		if time.Since(pressed) > maxBudget/2 {
+			t.Fatalf("the engine had not played %s after play now was pressed:\n%s", maxBudget/2, screen)
+		}
+		time.Sleep(pollInterval)
+	}
+	// The move is read from a settled frame: the first frame it shows in can
+	// be one the terminal has only part of, and play now must not still be
+	// offered on the finished one. The move is also waited for before the next
+	// key, since escape and a key sent straight after it can arrive as one
+	// alt-modified key.
+	after := tm.WaitSettled(10 * time.Second)
+	status := lbStatusLine(after)
+	found := playedMove.FindStringSubmatch(status)
+	if found == nil || strings.Contains(status, "play now") {
+		t.Fatalf("once the engine has moved, the bottom row %q is not its announcement:\n%s", status, after)
+	}
+	move := found[1]
+	tm.AssertFits()
 
 	tm.SendKeys("q")
 	if code, exited := tm.WaitExit(20 * time.Second); !exited || code != 0 {

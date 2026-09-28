@@ -1464,11 +1464,13 @@ func (s *gameScreen) lastSearchForms() []string {
 	}
 }
 
-// fitMessage is the message as a status line width cells wide can show it.
-// The finished search's figures are the one message with shorter forms of its
-// own, and the forms stand only while the message is still the sentence they
-// were made with: whatever writes the message next replaces the sentence, and
-// so retires the forms without having to know they exist.
+// fitMessage is the message as width cells of the status line can show it: the
+// whole line, or what is left of it once the play-now key and the search have
+// led a line with no panel. The finished search's figures are the one message
+// with shorter forms of its own, and the forms stand only while the message is
+// still the sentence they were made with: whatever writes the message next
+// replaces the sentence, and so retires the forms without having to know they
+// exist.
 func (s *gameScreen) fitMessage(width int) string {
 	if len(s.figures) == 0 || s.message != s.figures[0] {
 		return s.message
@@ -2584,12 +2586,34 @@ func (s *gameScreen) openingPeg() string {
 // because there is nowhere else for that to go, and advice once it has been
 // asked for, which leads the line ahead of the turn. While the engine searches,
 // the key that cuts the search short and how far the search has got lead even
-// that.
+// that, and on a line with no panel they lead the answer to a keypress too.
 func (s *gameScreen) statusLine(arr ui.Arrangement) string {
-	if s.message != "" {
-		return s.style(s.styles.Status, gsTruncate(s.fitMessage(arr.Width), arr.Width))
-	}
 	phase := s.keyPhase()
+	playNow := ""
+	if s.actionAvailable(phase, gaPlayNow, ui.ActNone) {
+		playNow = s.gameKeyLabel(gaPlayNow) + " play now"
+	}
+	if s.message != "" {
+		if playNow == "" || arr.Panel != ui.PanelNone {
+			return s.style(s.styles.Status, gsTruncate(s.fitMessage(arr.Width), arr.Width))
+		}
+		// The move that starts a search is announced here, and the
+		// announcement stands until the next key, which a player waiting for
+		// the engine has no reason to press. Given the whole line, it hid the
+		// key that cuts the search short, and the search, for as long as the
+		// search ran, in the one layout where this line is the only place
+		// either can be seen. So they lead a message as they lead the line
+		// without one, and the message has the width they leave: it is what
+		// is cut, or dropped whole, when there is not room for everything.
+		// Nothing is cleared, so once play now is no longer offered the
+		// message has the line to itself again. With a panel the thinking
+		// line shows the search and the help lists the key, and a message
+		// keeps the line as it always has.
+		parts := s.searchLead(playNow, arr.Width)
+		room := arr.Width - ansi.StringWidth(strings.Join(parts, " · ")+" · ")
+		parts = append(parts, s.fitMessage(room))
+		return s.style(s.styles.Status, fitLead(parts, len(parts)-1, arr.Width))
+	}
 	if phase == phasePlay && s.hint.shown && s.notice == "" {
 		// A short panel, or the one-turn swap notice above it, can hide the
 		// advice. Keep its complete coordinate and policy on the status line
@@ -2597,12 +2621,8 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 		return s.style(s.styles.Status, s.hint.statusText(arr.Width))
 	}
 	var parts []string
-	playNow := ""
-	if s.actionAvailable(phase, gaPlayNow, ui.ActNone) {
-		playNow = s.gameKeyLabel(gaPlayNow) + " play now"
-	}
 	// lead counts the parts at the front of the line that have to reach the
-	// screen whole; see the end of this function.
+	// screen whole; see fitLead.
 	lead := 0
 	if arr.Panel == ui.PanelNone {
 		if s.notice != "" {
@@ -2612,14 +2632,9 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 			// With no panel this line is the only place the search and the
 			// key that cuts it short can be seen. The headline used to come
 			// first, and at the minimum width it filled the line and cut both
-			// off. The key leads now, then the search, cut down to the room
-			// the key leaves, and the headline has whatever width is left.
-			room := arr.Width
-			if playNow != "" {
-				parts = append(parts, playNow)
-				room -= ansi.StringWidth(playNow + " · ")
-			}
-			parts = append(parts, s.searchProgressShort(room))
+			// off. The key leads now, then the search, and the headline has
+			// whatever width is left.
+			parts = s.searchLead(playNow, arr.Width)
 			lead = len(parts)
 		}
 		parts = append(parts, gsPlain(s.headlineText()))
@@ -2677,20 +2692,38 @@ func (s *gameScreen) statusLine(arr ui.Arrangement) string {
 		}
 		parts = append(parts, s.gameKeyLabel(gaDraw)+" draw", s.gameKeyLabel(gaResign)+" resign")
 	}
+	return s.style(s.styles.Status, fitLead(parts, lead, arr.Width))
+}
+
+// searchLead is the front of the status line of a layout with no panel while
+// the engine searches: the play-now key while it is offered, then how far the
+// search has got, cut down to the room the key leaves.
+func (s *gameScreen) searchLead(playNow string, width int) []string {
+	room := width
+	var lead []string
+	if playNow != "" {
+		lead = append(lead, playNow)
+		room -= ansi.StringWidth(playNow + " · ")
+	}
+	return append(lead, s.searchProgressShort(room))
+}
+
+// fitLead joins a status line's parts and cuts the line to width, with the
+// first lead of them, which have to reach the screen whole, kept whole. A cut
+// line ends in a mark, and ui.Compose shortens such a line to the last item it
+// can be sure is whole: an item with the mark straight after it may have been
+// cut through, so it goes. Where the width leaves no cell past the lead for the
+// separator after it, the mark lands straight after the search's figures, and
+// they would go. The lead is shown alone then, unmarked: the figures are worth
+// more than a mark saying that the rest of the line did not fit.
+func fitLead(parts []string, lead, width int) string {
 	line := strings.Join(parts, " · ")
-	if lead > 0 && ansi.StringWidth(line) > arr.Width {
-		// A cut line ends in a mark, and ui.Compose shortens such a line to
-		// the last item it can be sure is whole: an item with the mark
-		// straight after it may have been cut through, so it goes. Where the
-		// width leaves no cell past the lead for the separator after it, the
-		// mark lands straight after the search's figures, and they would go.
-		// The lead is shown alone then, unmarked: the figures are worth more
-		// than a mark saying that the headline and the other keys did not fit.
-		if head := strings.Join(parts[:lead], " · "); ansi.StringWidth(head)+2 > arr.Width {
+	if lead > 0 && ansi.StringWidth(line) > width {
+		if head := strings.Join(parts[:lead], " · "); ansi.StringWidth(head)+2 > width {
 			line = head
 		}
 	}
-	return s.style(s.styles.Status, gsTruncate(line, arr.Width))
+	return gsTruncate(line, width)
 }
 
 // quitHint is the terse form of the quit key for the status line. A game opened
