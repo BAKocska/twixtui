@@ -73,7 +73,8 @@ $required = @(
     'TestAnalyzeInputsDescribeTheSameRecordEntry',
     'TestAnalyzeTerminalAndUnsearchedResultsAreExplicit',
     'TestAnalyzeRefusalsDoNotWriteState',
-    'TestAnalyzeDoesNotRedirectAnUnreadableExactGame'
+    'TestAnalyzeDoesNotRedirectAnUnreadableExactGame',
+    'TestPlayNowCutsAMaxSearchShort'
 )
 $missing = @($required | Where-Object { -not $passes.ContainsKey($_) })
 $missingStorage = @()
