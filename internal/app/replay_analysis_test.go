@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/BAKocska/twixtui/internal/bot"
 	"github.com/BAKocska/twixtui/internal/game"
@@ -810,6 +811,81 @@ func TestReplayAnalysisIsOnScreenAtEverySize(t *testing.T) {
 					h.waitFor("the search to end", func() bool { return h.answered == 1 })
 					rpaOnScreen(t, h, arr, c.status, c.panel)
 				})
+			}
+		})
+	}
+}
+
+// TestReplayAnalysisStatusKeepsTheBadgeBesideALongHole puts the longest name a
+// hole can have — four characters, a column past Z on a row past 9 — on the
+// bottom row at every size a review has to work in. The row gives up "not
+// proven" before the badge, and the badge only when the hole alone is all that
+// fits, so wherever the hole and its badge fit both are there whole, and
+// nothing on the row is a piece of either. At 20x8 the row once read "AA10…":
+// the brief was cut to exactly the width, the frame pulled the cut back to the
+// last whole word, and the badge went with it, though "AA10 placement-only" is
+// nineteen columns.
+func TestReplayAnalysisStatusKeepsTheBadgeBesideALongHole(t *testing.T) {
+	rs := game.Std
+	rs.Size = 30
+	hole := game.Point{Col: 26, Row: 9}
+	name := hole.String()
+	if len(name) != 4 || hole.Col >= rs.Size || hole.Row >= rs.Size {
+		t.Fatalf("%s is not a four-character hole of a %d-hole board", name, rs.Size)
+	}
+	if !slices.Contains(shellSizes, [2]int{20, 8}) {
+		t.Fatal("the sizes no longer include 20x8, where a cut brief filled the row exactly")
+	}
+	g := game.MustNew(rs)
+	for _, move := range []string{"D4", "F5"} {
+		if err := g.PlayNotation(move); err != nil {
+			t.Fatalf("playing %s: %v", move, err)
+		}
+	}
+	record, err := g.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sv := gamestore.Saved{
+		ID: "replay-wide", Kind: gamestore.Imported, Player: "Vertical",
+		Opponent: "Horizontal", Side: "vertical", Record: record.Encode(),
+	}
+	pair := name + " placement-only"
+	whole := pair + " · not proven"
+
+	for _, size := range shellSizes {
+		w, ht := size[0], size[1]
+		t.Run(fmt.Sprintf("%dx%d", w, ht), func(t *testing.T) {
+			eng := newRPAEngine()
+			h := rpaOpen(t, shellTestDeps(t), sv, eng.analyse)
+			h.feed(tea.WindowSizeMsg{Width: w, Height: ht})
+			h.press("?")
+			move := hole
+			eng.next(t).answer <- rpaAnswer{result: bot.AnalysisResult{
+				Policy:      bot.PlacementOnlyPolicy(),
+				Recommended: &move,
+				Candidates:  []bot.AnalysisCandidate{{Move: move, Score: 120, Bound: bot.BoundExact}},
+				Headline:    "the headline the engine wrote",
+				Highlight:   []game.Point{move},
+				Stats:       &bot.SearchStats{Nodes: 4321, Depth: 3, Elapsed: 1500 * time.Millisecond, StopReason: "time"},
+			}}
+			h.waitFor("the analysis", func() bool { return h.answered == 1 })
+
+			frame := h.frame()
+			shellAssertFits(t, "replay with a four-character hole", frame, w, ht)
+			lines := strings.Split(frame, "\n")
+			bottom := lines[len(lines)-1]
+			if !strings.Contains(bottom, name) {
+				t.Fatalf("at %dx%d the bottom row %q lost the hole", w, ht, bottom)
+			}
+			if ansi.StringWidth(pair) <= w && !strings.Contains(bottom, pair) {
+				t.Fatalf("at %dx%d the bottom row %q lost the badge, though %q fits", w, ht, bottom, pair)
+			}
+			if ansi.StringWidth(whole) <= w && !strings.Contains(bottom, whole) {
+				t.Fatalf("at %dx%d the bottom row %q gave up the caveat, though %q fits", w, ht, bottom, whole)
+			}
+			if strings.Contains(bottom, ellipsis) {
+				t.Fatalf("at %dx%d the bottom row %q was cut rather than giving up whole items", w, ht, bottom)
 			}
 		})
 	}

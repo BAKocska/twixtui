@@ -477,11 +477,12 @@ func (s *ReplayScreen) status(width int) string {
 		fieldWidth := max(3, width-ansi.StringWidth(note)-1)
 		parts = append(parts, note+" "+s.jump.edit.render(shellStyles(s.deps), fieldWidth))
 	}
-	// A part wider than the row is shortened here, with a mark, rather than
-	// clipped at the edge of the frame: the frame pulls a marked cut back to a
-	// whole word, and an unmarked one ends wherever the edge fell.
-	if a := s.analysisStatus(); a != "" {
-		parts = append(parts, truncateText(a, width))
+	// The analysis arrives fitted to the row: brief gives up whole items before
+	// it cuts anything, and marks what it does cut, which the frame pulls back
+	// to a whole word. A part left wider than the row would be clipped at the
+	// edge of the frame instead, unmarked, wherever the edge fell.
+	if a := s.analysisStatus(width); a != "" {
+		parts = append(parts, a)
 	}
 	parts = append(parts, counter)
 	if s.jump.open {

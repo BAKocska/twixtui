@@ -17,7 +17,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a finished position gets no recommendation. Any seek or leaving cancels the
   search and discards its result, `?` again cancels or dismisses, the analysed
   position is a copy, and nothing is written. It works regardless of hint
-  settings, for finished and imported games alike.
+  settings, for finished and imported games alike. The bottom line carries the
+  analysis at every size; a narrow one gives up `not proven` before the badge,
+  keeping the hole and its placement-only badge whole.
 
 ## [0.7.0] - 2026-09-12
 

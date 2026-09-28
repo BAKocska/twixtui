@@ -241,14 +241,14 @@ func (s *ReplayScreen) analysisLead(width int) int {
 	return len(s.analysis.lead(width))
 }
 
-// analysisStatus is the analysis's part of the status line, and empty when no
-// analysis belongs to the entry on screen. A terminal with no room for a panel
-// has nowhere else to show it.
-func (s *ReplayScreen) analysisStatus() string {
-	if !s.analysis.on(s.step()) {
+// analysisStatus is the analysis's part of a status line width columns wide,
+// and empty when no analysis belongs to the entry on screen. A terminal with
+// no room for a panel has nowhere else to show it.
+func (s *ReplayScreen) analysisStatus(width int) string {
+	if width <= 0 || !s.analysis.on(s.step()) {
 		return ""
 	}
-	return s.analysis.brief()
+	return s.analysis.brief(width)
 }
 
 // indicator is a running search in the fewest words: that it runs, and for
@@ -258,26 +258,43 @@ func (a *replayAnalysis) indicator() string {
 		gsSpinnerFrames[a.spinner%len(gsSpinnerFrames)], replaySeconds(a.elapsed))
 }
 
-// brief is the analysis in the few words a status line has room for. It keeps
-// the qualification the panel spells out: a hole comes with its policy badge
-// and with "not proven", the caveat as an item of its own after the pair, so a
-// line cut short gives up the caveat before the badge — the same pair a game's
-// status line keeps for a hint.
-func (a *replayAnalysis) brief() string {
+// brief is the analysis in the few words a status line width columns wide has
+// room for. It keeps the qualification the panel spells out: a hole comes with
+// its policy badge and with "not proven", the caveat as an item of its own
+// after the pair — the same pair a game's status line keeps for a hint.
+//
+// A recommendation is fitted by giving up whole items before anything is cut:
+// the caveat goes first, and the badge only when the hole alone is all that
+// fits. The frame pulls a cut back to the last whole word before it, and a cut
+// that fills the row exactly has no scrap of the separator in front of its
+// mark to show where the pair ended: at twenty columns a four-character hole,
+// AA10 on a wide board, came out as "AA10 placement-only…" and then as
+// "AA10…", without the badge, though the pair fits with a column to spare.
+// Every other state is one phrase with nothing in it to give up first, and is
+// shortened with a mark.
+func (a *replayAnalysis) brief(width int) string {
 	r := a.result
+	var state string
 	switch {
 	case a.running:
-		return a.indicator()
+		state = a.indicator()
 	case a.canceled:
-		return "analysis canceled"
+		state = "analysis canceled"
 	case a.err != nil:
-		return "analysis failed"
+		state = "analysis failed"
 	case r.Result.Over():
-		return "game over: no move to advise"
+		state = "game over: no move to advise"
 	case r.Recommended == nil:
-		return "engine returned no move"
+		state = "engine returned no move"
+	default:
+		hole := r.Recommended.String()
+		pair := hole + " " + r.Policy.Label()
+		if ansi.StringWidth(pair) > width {
+			return truncateText(hole, width)
+		}
+		return hintLine(width, pair, "not proven")
 	}
-	return fmt.Sprintf("%s %s · not proven", *r.Recommended, r.Policy.Label())
+	return truncateText(state, width)
 }
 
 // lead is the beginning of the block: the badge, and one sentence saying where

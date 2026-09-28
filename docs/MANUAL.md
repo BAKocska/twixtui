@@ -894,7 +894,10 @@ panel with only a few rows to spare still shows them. The bottom line says
 where the analysis stands as well — `analysing` and the time so far, the chosen
 hole with its `placement-only` badge and `not proven`, or that it was canceled,
 failed or has no move to advise — and on a terminal too small for a panel it is
-the only place the analysis appears. The block reads, in order:
+the only place the analysis appears. A bottom line too narrow for all of the
+choice gives up `not proven` first and keeps the hole and its badge whole, even
+for a four-character hole such as `AA10` at twenty columns. The block reads, in
+order:
 
 - the `placement-only` policy badge, and the recommended hole as **the engine's
   choice under a bounded search, not a proven best move**;
